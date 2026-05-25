@@ -231,7 +231,11 @@ type DeployResponse struct {
 	Message      string `json:"message"`
 }
 
-func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isProduction bool, rootDirectory string, rules *IgnoreRules) (*DeployResponse, error) {
+// Deploy uploads a tarball to /api/v1/deploy/upload and starts a build.
+// dockerfilePath is the optional Part 2 PR-C explicit override; pass empty
+// string to fall back to the platform convention (literal `Dockerfile` at
+// appDir, only honored when projects.custom_dockerfile_enabled is TRUE).
+func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isProduction bool, rootDirectory, dockerfilePath string, rules *IgnoreRules) (*DeployResponse, error) {
 	tarPath := filepath.Join(os.TempDir(), "paas-source.tar.gz")
 	defer os.Remove(tarPath)
 
@@ -252,6 +256,9 @@ func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isPr
 	}
 	if rootDirectory != "" {
 		writer.WriteField("root_directory", rootDirectory)
+	}
+	if dockerfilePath != "" {
+		writer.WriteField("dockerfile_path", dockerfilePath)
 	}
 
 	file, err := os.Open(tarPath)
