@@ -27,6 +27,13 @@ type projectConfig struct {
 	SiteSlug      string `json:"site_slug,omitempty"`
 	RootDirectory string `json:"root_directory,omitempty"` // app subdir when .espacetech.json lives at monorepo root
 	Framework     string `json:"framework,omitempty"`      // recorded from init; server still auto-detects
+	// DockerfilePath is an optional explicit override for the user's
+	// Dockerfile, relative to the appDir (project root or rootDirectory
+	// for monorepos). When empty the platform falls back to the
+	// convention (literal `Dockerfile` at appDir). Only honored when
+	// `custom_dockerfile_enabled` is set on the project from the
+	// Customer Dashboard (Part 2 alpha feature flag).
+	DockerfilePath string `json:"dockerfile_path,omitempty"`
 }
 
 type appChoice struct {
@@ -180,7 +187,15 @@ var deployCmd = &cobra.Command{
 		rules := api.LoadIgnoreRules(sourceDir)
 		printIgnoreRules(rules)
 
-		resp, err := client.Deploy(projCfg.ProjectID, projCfg.SiteID, sourceDir, "CLI deploy", deployProd, rootDirectory, rules)
+		// Part 2 PR-C: surface custom Dockerfile usage at deploy time
+		// so the user can see which file the platform will build with.
+		// The actual override-vs-convention decision lives server-side
+		// (gated by projects.custom_dockerfile_enabled on the project);
+		// this is purely the UX hint. Quiet for projects on the
+		// auto-generated path — same output as before in that case.
+		printCustomDockerfileHint(sourceDir, rootDirectory, projCfg.DockerfilePath)
+
+		resp, err := client.Deploy(projCfg.ProjectID, projCfg.SiteID, sourceDir, "CLI deploy", deployProd, rootDirectory, projCfg.DockerfilePath, rules)
 		if err != nil {
 			fmt.Printf("❌ Deploy failed: %v\n", err)
 			return
@@ -246,5 +261,43 @@ func printIgnoreRules(rules *api.IgnoreRules) {
 	fmt.Printf("   Applying %s:\n", rules.Source)
 	for _, p := range rules.Patterns {
 		fmt.Printf("     • %s\n", p)
+	}
+}
+
+// printCustomDockerfileHint prints a one-line "Using your Dockerfile..."
+// message if the upload appears to carry one. Inspection order:
+//
+//   1. Explicit dockerfile_path in .espacetech.json wins — if it exists
+//      on disk, name it. (If it's set but missing, the server will
+//      fail-fast with a helpful error during DetermineBuildStrategy;
+//      we don't pre-empt that here.)
+//   2. Otherwise look for a literal `Dockerfile` at the appDir
+//      (sourceDir + rootDirectory). If present, mention it.
+//
+// We always show the message when one of the above applies so the
+// user can confirm the platform sees what they intended. The actual
+// gate (projects.custom_dockerfile_enabled) lives server-side; if
+// the flag is off, the platform silently ignores the file and uses
+// auto-generation, which the build logs make obvious.
+func printCustomDockerfileHint(sourceDir, rootDirectory, explicitPath string) {
+	appDir := sourceDir
+	if rootDirectory != "" {
+		appDir = filepath.Join(sourceDir, rootDirectory)
+	}
+
+	if explicitPath != "" {
+		absPath := filepath.Join(appDir, explicitPath)
+		if _, err := os.Stat(absPath); err == nil {
+			fmt.Printf("🐳 Using your Dockerfile at %s (from .espacetech.json dockerfile_path)\n", explicitPath)
+		}
+		// If explicitPath is set but missing on disk, the server's
+		// DetermineBuildStrategy will return a clear error — no need
+		// to pre-empt with a duplicate warning here.
+		return
+	}
+
+	conventionPath := filepath.Join(appDir, "Dockerfile")
+	if _, err := os.Stat(conventionPath); err == nil {
+		fmt.Println("🐳 Using your Dockerfile (custom Dockerfile feature; must be enabled per-project in the dashboard)")
 	}
 }
