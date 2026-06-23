@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"paas-cli/internal/api"
 	"paas-cli/internal/config"
@@ -168,8 +167,13 @@ var siteUseCmd = &cobra.Command{
 		projCfg.SiteName = matched.Name
 		projCfg.SiteSlug = matched.Slug
 
-		out, _ := json.MarshalIndent(projCfg, "", "  ")
-		os.WriteFile(projectConfigWritePath("."), out, 0644)
+		// Update-in-place: write back to the same file we read, so a legacy
+		// .espacetech.json project stays on .espacetech.json instead of silently
+		// migrating to .ghayma.json (which would strand teammates on the old CLI).
+		if err := writeProjectConfigUpdate(".", projCfg); err != nil {
+			fmt.Printf("❌ Failed to update project config: %v\n", err)
+			return
+		}
 
 		fmt.Printf("✅ Active site switched to '%s' (slug: %s)\n", matched.Name, matched.Slug)
 		fmt.Println("   Run 'espacetech deploy --prod' to deploy to this site")

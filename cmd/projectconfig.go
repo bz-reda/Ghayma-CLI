@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 )
@@ -45,4 +46,21 @@ func readProjectConfig(dir string) ([]byte, error) {
 		return nil, err
 	}
 	return os.ReadFile(path)
+}
+
+// writeProjectConfigUpdate writes an update back to the EXISTING project config
+// in dir (update-in-place). It resolves the current path via findProjectConfig
+// so a legacy .espacetech.json project stays on that file instead of silently
+// migrating to .ghayma.json. Use projectConfigWritePath (not this) for brand-new
+// configs created by init/link.
+func writeProjectConfigUpdate(dir string, cfg ProjectConfig) error {
+	path, err := findProjectConfig(dir)
+	if err != nil {
+		return err
+	}
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0644)
 }
