@@ -22,7 +22,7 @@ platforms=(
 for platform in "${platforms[@]}"; do
   GOOS="${platform%/*}"
   GOARCH="${platform#*/}"
-  output="espacetech-${GOOS}-${GOARCH}"
+  output="ghayma-${GOOS}-${GOARCH}"
   if [ "$GOOS" = "windows" ]; then
     output="${output}.exe"
   fi
@@ -33,14 +33,14 @@ done
 
 # Create tar.gz for unix, zip for windows
 cd "$OUT_DIR"
-for f in espacetech-linux-* espacetech-darwin-*; do
+for f in ghayma-linux-* ghayma-darwin-*; do
   [ -f "$f" ] || continue
   chmod +x "$f"
   tar -czf "${f}.tar.gz" "$f"
   rm "$f"
 done
 
-for f in espacetech-windows-*.exe; do
+for f in ghayma-windows-*.exe; do
   [ -f "$f" ] || continue
   zip "${f%.exe}.zip" "$f"
   rm "$f"

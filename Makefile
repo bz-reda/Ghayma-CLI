@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-BINARY  := espacetech
+BINARY  := ghayma
 LDFLAGS := -s -w -X paas-cli/cmd.version=$(VERSION) -X paas-cli/cmd.commit=$(COMMIT) -X paas-cli/cmd.date=$(DATE)
 
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64

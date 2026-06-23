@@ -7,10 +7,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// buildCmdTree constructs `espacetech <group> <child>` just deep enough for
+// buildCmdTree constructs `ghayma <group> <child>` just deep enough for
 // the helper to walk parents when testing hint fallbacks.
 func buildCmdTree(groupName, childName string) *cobra.Command {
-	root := &cobra.Command{Use: "espacetech"}
+	root := &cobra.Command{Use: "ghayma"}
 	group := &cobra.Command{Use: groupName}
 	child := &cobra.Command{Use: childName}
 	root.AddCommand(group)
@@ -25,10 +25,10 @@ func TestRequireOneArg_MissingArg_MentionsListCmd(t *testing.T) {
 		t.Fatal("expected error for missing arg")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "espacetech auth info requires a name") {
+	if !strings.Contains(msg, "ghayma auth info requires a name") {
 		t.Errorf("missing descriptive prefix: %q", msg)
 	}
-	if !strings.Contains(msg, "Run 'espacetech auth list'") {
+	if !strings.Contains(msg, "Run 'ghayma auth list'") {
 		t.Errorf("missing list-cmd hint: %q", msg)
 	}
 	if !cmd.SilenceUsage || !cmd.SilenceErrors {
@@ -43,7 +43,7 @@ func TestRequireOneArg_MissingArg_FallsBackToGroupHelp(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "Run 'espacetech db --help'") {
+	if !strings.Contains(msg, "Run 'ghayma db --help'") {
 		t.Errorf("expected fallback to group --help, got: %q", msg)
 	}
 	if strings.Contains(msg, "to see available") {
@@ -82,10 +82,10 @@ func TestRequireAtLeastOneArg_MissingArg(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing arg")
 	}
-	if !strings.Contains(err.Error(), "espacetech env remove requires a KEY") {
+	if !strings.Contains(err.Error(), "ghayma env remove requires a KEY") {
 		t.Errorf("missing descriptive prefix: %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), "Run 'espacetech env list'") {
+	if !strings.Contains(err.Error(), "Run 'ghayma env list'") {
 		t.Errorf("missing list-cmd hint: %q", err.Error())
 	}
 }

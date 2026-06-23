@@ -12,7 +12,7 @@ import (
 // missing or extra args are provided.
 //
 // listCmd is an optional follow-up hint, e.g. "auth list". When empty, the
-// fallback is `espacetech <group> --help`. This makes the helper useful for
+// fallback is `ghayma <group> --help`. This makes the helper useful for
 // commands where there's no meaningful list to point at (e.g. `db create`
 // takes a user-chosen new name).
 func requireOneArg(argName, listCmd string) cobra.PositionalArgs {
@@ -58,11 +58,11 @@ func argChecker(argName, listCmd string, min, max int) cobra.PositionalArgs {
 // command's own --help.
 func buildArgHint(cmd *cobra.Command, listCmd string) string {
 	if listCmd != "" {
-		return fmt.Sprintf("Run 'espacetech %s' to see available.", listCmd)
+		return fmt.Sprintf("Run 'ghayma %s' to see available.", listCmd)
 	}
 	if parent := cmd.Parent(); parent != nil && parent != cmd.Root() {
-		group := strings.TrimPrefix(parent.CommandPath(), "espacetech ")
-		return fmt.Sprintf("Run 'espacetech %s --help' for options.", group)
+		group := strings.TrimPrefix(parent.CommandPath(), cmd.Root().Name()+" ")
+		return fmt.Sprintf("Run 'ghayma %s --help' for options.", group)
 	}
 	return fmt.Sprintf("Run '%s --help' for options.", cmd.CommandPath())
 }
