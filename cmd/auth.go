@@ -106,9 +106,9 @@ var authCreateCmd = &cobra.Command{
 		fmt.Printf("   App ID:    %s\n", app.AppID)
 		fmt.Printf("   Status:    %s\n", app.Status)
 		fmt.Printf("\n📋 Endpoints:\n")
-		fmt.Printf("   Register:  POST https://auth.espace-tech.com/v1/%s/register\n", app.AppID)
-		fmt.Printf("   Login:     POST https://auth.espace-tech.com/v1/%s/login\n", app.AppID)
-		fmt.Printf("   JWKS:      GET  https://auth.espace-tech.com/v1/%s/.well-known/jwks.json\n", app.AppID)
+		fmt.Printf("   Register:  POST https://auth.ghayma.tech/v1/%s/register\n", app.AppID)
+		fmt.Printf("   Login:     POST https://auth.ghayma.tech/v1/%s/login\n", app.AppID)
+		fmt.Printf("   JWKS:      GET  https://auth.ghayma.tech/v1/%s/.well-known/jwks.json\n", app.AppID)
 		fmt.Println("\n📋 Next steps:")
 		fmt.Printf("   espacetech auth config %s --google-client-id <id> --google-client-secret <secret>\n", args[0])
 	},
@@ -193,17 +193,17 @@ var authInfoCmd = &cobra.Command{
 		}
 
 		fmt.Printf("\n📋 Endpoints:\n")
-		fmt.Printf("   Register:       POST https://auth.espace-tech.com/v1/%s/register\n", app.AppID)
-		fmt.Printf("   Login:          POST https://auth.espace-tech.com/v1/%s/login\n", app.AppID)
-		fmt.Printf("   Refresh:        POST https://auth.espace-tech.com/v1/%s/refresh\n", app.AppID)
-		fmt.Printf("   Logout:         POST https://auth.espace-tech.com/v1/%s/logout\n", app.AppID)
-		fmt.Printf("   Forgot Password:POST https://auth.espace-tech.com/v1/%s/forgot-password\n", app.AppID)
-		fmt.Printf("   JWKS:           GET  https://auth.espace-tech.com/v1/%s/.well-known/jwks.json\n", app.AppID)
+		fmt.Printf("   Register:       POST https://auth.ghayma.tech/v1/%s/register\n", app.AppID)
+		fmt.Printf("   Login:          POST https://auth.ghayma.tech/v1/%s/login\n", app.AppID)
+		fmt.Printf("   Refresh:        POST https://auth.ghayma.tech/v1/%s/refresh\n", app.AppID)
+		fmt.Printf("   Logout:         POST https://auth.ghayma.tech/v1/%s/logout\n", app.AppID)
+		fmt.Printf("   Forgot Password:POST https://auth.ghayma.tech/v1/%s/forgot-password\n", app.AppID)
+		fmt.Printf("   JWKS:           GET  https://auth.ghayma.tech/v1/%s/.well-known/jwks.json\n", app.AppID)
 		if app.GoogleClientID != "" {
-			fmt.Printf("   Google OAuth:   GET  https://auth.espace-tech.com/v1/%s/auth/google?redirect_uri=<url>\n", app.AppID)
+			fmt.Printf("   Google OAuth:   GET  https://auth.ghayma.tech/v1/%s/auth/google?redirect_uri=<url>\n", app.AppID)
 		}
 		if app.GitHubClientID != "" {
-			fmt.Printf("   GitHub OAuth:   GET  https://auth.espace-tech.com/v1/%s/auth/github?redirect_uri=<url>\n", app.AppID)
+			fmt.Printf("   GitHub OAuth:   GET  https://auth.ghayma.tech/v1/%s/auth/github?redirect_uri=<url>\n", app.AppID)
 		}
 	},
 }

@@ -34,13 +34,13 @@ func configPath() string {
 func Load() *Config {
 	data, err := os.ReadFile(configPath())
 	if err != nil {
-		return &Config{APIHost: "https://api.espace-tech.com"}
+		return &Config{APIHost: "https://api.ghayma.tech"}
 	}
 
 	var cfg Config
 	json.Unmarshal(data, &cfg)
 	if cfg.APIHost == "" {
-		cfg.APIHost = "https://api.espace-tech.com"
+		cfg.APIHost = "https://api.ghayma.tech"
 	}
 	return &cfg
 }

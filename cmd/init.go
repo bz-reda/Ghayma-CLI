@@ -223,7 +223,7 @@ func resolveBillingAccount(client *api.Client, flagValue string) (string, error)
 	case 0:
 		return "", fmt.Errorf("no eligible billing account found.\n" +
 			"   A billing account is required to create a project.\n" +
-			"   Create one at cloud.espace-tech.com/settings/billing, then re-run 'espacetech init'\n" +
+			"   Create one at dashboard.ghayma.dev/settings/billing, then re-run 'espacetech init'\n" +
 			"   (or pass --billing-account <id> if you already have one).")
 	case 1:
 		a := eligible[0]

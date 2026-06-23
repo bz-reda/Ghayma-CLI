@@ -124,9 +124,9 @@ var storageInfoCmd = &cobra.Command{
 		} else {
 			fmt.Printf("   Linked to:  (none)\n")
 		}
-		fmt.Printf("   Endpoint:   https://s3.espace-tech.com\n")
+		fmt.Printf("   Endpoint:   https://s3.ghayma.tech\n")
 		if bucket.ExternalAccess {
-			fmt.Printf("   Public URL: https://%s.web.espace-tech.com\n", bucket.GarageBucket)
+			fmt.Printf("   Public URL: https://%s.web.ghayma.tech\n", bucket.GarageBucket)
 		}
 	},
 }
