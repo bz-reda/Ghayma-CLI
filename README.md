@@ -4,13 +4,19 @@ Command-line tool for deploying and managing applications on [Ghayma](https://da
 
 ## Installation
 
+**macOS / Linux**
+
 ```bash
-curl -fsSL https://ghayma.dev/install.sh | sh
+curl -fsSL https://dash.ghayma.cloud/install.sh | sh
 ```
 
-Or download manually from [Releases](https://github.com/bz-reda/ghayma-cli/releases).
+**Windows** (PowerShell)
 
-> **Note:** The GitHub repository rename to `bz-reda/ghayma-cli` is pending on the operator side; the clone and release URLs above reflect the intended new name.
+```powershell
+irm https://dash.ghayma.cloud/install.ps1 | iex
+```
+
+Or download a binary for your platform from [Releases](https://github.com/bz-reda/Espace-Tech-Cloud-CLI/releases).
 
 ## Quick Start
 
@@ -139,8 +145,8 @@ New projects use `.ghayma.json`. Existing projects that already have a `.espacet
 ## Building from Source
 
 ```bash
-git clone https://github.com/bz-reda/ghayma-cli.git
-cd ghayma-cli
+git clone https://github.com/bz-reda/Espace-Tech-Cloud-CLI.git
+cd Espace-Tech-Cloud-CLI
 make build
 ./ghayma version
 ```
