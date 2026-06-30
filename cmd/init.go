@@ -23,6 +23,13 @@ type ProjectConfig struct {
 	SiteName      string `json:"site_name,omitempty"`
 	SiteSlug      string `json:"site_slug,omitempty"`
 	RootDirectory string `json:"root_directory,omitempty"`
+	// Build config: optional overrides recorded from init; the server
+	// still auto-detects when these are empty.
+	BuildCommand    string `json:"build_command,omitempty"`
+	InstallCommand  string `json:"install_command,omitempty"`
+	StartCommand    string `json:"start_command,omitempty"`
+	OutputDirectory string `json:"output_directory,omitempty"`
+	Port            int    `json:"port,omitempty"`
 }
 
 var initCmd = &cobra.Command{

@@ -34,6 +34,13 @@ type projectConfig struct {
 	// `custom_dockerfile_enabled` is set on the project from the
 	// Customer Dashboard (Part 2 alpha feature flag).
 	DockerfilePath string `json:"dockerfile_path,omitempty"`
+	// Build config: optional overrides recorded from init; the server
+	// still auto-detects when these are empty.
+	BuildCommand    string `json:"build_command,omitempty"`
+	InstallCommand  string `json:"install_command,omitempty"`
+	StartCommand    string `json:"start_command,omitempty"`
+	OutputDirectory string `json:"output_directory,omitempty"`
+	Port            int    `json:"port,omitempty"`
 }
 
 type appChoice struct {
