@@ -104,8 +104,14 @@ func createTarball(sourceDir, tarPath string, rules *IgnoreRules) error {
 			return nil
 		}
 
+		// Tar entries and gitignore matching are both POSIX forward-slash.
+		// On Windows filepath.Rel yields backslash paths, so normalize once
+		// here — otherwise nested files ship as flat "src\lib\x.ts" entries
+		// that the Linux build host can't resolve back into directories.
+		relPath = filepath.ToSlash(relPath)
+
 		// Baseline: always skip these names at any depth.
-		for _, part := range strings.Split(relPath, string(filepath.Separator)) {
+		for _, part := range strings.Split(relPath, "/") {
 			if baselineSet[part] {
 				if info.IsDir() {
 					return filepath.SkipDir
