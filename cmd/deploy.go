@@ -278,7 +278,7 @@ func init() {
 }
 
 func printIgnoreRules(rules *api.IgnoreRules) {
-	fmt.Printf("📋 Baseline ignore: %s\n", strings.Join(api.BaselineIgnoreDirs, ", "))
+	fmt.Printf("📋 Baseline ignore: %s, .env*.local\n", strings.Join(api.BaselineIgnoreDirs, ", "))
 	if rules == nil || rules.Source == "" {
 		fmt.Println("   (no .ghaymaignore, .espacetechignore, or .dockerignore found)")
 		return

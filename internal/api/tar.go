@@ -27,6 +27,14 @@ var baselineSet = func() map[string]bool {
 	return m
 }()
 
+// localEnvFile matches `.env*.local` names (.env.local,
+// .env.production.local, …) — Next.js-convention local secret files.
+// Plain `.env` is NOT matched: committed defaults are a legitimate
+// build input.
+func localEnvFile(name string) bool {
+	return strings.HasPrefix(name, ".env") && strings.HasSuffix(name, ".local")
+}
+
 // IgnoreRules holds user-supplied ignore patterns loaded from the source dir.
 type IgnoreRules struct {
 	Source   string   // ".ghaymaignore", ".espacetechignore", ".dockerignore", or "" when none found
@@ -110,9 +118,11 @@ func createTarball(sourceDir, tarPath string, rules *IgnoreRules) error {
 		// that the Linux build host can't resolve back into directories.
 		relPath = filepath.ToSlash(relPath)
 
-		// Baseline: always skip these names at any depth.
+		// Baseline: always skip these names at any depth. localEnvFile
+		// rides along: `.env*.local` files are local-only secrets by
+		// convention and must never reach the build context.
 		for _, part := range strings.Split(relPath, "/") {
-			if baselineSet[part] {
+			if baselineSet[part] || localEnvFile(part) {
 				if info.IsDir() {
 					return filepath.SkipDir
 				}

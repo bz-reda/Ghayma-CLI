@@ -184,6 +184,50 @@ func TestCreateTarball_ForwardSlashPaths(t *testing.T) {
 	}
 }
 
+// TestCreateTarball_ExcludesEnvLocal: `.env*.local` files are local-only
+// secrets by Next.js convention and must never ship in the deploy upload —
+// they were landing in build contexts (and image layers) verbatim. Plain
+// `.env` stays included: committed defaults are a legitimate build input.
+func TestCreateTarball_ExcludesEnvLocal(t *testing.T) {
+	src := t.TempDir()
+	mkfile := func(rel, content string) {
+		full := filepath.Join(src, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mkfile(".env", "PUBLIC_DEFAULT=1")
+	mkfile(".env.local", "SECRET=1")
+	mkfile(".env.production.local", "SECRET=2")
+	mkfile("apps/web/.env.local", "SECRET=3")
+	mkfile("package.json", "{}")
+
+	tarPath := filepath.Join(t.TempDir(), "out.tar.gz")
+	if err := createTarball(src, tarPath, &IgnoreRules{}); err != nil {
+		t.Fatal(err)
+	}
+
+	set := map[string]bool{}
+	for _, n := range tarEntryNames(t, tarPath) {
+		set[n] = true
+	}
+
+	for _, banned := range []string{".env.local", ".env.production.local", "apps/web/.env.local"} {
+		if set[banned] {
+			t.Errorf("%q must be excluded from the upload (local-only secrets)", banned)
+		}
+	}
+	for _, kept := range []string{".env", "package.json"} {
+		if !set[kept] {
+			t.Errorf("%q should still be included", kept)
+		}
+	}
+}
+
 func TestLoadIgnoreRules_DockerignoreFallback(t *testing.T) {
 	src := t.TempDir()
 	if err := os.WriteFile(src+"/.dockerignore", []byte("*.tmp\n"), 0644); err != nil {
