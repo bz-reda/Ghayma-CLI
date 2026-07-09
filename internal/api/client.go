@@ -124,7 +124,7 @@ type Project struct {
 	Framework string `json:"framework"`
 }
 
-func (c *Client) CreateProject(name, framework, billingAccountID string) (*Project, error) {
+func (c *Client) CreateProject(name, framework, billingAccountID, plan string) (*Project, error) {
 	payload := map[string]string{"name": name, "framework": framework}
 	// The API requires billing_account_id for billable plans (every
 	// seeded plan is billable post-Phase 6; init uses the default
@@ -132,6 +132,11 @@ func (c *Client) CreateProject(name, framework, billingAccountID string) (*Proje
 	// own default/validation applies.
 	if billingAccountID != "" {
 		payload["billing_account_id"] = billingAccountID
+	}
+	// Send the chosen plan only when set; empty → omit → the server
+	// applies its default (preserving pre-plan-selection init behavior).
+	if plan != "" {
+		payload["plan"] = plan
 	}
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/projects", bytes.NewReader(body))
@@ -149,6 +154,44 @@ func (c *Client) CreateProject(name, framework, billingAccountID string) (*Proje
 	var project Project
 	json.NewDecoder(resp.Body).Decode(&project)
 	return &project, nil
+}
+
+// FixedPlan mirrors one row of GET /api/v1/billing/plans' "fixed_plans"
+// array. Only the fields the CLI's plan picker renders are declared; the
+// backend response carries many more (bucket, limits, resources, yearly
+// pricing) that init doesn't need.
+type FixedPlan struct {
+	Slug             string `json:"slug"`
+	DisplayName      string `json:"display_name"`
+	PriceDZDPerMonth int64  `json:"price_dzd_per_month"`
+	Points           int    `json:"points"`
+	MaxAppTier       string `json:"max_app_tier"`
+	MaxDBTier        string `json:"max_db_tier"`
+}
+
+// GetPlans fetches the active fixed plans from GET /api/v1/billing/plans
+// ({"fixed_plans":[...],"payg":{...}}). Only the fixed_plans array is
+// returned — init picks a flat-fee plan, never PAYG. An older/self-hosted
+// server without the endpoint returns a non-200, surfaced as an error so
+// the caller can fall back to the server's default plan.
+func (c *Client) GetPlans() ([]FixedPlan, error) {
+	resp, err := c.authRequest("GET", "/api/v1/billing/plans", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, decodeAPIError(resp)
+	}
+
+	var out struct {
+		FixedPlans []FixedPlan `json:"fixed_plans"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.FixedPlans, nil
 }
 
 // Billing accounts

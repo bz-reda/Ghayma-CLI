@@ -72,7 +72,7 @@ func TestCreateProject_SendsBillingAccountID(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	p, err := newTestClient(ts.URL).CreateProject("demo", "nextjs", "acct-123")
+	p, err := newTestClient(ts.URL).CreateProject("demo", "nextjs", "acct-123", "")
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
@@ -84,6 +84,48 @@ func TestCreateProject_SendsBillingAccountID(t *testing.T) {
 	}
 	if gotBody["name"] != "demo" || gotBody["framework"] != "nextjs" {
 		t.Errorf("body name/framework wrong: %v", gotBody)
+	}
+}
+
+// TestCreateProject_SendsPlan pins the Task 6 fix: a chosen plan slug is
+// sent as "plan" in the POST body so init no longer silently defaults every
+// new project to hobby.
+func TestCreateProject_SendsPlan(t *testing.T) {
+	var gotBody map[string]string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, `{"id":"p1","name":"demo","slug":"demo"}`)
+	}))
+	defer ts.Close()
+
+	if _, err := newTestClient(ts.URL).CreateProject("demo", "nextjs", "acct-123", "pro"); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if gotBody["plan"] != "pro" {
+		t.Errorf("body plan = %q; want pro (body=%v)", gotBody["plan"], gotBody)
+	}
+}
+
+// TestCreateProject_OmitsPlanWhenEmpty confirms an empty plan is absent from
+// the body (not sent as "") so the server's default applies — the exact
+// pre-Task-6 behavior for callers that don't choose a plan.
+func TestCreateProject_OmitsPlanWhenEmpty(t *testing.T) {
+	var gotBody map[string]json.RawMessage
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, `{"id":"p1"}`)
+	}))
+	defer ts.Close()
+
+	if _, err := newTestClient(ts.URL).CreateProject("demo", "nextjs", "acct-123", ""); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if _, present := gotBody["plan"]; present {
+		t.Errorf("plan should be omitted when empty; body=%v", gotBody)
 	}
 }
 
@@ -100,11 +142,63 @@ func TestCreateProject_OmitsBillingAccountWhenEmpty(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	if _, err := newTestClient(ts.URL).CreateProject("demo", "nextjs", ""); err != nil {
+	if _, err := newTestClient(ts.URL).CreateProject("demo", "nextjs", "", ""); err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
 	if _, present := gotBody["billing_account_id"]; present {
 		t.Errorf("billing_account_id should be omitted when empty; body=%v", gotBody)
+	}
+}
+
+// TestGetPlans_ParsesFixedPlans pins the 200 round-trip: correct path, Bearer
+// header, and the fixed_plans array parsed with the price/points/max-tier
+// fields the plan picker needs (payg is ignored).
+func TestGetPlans_ParsesFixedPlans(t *testing.T) {
+	const plansJSON = `{
+	  "fixed_plans": [
+	    {"slug":"hobby","display_name":"Hobby","price_dzd_per_month":2500,"points":10,"max_app_tier":"b","max_db_tier":"s"},
+	    {"slug":"pro","display_name":"Pro","price_dzd_per_month":9000,"points":40,"max_app_tier":"c","max_db_tier":"m"}
+	  ],
+	  "payg": {"slug":"pay_as_you_go"}
+	}`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/billing/plans" || r.Method != http.MethodGet {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("auth header = %q; want Bearer test-token", got)
+		}
+		io.WriteString(w, plansJSON)
+	}))
+	defer ts.Close()
+
+	plans, err := newTestClient(ts.URL).GetPlans()
+	if err != nil {
+		t.Fatalf("GetPlans: %v", err)
+	}
+	if len(plans) != 2 {
+		t.Fatalf("got %d plans; want 2", len(plans))
+	}
+	if plans[0].Slug != "hobby" || plans[0].PriceDZDPerMonth != 2500 || plans[0].Points != 10 {
+		t.Errorf("plans[0] = %+v; want hobby 2500 DZD 10 pts", plans[0])
+	}
+	if plans[1].Slug != "pro" || plans[1].MaxAppTier != "c" || plans[1].MaxDBTier != "m" {
+		t.Errorf("plans[1] = %+v; want pro max tiers c/m", plans[1])
+	}
+}
+
+// TestGetPlans_404_Errors pins the fail-soft seam: an older/self-hosted server
+// without the endpoint returns an error so init falls back to the server
+// default plan rather than crashing.
+func TestGetPlans_404_Errors(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"error":"404 page not found"}`)
+	}))
+	defer ts.Close()
+
+	if _, err := newTestClient(ts.URL).GetPlans(); err == nil {
+		t.Fatal("want error on 404")
 	}
 }
 
@@ -118,7 +212,7 @@ func TestCreateProject_DecodesAPIError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := newTestClient(ts.URL).CreateProject("demo", "nextjs", "")
+	_, err := newTestClient(ts.URL).CreateProject("demo", "nextjs", "", "")
 	if err == nil {
 		t.Fatal("want error on 400")
 	}

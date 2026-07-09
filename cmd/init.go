@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"paas-cli/internal/api"
@@ -111,7 +113,25 @@ var initCmd = &cobra.Command{
 			return
 		}
 
-		project, err := client.CreateProject(name, framework, billingAccountID)
+		// Resolve the plan for the new project. Historically init sent an
+		// empty plan, so the server silently defaulted every project to
+		// hobby (2026-07-09: a project landed on hobby without anyone
+		// choosing). Now init asks — or honors --plan — and sends the slug.
+		planFlag, _ := cmd.Flags().GetString("plan")
+		plan, err := resolvePlan(client, planFlag)
+		if err != nil {
+			// A genuine cancel must never fall through to a create on the
+			// default plan — abort cleanly. Other errors (invalid --plan)
+			// print their own message.
+			if errors.Is(err, errPlanSelectionCancelled) {
+				fmt.Println("❌ Cancelled.")
+			} else {
+				fmt.Printf("❌ %v\n", err)
+			}
+			return
+		}
+
+		project, err := client.CreateProject(name, framework, billingAccountID, plan)
 		if err != nil {
 			fmt.Printf("❌ Failed to create project: %v\n", err)
 			return
@@ -288,7 +308,130 @@ func personalSuffix(a api.BillingAccount) string {
 	return ""
 }
 
+// errPlanSelectionCancelled marks an interactive plan picker cancel (Ctrl-C)
+// so init aborts cleanly instead of falling through to a create on the
+// server's default plan — the exact silent-default bug Task 6 fixes.
+var errPlanSelectionCancelled = errors.New("plan selection cancelled")
+
+// promptPlanSelectFn is indirected so tests can substitute the promptui I/O
+// and exercise the cancel/abort control flow without a TTY.
+var promptPlanSelectFn = promptPlanSelect
+
+// resolvePlan decides which plan slug to send to CreateProject.
+//   - --plan set: validated against the fetched list; an unknown slug errors
+//     (naming the available slugs) so init aborts.
+//   - Interactive (no --plan): a picker over the fetched plans. A Ctrl-C
+//     cancel returns errPlanSelectionCancelled so init aborts — it never
+//     falls through to the default plan.
+//   - Fetch failure (old/self-hosted server without the endpoint, or any
+//     error) or an empty plan list: returns "" (server default) with a
+//     printed note. Never blocks init.
+//
+// Note the deliberate distinction: a fetch failure degrades to the server
+// default, but a user cancel aborts — the two must not be conflated.
+func resolvePlan(client *api.Client, planFlag string) (string, error) {
+	plans, err := client.GetPlans()
+	if err != nil {
+		if planFlag != "" {
+			fmt.Printf("ℹ️  Couldn't fetch plans to validate --plan %q; the server's default plan will apply.\n", planFlag)
+		} else {
+			fmt.Println("ℹ️  Couldn't fetch plans; the server's default plan will apply.")
+		}
+		return "", nil
+	}
+
+	if planFlag != "" {
+		return validatePlanFlag(plans, planFlag)
+	}
+
+	if len(plans) == 0 {
+		fmt.Println("ℹ️  No plans available to choose; the server's default plan will apply.")
+		return "", nil
+	}
+
+	slug, err := promptPlanSelectFn(plans)
+	if err != nil {
+		return "", errPlanSelectionCancelled
+	}
+	return slug, nil
+}
+
+// validatePlanFlag guards the --plan value against the fetched plans. A known
+// slug passes; an unknown one errors, listing the available slugs. Pure.
+func validatePlanFlag(plans []api.FixedPlan, slug string) (string, error) {
+	for _, p := range plans {
+		if p.Slug == slug {
+			return slug, nil
+		}
+	}
+	return "", fmt.Errorf("unknown plan %q; choose one of: %s", slug, strings.Join(planSlugs(plans), ", "))
+}
+
+// planSlugs lists the plan slugs in response order, for the --plan error hint.
+func planSlugs(plans []api.FixedPlan) []string {
+	slugs := make([]string, len(plans))
+	for i, p := range plans {
+		slugs[i] = p.Slug
+	}
+	return slugs
+}
+
+// planSelectLabels renders one interactive line per fixed plan. Pure so the
+// label formatting is unit-testable.
+func planSelectLabels(plans []api.FixedPlan) []string {
+	labels := make([]string, len(plans))
+	for i, p := range plans {
+		labels[i] = planSelectLabel(p)
+	}
+	return labels
+}
+
+// planSelectLabel formats a single plan choice, e.g.
+// "hobby — 2,500 DZD/mo · 10 pts". Price and points come straight from the
+// billing/plans response — nothing hardcoded.
+func planSelectLabel(p api.FixedPlan) string {
+	return fmt.Sprintf("%s — %s DZD/mo · %d pts", p.Slug, formatThousands(p.PriceDZDPerMonth), p.Points)
+}
+
+// formatThousands renders an integer with comma thousand-separators
+// (2500 → "2,500"), matching the brief's price format.
+func formatThousands(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte(s[i])
+	}
+	if neg {
+		return "-" + b.String()
+	}
+	return b.String()
+}
+
+// promptPlanSelect renders the catalog-driven plan picker and returns the
+// chosen slug. A promptui cancel (Ctrl-C) surfaces the error so resolvePlan
+// aborts init.
+func promptPlanSelect(plans []api.FixedPlan) (string, error) {
+	sel := promptui.Select{
+		Label: "Select a plan for this project",
+		Items: planSelectLabels(plans),
+		Size:  10,
+	}
+	idx, _, err := sel.Run()
+	if err != nil {
+		return "", err
+	}
+	return plans[idx].Slug, nil
+}
+
 func init() {
 	initCmd.Flags().String("billing-account", "", "Billing account ID for the new project (skips the interactive picker; for non-interactive/CI use)")
+	initCmd.Flags().String("plan", "", "Plan slug for the new project (e.g. hobby, pro). Interactive picker when omitted; server default if plans can't be fetched.")
 	rootCmd.AddCommand(initCmd)
 }
