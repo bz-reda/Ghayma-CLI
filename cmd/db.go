@@ -3,10 +3,14 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 
 	"paas-cli/internal/api"
 	"paas-cli/internal/config"
 
+	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +21,13 @@ var dbCmd = &cobra.Command{
 
 var dbCreateType string
 var dbCreateReplicaSet bool
+var dbCreateTier string
+var dbCreateDiskGB int
+var dbCreateBackup string
+
+var dbResizeTier string
+var dbResizeDiskGB int
+var dbResizeBackup string
 
 var dbCreateCmd = &cobra.Command{
 	Use:   "create [name]",
@@ -54,9 +65,44 @@ var dbCreateCmd = &cobra.Command{
 		}
 
 		client := api.NewClient(cfg)
-		db, err := client.CreateDatabase(args[0], dbCreateType, projectID, replicaSet)
+
+		tier := dbCreateTier
+		diskGB := dbCreateDiskGB
+		backup := dbCreateBackup
+
+		// Fail-soft pricing. An older backend (pre-catalog) returns
+		// ErrCatalogUnavailable — skip all pricing UI and fall back to bare
+		// flags / server defaults; never block the create.
+		if cat, catErr := client.GetMarketplaceCatalog(); catErr == nil && cat != nil {
+			// Interactive only when the user set NONE of the pricing flags, so
+			// a scripted run (any flag present) stays fully non-interactive.
+			if !cmd.Flags().Changed("tier") && !cmd.Flags().Changed("disk-gb") && !cmd.Flags().Changed("backup") {
+				var selErr error
+				tier, diskGB, backup, selErr = promptDBSelections(cat)
+				if selErr != nil {
+					// A promptui cancel (Ctrl-C) must abort — never fall
+					// through to a smallest-tier create on an explicit cancel.
+					fmt.Println("❌ Cancelled.")
+					return
+				}
+			} else if cmd.Flags().Changed("tier") {
+				// Flag path: guard an unknown --tier against the catalog before
+				// previewing (mirrors auth create's validateAuthBracket / init's
+				// validatePlanFlag), instead of deferring silently to a backend
+				// error. Fail-soft — only reached when the catalog is present.
+				if err := validateDBTier(cat, tier); err != nil {
+					fmt.Printf("❌ %v\n", err)
+					return
+				}
+			}
+			// Best-effort reserve preview from the resolved selections,
+			// defaulting the unset tier/backup to the catalog's smallest.
+			printReservePreview(client, cat, projectID, tier, diskGB, backup)
+		}
+
+		db, err := client.CreateDatabase(args[0], dbCreateType, projectID, replicaSet, tier, diskGB, backup)
 		if err != nil {
-			fmt.Printf("❌ Failed to create database: %v\n", err)
+			fmt.Printf("❌ Failed to create database: %s\n", formatMarketplaceError(err))
 			return
 		}
 
@@ -76,6 +122,193 @@ func mongoModeLabel(replicaSet bool) string {
 		return "replica set (rs0) — transactions supported"
 	}
 	return "standalone — transactions NOT supported"
+}
+
+var dbResizeCmd = &cobra.Command{
+	Use:   "resize [name]",
+	Short: "Change a database's tier, disk (grow-only), or backup schedule",
+	Args:  requireOneArg("name", "db list"),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.Load()
+		if cfg.Token == "" {
+			fmt.Println("❌ Please login first: ghayma login")
+			return
+		}
+
+		client := api.NewClient(cfg)
+		db, err := findDatabaseByName(client, args[0])
+		if err != nil {
+			fmt.Printf("❌ %v\n", err)
+			return
+		}
+
+		tier := dbResizeTier
+		diskGB := dbResizeDiskGB
+		backup := dbResizeBackup
+
+		if tier == "" && diskGB == 0 && backup == "" {
+			fmt.Println("❌ Nothing to change. Pass at least one of --tier, --disk-gb, --backup.")
+			return
+		}
+
+		// Disk is grow-only — reject a shrink client-side before the request
+		// (local-path PVCs can't shrink safely).
+		if diskGB > 0 {
+			if msg := diskShrinkError(db.DiskGB, diskGB); msg != "" {
+				fmt.Printf("❌ %s\n", msg)
+				return
+			}
+		}
+
+		updated, err := client.RetierDatabase(db.ID, tier, diskGB, backup)
+		if err != nil {
+			fmt.Printf("❌ Failed to resize database: %s\n", formatMarketplaceError(err))
+			return
+		}
+
+		fmt.Printf("✅ Database '%s' updated\n", updated.Name)
+		fmt.Printf("   Tier:    %s\n", updated.TierSlug)
+		fmt.Printf("   Disk:    %d GB\n", updated.DiskGB)
+		fmt.Printf("   Backup:  %s\n", updated.BackupTierSlug)
+	},
+}
+
+// The interactive pickers are indirected through function variables so tests
+// can substitute the promptui I/O and exercise the cancel/abort control flow.
+var (
+	promptDBTierFn   = promptDBTier
+	promptDBDiskFn   = promptDBDisk
+	promptDBBackupFn = promptDBBackup
+)
+
+// promptDBSelections renders the catalog-driven tier/disk/backup pickers for an
+// interactive create. Each choice shows its points cost computed from the
+// catalog (never hardcoded). A promptui cancel (Ctrl-C) from any picker returns
+// a non-nil error so the caller aborts WITHOUT creating a database — an empty
+// tiers/backups catalog is NOT a cancel and still degrades to server defaults.
+func promptDBSelections(cat *api.MarketplaceCatalog) (string, int, string, error) {
+	tier, err := promptDBTierFn(cat)
+	if err != nil {
+		return "", 0, "", err
+	}
+	diskGB, err := promptDBDiskFn(cat)
+	if err != nil {
+		return "", 0, "", err
+	}
+	backup, err := promptDBBackupFn(cat, diskGB)
+	if err != nil {
+		return "", 0, "", err
+	}
+	return tier, diskGB, backup, nil
+}
+
+func promptDBTier(cat *api.MarketplaceCatalog) (string, error) {
+	tiers := sortedDBTiers(cat)
+	if len(tiers) == 0 {
+		return "", nil
+	}
+	labels := make([]string, len(tiers))
+	for i, t := range tiers {
+		labels[i] = dbTierLabel(t)
+	}
+	sel := promptui.Select{Label: "Select a database tier", Items: labels, Size: 10}
+	idx, _, err := sel.Run()
+	if err != nil {
+		return "", err
+	}
+	return tiers[idx].Slug, nil
+}
+
+// promptDBDisk asks for a disk size stepped by the catalog's db_block_gb. A
+// blank answer leaves it 0 → the server applies its size-based default.
+func promptDBDisk(cat *api.MarketplaceCatalog) (int, error) {
+	block := int(cat.Rates.DBBlockGB)
+	if block <= 0 {
+		block = 1
+	}
+	prompt := promptui.Prompt{
+		Label: fmt.Sprintf("Disk in GB — steps of %d (blank for server default)", block),
+		Validate: func(s string) error {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				return nil
+			}
+			n, err := strconv.Atoi(s)
+			if err != nil || n <= 0 {
+				return fmt.Errorf("enter a positive whole number of GB")
+			}
+			if n%block != 0 {
+				return fmt.Errorf("disk must be a multiple of %d GB", block)
+			}
+			return nil
+		},
+	}
+	res, err := prompt.Run()
+	if err != nil {
+		return 0, err
+	}
+	res = strings.TrimSpace(res)
+	if res == "" {
+		return 0, nil
+	}
+	n, _ := strconv.Atoi(res)
+	return n, nil
+}
+
+func promptDBBackup(cat *api.MarketplaceCatalog, diskGB int) (string, error) {
+	tiers := sortedBackupTiers(cat)
+	if len(tiers) == 0 {
+		return "", nil
+	}
+	labels := make([]string, len(tiers))
+	for i, t := range tiers {
+		labels[i] = dbBackupLabel(cat, t, diskGB)
+	}
+	sel := promptui.Select{Label: "Select a backup schedule", Items: labels, Size: 10}
+	idx, _, err := sel.Run()
+	if err != nil {
+		return "", err
+	}
+	return tiers[idx].Slug, nil
+}
+
+// printReservePreview prints "This database will reserve N pts" before submit,
+// with the remaining-after tail when the points summary is fetchable. Every
+// step is fail-soft: a missing catalog slug or a failed summary fetch just
+// prints less — it never blocks the create.
+func printReservePreview(client *api.Client, cat *api.MarketplaceCatalog, projectID, tier string, diskGB int, backup string) {
+	previewTier := tier
+	if previewTier == "" {
+		if dt, ok := defaultDBTier(cat); ok {
+			previewTier = dt.Slug
+		}
+	}
+	previewBackup := backup
+	if previewBackup == "" {
+		if bt, ok := defaultBackupTier(cat); ok {
+			previewBackup = bt.Slug
+		}
+	}
+	cost, err := dbCostPreview(cat, previewTier, diskGB, previewBackup)
+	if err != nil {
+		return
+	}
+	summary, _ := client.GetProjectPoints(projectID)
+	fmt.Println(formatReserveLine(cost, summary))
+}
+
+// sortedDBTiers / sortedBackupTiers return catalog rows ordered by Position so
+// the pickers list smallest→largest regardless of server ordering.
+func sortedDBTiers(cat *api.MarketplaceCatalog) []api.CatalogDBTier {
+	out := append([]api.CatalogDBTier(nil), cat.DBTiers...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Position < out[j].Position })
+	return out
+}
+
+func sortedBackupTiers(cat *api.MarketplaceCatalog) []api.CatalogBackupTier {
+	out := append([]api.CatalogBackupTier(nil), cat.BackupTiers...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Position < out[j].Position })
+	return out
 }
 
 var dbListCmd = &cobra.Command{
@@ -495,8 +728,15 @@ var dbRotateCmd = &cobra.Command{
 func init() {
 	dbCreateCmd.Flags().StringVarP(&dbCreateType, "type", "t", "postgres", "Database type: postgres, redis, mongodb")
 	dbCreateCmd.Flags().BoolVar(&dbCreateReplicaSet, "replica-set", true, "MongoDB only: run as a single-node replica set (rs0). Default true so multi-document transactions work. Pass --replica-set=false for a standalone mongod.")
+	dbCreateCmd.Flags().StringVar(&dbCreateTier, "tier", "", "Database tier (e.g. xs, s, m, l). Interactive picker when omitted; server default if no catalog.")
+	dbCreateCmd.Flags().IntVar(&dbCreateDiskGB, "disk-gb", 0, "Persistent disk in GB, priced in points. Server default (from size) when omitted.")
+	dbCreateCmd.Flags().StringVar(&dbCreateBackup, "backup", "", "Backup schedule: weekly, daily, sixhourly. Interactive picker when omitted; weekly default if no catalog.")
 	// --project has no short form; -p is reserved for --prod on `deploy`.
 	dbLinkCmd.Flags().StringVar(&dbLinkProject, "project", "", "Project name or slug (defaults to current directory's project)")
+
+	dbResizeCmd.Flags().StringVar(&dbResizeTier, "tier", "", "New database tier (e.g. xs, s, m, l)")
+	dbResizeCmd.Flags().IntVar(&dbResizeDiskGB, "disk-gb", 0, "New disk size in GB (grow-only — cannot shrink)")
+	dbResizeCmd.Flags().StringVar(&dbResizeBackup, "backup", "", "New backup schedule: weekly, daily, sixhourly")
 
 	dbCmd.AddCommand(dbCreateCmd)
 	dbCmd.AddCommand(dbListCmd)
@@ -511,4 +751,5 @@ func init() {
 	dbCmd.AddCommand(dbStopCmd)
 	dbCmd.AddCommand(dbStartCmd)
 	dbCmd.AddCommand(dbRotateCmd)
+	dbCmd.AddCommand(dbResizeCmd)
 }

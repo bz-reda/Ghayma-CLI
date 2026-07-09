@@ -15,6 +15,8 @@ var storageCmd = &cobra.Command{
 	Short: "Manage object storage buckets",
 }
 
+var storageCreateQuotaGB int
+
 var storageCreateCmd = &cobra.Command{
 	Use:   "create [name]",
 	Short: "Create a storage bucket",
@@ -42,9 +44,40 @@ var storageCreateCmd = &cobra.Command{
 		}
 
 		client := api.NewClient(cfg)
-		bucket, err := client.CreateBucket(args[0], projectID)
+
+		quotaGB := storageCreateQuotaGB
+
+		// Fail-soft pricing. An older backend (pre-catalog) returns
+		// ErrCatalogUnavailable — skip all pricing UI and fall back to the bare
+		// flag / server default; never block the create.
+		if cat, catErr := client.GetMarketplaceCatalog(); catErr == nil && cat != nil {
+			// Interactive only when the user did NOT set --quota-gb, so a
+			// scripted run (flag present) stays fully non-interactive.
+			if !cmd.Flags().Changed("quota-gb") {
+				q, selErr := promptStorageQuotaFn(cat)
+				if selErr != nil {
+					// A promptui cancel (Ctrl-C) must abort — never fall
+					// through to a create at a default quota.
+					fmt.Println("❌ Cancelled.")
+					return
+				}
+				quotaGB = q
+			}
+			// Reserve preview only when a quota is chosen: an unset quota uses
+			// the plan's per-bucket default, whose MB the CLI can't know, so a
+			// "reserve 0 pts" line would be misleading.
+			if quotaGB > 0 {
+				cost := storageCostPreview(cat, quotaGB)
+				summary, _ := client.GetProjectPoints(projectID)
+				fmt.Println(formatReserveLineFor("bucket", cost, summary))
+			}
+		}
+
+		// --quota-gb is whole GB; the backend field is size_mb (no quota_gb).
+		sizeMB := quotaGB * 1024
+		bucket, err := client.CreateBucket(args[0], projectID, sizeMB)
 		if err != nil {
-			fmt.Printf("❌ Failed to create bucket: %v\n", err)
+			fmt.Printf("❌ Failed to create bucket: %s\n", formatMarketplaceError(err))
 			return
 		}
 
@@ -413,6 +446,7 @@ func formatBytes(b int64) string {
 }
 
 func init() {
+	storageCreateCmd.Flags().IntVar(&storageCreateQuotaGB, "quota-gb", 0, "Per-bucket storage quota in GB, priced in points (stepped by the catalog's obj_block_gb). Interactive picker when omitted; plan default if no catalog.")
 	// --project has no short form; -p is reserved for --prod on `deploy`.
 	storageLinkCmd.Flags().StringVar(&storageLinkProject, "project", "", "Project name or slug")
 

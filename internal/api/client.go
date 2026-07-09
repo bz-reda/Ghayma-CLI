@@ -125,7 +125,7 @@ type Project struct {
 	Framework string `json:"framework"`
 }
 
-func (c *Client) CreateProject(name, framework, billingAccountID string) (*Project, error) {
+func (c *Client) CreateProject(name, framework, billingAccountID, plan string) (*Project, error) {
 	payload := map[string]string{"name": name, "framework": framework}
 	// The API requires billing_account_id for billable plans (every
 	// seeded plan is billable post-Phase 6; init uses the default
@@ -133,6 +133,11 @@ func (c *Client) CreateProject(name, framework, billingAccountID string) (*Proje
 	// own default/validation applies.
 	if billingAccountID != "" {
 		payload["billing_account_id"] = billingAccountID
+	}
+	// Send the chosen plan only when set; empty → omit → the server
+	// applies its default (preserving pre-plan-selection init behavior).
+	if plan != "" {
+		payload["plan"] = plan
 	}
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/projects", bytes.NewReader(body))
@@ -150,6 +155,44 @@ func (c *Client) CreateProject(name, framework, billingAccountID string) (*Proje
 	var project Project
 	json.NewDecoder(resp.Body).Decode(&project)
 	return &project, nil
+}
+
+// FixedPlan mirrors one row of GET /api/v1/billing/plans' "fixed_plans"
+// array. Only the fields the CLI's plan picker renders are declared; the
+// backend response carries many more (bucket, limits, resources, yearly
+// pricing) that init doesn't need.
+type FixedPlan struct {
+	Slug             string `json:"slug"`
+	DisplayName      string `json:"display_name"`
+	PriceDZDPerMonth int64  `json:"price_dzd_per_month"`
+	Points           int    `json:"points"`
+	MaxAppTier       string `json:"max_app_tier"`
+	MaxDBTier        string `json:"max_db_tier"`
+}
+
+// GetPlans fetches the active fixed plans from GET /api/v1/billing/plans
+// ({"fixed_plans":[...],"payg":{...}}). Only the fixed_plans array is
+// returned — init picks a flat-fee plan, never PAYG. An older/self-hosted
+// server without the endpoint returns a non-200, surfaced as an error so
+// the caller can fall back to the server's default plan.
+func (c *Client) GetPlans() ([]FixedPlan, error) {
+	resp, err := c.authRequest("GET", "/api/v1/billing/plans", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, decodeAPIError(resp)
+	}
+
+	var out struct {
+		FixedPlans []FixedPlan `json:"fixed_plans"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.FixedPlans, nil
 }
 
 // Billing accounts
@@ -220,6 +263,11 @@ type Site struct {
 	Name      string `json:"name"`
 	Slug      string `json:"slug"`
 	Status    string `json:"status"`
+	// Points-allowance marketplace: every app carries its compute tier slug +
+	// replica count so `site scale` can show the current size before changing it
+	// and price the change as AppCost(tier.PointsCost, replicas).
+	AppTierSlug string `json:"app_tier_slug"`
+	Replicas    int    `json:"replicas"`
 }
 
 func (c *Client) CreateSite(projectID, name string) (*Site, error) {
@@ -256,6 +304,36 @@ func (c *Client) ListSites(projectID string) ([]Site, error) {
 	var sites []Site
 	json.NewDecoder(resp.Body).Decode(&sites)
 	return sites, nil
+}
+
+// SetAppTier changes an app's compute tier and/or replica count via
+// PUT /api/v1/projects/:id/sites/:siteId/tier (the sites handler is mounted
+// project-scoped, so the project id is part of the path even though the handler
+// keys off siteId). Both fields are always sent — app_tier_slug is required on
+// the wire, so the caller defaults an unset flag to the site's current value.
+// Non-2xx responses route through classifyAPIError so the marketplace classes
+// render: 409 maxtier (ErrAppTierExceedsPlan) / 409 insufficient (points
+// budget) / 503 capacity; a 400 replicas-below-minimum surfaces its raw reason
+// (the CLI validates replicas >= 1 client-side before ever calling this).
+func (c *Client) SetAppTier(projectID, siteID, tierSlug string, replicas int) (*Site, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"app_tier_slug": tierSlug,
+		"replicas":      replicas,
+	})
+	resp, err := c.authRequest("PUT", "/api/v1/projects/"+projectID+"/sites/"+siteID+"/tier", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyAPIError(resp.StatusCode, respBody)
+	}
+
+	var site Site
+	json.NewDecoder(resp.Body).Decode(&site)
+	return &site, nil
 }
 
 // Domains
@@ -687,15 +765,37 @@ type DatabaseInfo struct {
 	ProjectID   string `json:"project_id,omitempty"`
 	ReplicaSet  bool   `json:"replica_set,omitempty"`
 	CreatedAt   string `json:"created_at"`
+	// Points-marketplace footprint fields (mirror managed_databases columns).
+	// TierSlug/DiskGB/BackupTierSlug drive the resize preview and the
+	// client-side grow-only disk check.
+	TierSlug       string `json:"tier_slug,omitempty"`
+	DiskGB         int    `json:"disk_gb,omitempty"`
+	BackupTierSlug string `json:"backup_tier_slug,omitempty"`
 }
 
 // CreateDatabase creates a managed database. replicaSet is only meaningful for
 // MongoDB and is sent only when non-nil so the server's default (true for new
 // MongoDB instances) applies when the caller doesn't override it.
-func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool) (*DatabaseInfo, error) {
+//
+// The points-marketplace selectors are sent when set: tierSlug (wire field
+// "tier"), diskGB ("disk_gb", omitted at 0 so the server falls back to
+// ceil(size_mb/1024)), and backupSlug ("backup_tier_slug", omitted when blank
+// so the server applies the free weekly default). Non-201 responses route
+// through classifyAPIError so max-tier / insufficient-points / capacity classes
+// render.
+func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool, tierSlug string, diskGB int, backupSlug string) (*DatabaseInfo, error) {
 	payload := map[string]interface{}{"name": name, "type": dbType, "project_id": projectID}
 	if replicaSet != nil {
 		payload["replica_set"] = *replicaSet
+	}
+	if tierSlug != "" {
+		payload["tier"] = tierSlug
+	}
+	if diskGB > 0 {
+		payload["disk_gb"] = diskGB
+	}
+	if backupSlug != "" {
+		payload["backup_tier_slug"] = backupSlug
 	}
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/databases", bytes.NewReader(body))
@@ -705,9 +805,44 @@ func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("%s", errResp["error"])
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyAPIError(resp.StatusCode, respBody)
+	}
+
+	var result struct {
+		Database DatabaseInfo `json:"database"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return &result.Database, nil
+}
+
+// RetierDatabase changes a database's tier, disk, and/or backup schedule via
+// PATCH /api/v1/databases/:id/tier. At least one of tier/diskGB/backupSlug must
+// be meaningful; unset fields (blank slug, 0 disk) are omitted so a single-axis
+// change doesn't clobber the others. Non-200 responses route through
+// classifyAPIError so the marketplace classes render (disk grow-only is checked
+// client-side before this call).
+func (c *Client) RetierDatabase(id, tier string, diskGB int, backupSlug string) (*DatabaseInfo, error) {
+	payload := map[string]interface{}{}
+	if tier != "" {
+		payload["tier"] = tier
+	}
+	if diskGB > 0 {
+		payload["disk_gb"] = diskGB
+	}
+	if backupSlug != "" {
+		payload["backup_tier_slug"] = backupSlug
+	}
+	body, _ := json.Marshal(payload)
+	resp, err := c.authRequest("PATCH", "/api/v1/databases/"+id+"/tier", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -913,8 +1048,18 @@ type BucketInfo struct {
 	CreatedAt         string `json:"created_at"`
 }
 
-func (c *Client) CreateBucket(name, projectID string) (*BucketInfo, error) {
-	body, _ := json.Marshal(map[string]string{"name": name, "project_id": projectID})
+// CreateBucket creates an object-storage bucket. sizeMB is the optional
+// per-bucket quota in MB (0 = omit → the server applies the plan's default);
+// the backend field is size_mb (there is NO quota_gb — the CLI's --quota-gb is
+// converted to MB by the caller). Non-201 responses route through
+// classifyAPIError so the marketplace insufficient-points / capacity classes
+// render.
+func (c *Client) CreateBucket(name, projectID string, sizeMB int) (*BucketInfo, error) {
+	payload := map[string]interface{}{"name": name, "project_id": projectID}
+	if sizeMB > 0 {
+		payload["size_mb"] = sizeMB
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/storage", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -922,9 +1067,8 @@ func (c *Client) CreateBucket(name, projectID string) (*BucketInfo, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("%s", errResp["error"])
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -1105,8 +1249,18 @@ type AuthUserInfo struct {
 	CreatedAt     string `json:"created_at"`
 }
 
-func (c *Client) CreateAuthApp(name, appID, projectID string) (*AuthAppInfo, error) {
-	body, _ := json.Marshal(map[string]string{"name": name, "app_id": appID, "project_id": projectID})
+// CreateAuthApp creates a managed auth app. authTierSlug is the optional
+// user-capacity bracket (auth_tiers.slug — 1k/10k/100k/1m; blank = server
+// default). 2FA/SMS are NOT set here (the create endpoint doesn't accept them);
+// they are enabled afterward via UpdateAuthApp. Non-201 responses route through
+// classifyAPIError so the marketplace insufficient-points / capacity classes
+// render.
+func (c *Client) CreateAuthApp(name, appID, projectID, authTierSlug string) (*AuthAppInfo, error) {
+	payload := map[string]interface{}{"name": name, "app_id": appID, "project_id": projectID}
+	if authTierSlug != "" {
+		payload["auth_tier_slug"] = authTierSlug
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/auth-apps", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -1114,9 +1268,8 @@ func (c *Client) CreateAuthApp(name, appID, projectID string) (*AuthAppInfo, err
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("%s", errResp["error"])
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -1158,6 +1311,11 @@ func (c *Client) GetAuthApp(id string) (*AuthAppInfo, error) {
 	return &result.AuthApp, nil
 }
 
+// UpdateAuthApp PATCHes an auth app's settings (OAuth providers, expiries, and
+// the points-priced two_fa_enabled / sms_enabled toggles). Non-200 responses
+// route through classifyAPIError so a 409/503 points rejection when enabling
+// 2FA/SMS surfaces as a typed *MarketplaceError (rendered via
+// formatMarketplaceError), not swallowed as raw text.
 func (c *Client) UpdateAuthApp(id string, updates map[string]interface{}) error {
 	body, _ := json.Marshal(updates)
 	resp, err := c.authRequest("PUT", "/api/v1/auth-apps/"+id, bytes.NewReader(body))
@@ -1167,9 +1325,8 @@ func (c *Client) UpdateAuthApp(id string, updates map[string]interface{}) error 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return fmt.Errorf("%s", errResp["error"])
+		respBody, _ := io.ReadAll(resp.Body)
+		return classifyAPIError(resp.StatusCode, respBody)
 	}
 	return nil
 }
