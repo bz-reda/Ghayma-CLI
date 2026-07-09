@@ -44,6 +44,7 @@ ghayma deploy --prod      # Deploy to production
 | Command | Description |
 |---|---|
 | `ghayma init` | Initialize a new project in the current directory |
+| `ghayma init --plan <slug>` | Initialize with a specific plan (e.g. `hobby`, `pro`); interactive plan picker when omitted |
 | `ghayma deploy` | Deploy the current project (preview) |
 | `ghayma deploy --prod` | Deploy to production |
 | `ghayma status` | List your projects |
@@ -52,6 +53,14 @@ ghayma deploy --prod      # Deploy to production
 | `ghayma rollback` | Rollback to a previous deployment |
 | `ghayma delete` | Delete the current project and all its resources |
 
+### Points
+
+Each project has a points budget (or runs pay-as-you-go). Databases, apps, storage, and auth apps each consume points based on their tier and size.
+
+| Command | Description |
+|---|---|
+| `ghayma points` | Show the project's points meter and per-resource breakdown |
+
 ### Sites
 
 | Command | Description |
@@ -59,6 +68,9 @@ ghayma deploy --prod      # Deploy to production
 | `ghayma site list` | List all sites in the current project |
 | `ghayma site add [name]` | Add a new site to the current project |
 | `ghayma site use <slug>` | Switch the active site for the project |
+| `ghayma site scale --tier <tier>` | Scale the active app to a new compute tier (e.g. `a`, `b`, `c`, `d`) |
+| `ghayma site scale --replicas <n>` | Scale the active app to `n` replicas (must be >= 1) |
+| `ghayma site scale --site <slug> --tier <tier> --replicas <n>` | Scale a specific site by tier and/or replica count |
 
 ### Domains
 
@@ -83,6 +95,10 @@ ghayma deploy --prod      # Deploy to production
 |---|---|
 | `ghayma db create [name]` | Create a managed database |
 | `ghayma db create [name] --type redis` | Create with specific type (postgres, redis, mongodb) |
+| `ghayma db create [name] --tier <tier> --disk-gb <gb> --backup <schedule>` | Create with a specific compute tier, disk size, and backup schedule (weekly, daily, sixhourly); interactive pickers appear when you pass none of these |
+| `ghayma db resize [name] --tier <tier>` | Change a database's compute tier |
+| `ghayma db resize [name] --disk-gb <gb>` | Grow a database's disk (grow-only — cannot shrink) |
+| `ghayma db resize [name] --backup <schedule>` | Change the backup schedule (weekly, daily, sixhourly) |
 | `ghayma db list` | List your databases |
 | `ghayma db info [name]` | Show database details |
 | `ghayma db credentials [name]` | Show connection credentials |
@@ -100,6 +116,7 @@ ghayma deploy --prod      # Deploy to production
 | Command | Description |
 |---|---|
 | `ghayma storage create [name]` | Create a storage bucket |
+| `ghayma storage create [name] --quota-gb <gb>` | Create with a specific storage quota in GB; interactive picker when omitted |
 | `ghayma storage list` | List your storage buckets |
 | `ghayma storage info [name]` | Show bucket details |
 | `ghayma storage credentials [name]` | Show S3 access credentials |
@@ -116,6 +133,9 @@ ghayma deploy --prod      # Deploy to production
 |---|---|
 | `ghayma auth create [name]` | Create a managed auth service |
 | `ghayma auth create [name] --app-id my-app` | Create with custom app ID |
+| `ghayma auth create [name] --users <bracket>` | Set the user-capacity bracket (1k, 10k, 100k, 1m); interactive picker when omitted |
+| `ghayma auth create [name] --2fa` | Enable two-factor authentication |
+| `ghayma auth create [name] --sms` | Enable SMS |
 | `ghayma auth list` | List your auth apps |
 | `ghayma auth info [name]` | Show auth app details and endpoints |
 | `ghayma auth config [name]` | Configure OAuth providers and settings |
