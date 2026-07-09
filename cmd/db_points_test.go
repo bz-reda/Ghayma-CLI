@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"paas-cli/internal/api"
+
+	"github.com/manifoldco/promptui"
 )
 
 // fixtureCatalog is a representative marketplace catalog. Numbers are test
@@ -198,5 +200,84 @@ func TestFormatMarketplaceError_Kinds(t *testing.T) {
 	// A non-marketplace error renders its raw text.
 	if got := formatMarketplaceError(errors.New("some raw failure")); got != "some raw failure" {
 		t.Errorf("plain error render = %q; want raw text", got)
+	}
+}
+
+// swapPickers snapshots the promptui-backed picker vars and returns a restore
+// fn, keeping tests hermetic (the real pickers are put back afterwards).
+func swapPickers() func() {
+	tf, df, bf := promptDBTierFn, promptDBDiskFn, promptDBBackupFn
+	return func() {
+		promptDBTierFn, promptDBDiskFn, promptDBBackupFn = tf, df, bf
+	}
+}
+
+// A promptui cancel (Ctrl-C = promptui.ErrInterrupt) from ANY interactive
+// picker must propagate as a non-nil error so the caller aborts WITHOUT
+// creating a database. This pins the fix for the swallow-error bug where a
+// cancel returned ""/0 and fell through to a smallest-tier create. It also
+// verifies short-circuiting: pickers after the cancelled one never run.
+func TestPromptDBSelections_CancelAborts(t *testing.T) {
+	for _, failStage := range []string{"tier", "disk", "backup"} {
+		t.Run(failStage+" cancel", func(t *testing.T) {
+			defer swapPickers()()
+
+			diskCalled, backupCalled := false, false
+
+			promptDBTierFn = func(*api.MarketplaceCatalog) (string, error) {
+				if failStage == "tier" {
+					return "", promptui.ErrInterrupt
+				}
+				return "s", nil
+			}
+			promptDBDiskFn = func(*api.MarketplaceCatalog) (int, error) {
+				diskCalled = true
+				if failStage == "disk" {
+					return 0, promptui.ErrInterrupt
+				}
+				return 20, nil
+			}
+			promptDBBackupFn = func(*api.MarketplaceCatalog, int) (string, error) {
+				backupCalled = true
+				if failStage == "backup" {
+					return "", promptui.ErrInterrupt
+				}
+				return "daily", nil
+			}
+
+			tier, disk, backup, err := promptDBSelections(fixtureCatalog())
+			if err == nil {
+				t.Fatal("expected a cancel error; nil would fall through to a create")
+			}
+			if tier != "" || disk != 0 || backup != "" {
+				t.Errorf("cancel must return zero selections, got %q/%d/%q", tier, disk, backup)
+			}
+			switch failStage {
+			case "tier":
+				if diskCalled || backupCalled {
+					t.Error("tier cancel must short-circuit before disk/backup pickers")
+				}
+			case "disk":
+				if backupCalled {
+					t.Error("disk cancel must short-circuit before backup picker")
+				}
+			}
+		})
+	}
+}
+
+// The happy path composes all three picker results in order.
+func TestPromptDBSelections_AllSucceed(t *testing.T) {
+	defer swapPickers()()
+	promptDBTierFn = func(*api.MarketplaceCatalog) (string, error) { return "m", nil }
+	promptDBDiskFn = func(*api.MarketplaceCatalog) (int, error) { return 30, nil }
+	promptDBBackupFn = func(*api.MarketplaceCatalog, int) (string, error) { return "weekly", nil }
+
+	tier, disk, backup, err := promptDBSelections(fixtureCatalog())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tier != "m" || disk != 30 || backup != "weekly" {
+		t.Errorf("got %q/%d/%q; want m/30/weekly", tier, disk, backup)
 	}
 }

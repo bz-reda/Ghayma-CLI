@@ -77,7 +77,14 @@ var dbCreateCmd = &cobra.Command{
 			// Interactive only when the user set NONE of the pricing flags, so
 			// a scripted run (any flag present) stays fully non-interactive.
 			if !cmd.Flags().Changed("tier") && !cmd.Flags().Changed("disk-gb") && !cmd.Flags().Changed("backup") {
-				tier, diskGB, backup = promptDBSelections(cat)
+				var selErr error
+				tier, diskGB, backup, selErr = promptDBSelections(cat)
+				if selErr != nil {
+					// A promptui cancel (Ctrl-C) must abort — never fall
+					// through to a smallest-tier create on an explicit cancel.
+					fmt.Println("❌ Cancelled.")
+					return
+				}
 			}
 			// Best-effort reserve preview from the resolved selections,
 			// defaulting the unset tier/backup to the catalog's smallest.
@@ -157,20 +164,39 @@ var dbResizeCmd = &cobra.Command{
 	},
 }
 
+// The interactive pickers are indirected through function variables so tests
+// can substitute the promptui I/O and exercise the cancel/abort control flow.
+var (
+	promptDBTierFn   = promptDBTier
+	promptDBDiskFn   = promptDBDisk
+	promptDBBackupFn = promptDBBackup
+)
+
 // promptDBSelections renders the catalog-driven tier/disk/backup pickers for an
 // interactive create. Each choice shows its points cost computed from the
-// catalog (never hardcoded).
-func promptDBSelections(cat *api.MarketplaceCatalog) (string, int, string) {
-	tier := promptDBTier(cat)
-	diskGB := promptDBDisk(cat)
-	backup := promptDBBackup(cat, diskGB)
-	return tier, diskGB, backup
+// catalog (never hardcoded). A promptui cancel (Ctrl-C) from any picker returns
+// a non-nil error so the caller aborts WITHOUT creating a database — an empty
+// tiers/backups catalog is NOT a cancel and still degrades to server defaults.
+func promptDBSelections(cat *api.MarketplaceCatalog) (string, int, string, error) {
+	tier, err := promptDBTierFn(cat)
+	if err != nil {
+		return "", 0, "", err
+	}
+	diskGB, err := promptDBDiskFn(cat)
+	if err != nil {
+		return "", 0, "", err
+	}
+	backup, err := promptDBBackupFn(cat, diskGB)
+	if err != nil {
+		return "", 0, "", err
+	}
+	return tier, diskGB, backup, nil
 }
 
-func promptDBTier(cat *api.MarketplaceCatalog) string {
+func promptDBTier(cat *api.MarketplaceCatalog) (string, error) {
 	tiers := sortedDBTiers(cat)
 	if len(tiers) == 0 {
-		return ""
+		return "", nil
 	}
 	labels := make([]string, len(tiers))
 	for i, t := range tiers {
@@ -179,14 +205,14 @@ func promptDBTier(cat *api.MarketplaceCatalog) string {
 	sel := promptui.Select{Label: "Select a database tier", Items: labels, Size: 10}
 	idx, _, err := sel.Run()
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return tiers[idx].Slug
+	return tiers[idx].Slug, nil
 }
 
 // promptDBDisk asks for a disk size stepped by the catalog's db_block_gb. A
 // blank answer leaves it 0 → the server applies its size-based default.
-func promptDBDisk(cat *api.MarketplaceCatalog) int {
+func promptDBDisk(cat *api.MarketplaceCatalog) (int, error) {
 	block := int(cat.Rates.DBBlockGB)
 	if block <= 0 {
 		block = 1
@@ -210,20 +236,20 @@ func promptDBDisk(cat *api.MarketplaceCatalog) int {
 	}
 	res, err := prompt.Run()
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	res = strings.TrimSpace(res)
 	if res == "" {
-		return 0
+		return 0, nil
 	}
 	n, _ := strconv.Atoi(res)
-	return n
+	return n, nil
 }
 
-func promptDBBackup(cat *api.MarketplaceCatalog, diskGB int) string {
+func promptDBBackup(cat *api.MarketplaceCatalog, diskGB int) (string, error) {
 	tiers := sortedBackupTiers(cat)
 	if len(tiers) == 0 {
-		return ""
+		return "", nil
 	}
 	labels := make([]string, len(tiers))
 	for i, t := range tiers {
@@ -232,9 +258,9 @@ func promptDBBackup(cat *api.MarketplaceCatalog, diskGB int) string {
 	sel := promptui.Select{Label: "Select a backup schedule", Items: labels, Size: 10}
 	idx, _, err := sel.Run()
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return tiers[idx].Slug
+	return tiers[idx].Slug, nil
 }
 
 // printReservePreview prints "This database will reserve N pts" before submit,
