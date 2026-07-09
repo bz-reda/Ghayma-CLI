@@ -234,6 +234,15 @@ Examples:
 			return
 		}
 
+		// An app with no compute tier yet (never enveloped) can't be scaled
+		// without choosing one: resolveScaleValues would send app_tier_slug:""
+		// which the backend rejects with a raw binding:"required" 400. Fail
+		// early with guidance instead.
+		if msg := unenvelopedTierError(site.AppTierSlug, cmd.Flags().Changed("tier")); msg != "" {
+			fmt.Printf("❌ %s\n", msg)
+			return
+		}
+
 		tier, replicas := resolveScaleValues(site, siteScaleTier, siteScaleReplicas, cmd.Flags().Changed("replicas"))
 
 		// Reject scale-to-zero client-side with the backend's own reason — never

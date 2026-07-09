@@ -11,8 +11,10 @@ import (
 
 // TestClassifyAPIError_MaxTierAnyStatus pins the Task-3 widening: a max-tier
 // rejection is detected by the unique substring "exceeds the plan's maximum" on
-// ANY status, not just 409. `db create` maps this to HTTP 400 (default branch),
-// while `db resize` returns 409 — both must render the maxtier class.
+// ANY status, not just 409. Today both `db create` and `db resize` return 409
+// (the enforceMaxDBTier guardrail), but different handlers/paths could surface
+// the same error at another status — a 400 body carrying the substring must
+// still render the maxtier class, which is the robustness this test pins.
 func TestClassifyAPIError_MaxTierAnyStatus(t *testing.T) {
 	body := []byte(`{"error":"requested database tier \"l\" (Large) exceeds the plan's maximum \"m\" (Medium)"}`)
 	err := classifyAPIError(http.StatusBadRequest, body)
@@ -86,10 +88,11 @@ func TestCreateDatabase_OmitsZeroDiskAndBlankBackup(t *testing.T) {
 }
 
 // A non-201 create response routes through classifyAPIError so the marketplace
-// classes render (here: a 400 max-tier rejection).
+// classes render (here: the 409 max-tier rejection `db create` returns from the
+// enforceMaxDBTier guardrail).
 func TestCreateDatabase_ClassifiesError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusConflict)
 		io.WriteString(w, `{"error":"requested database tier \"l\" exceeds the plan's maximum \"m\""}`)
 	}))
 	defer ts.Close()

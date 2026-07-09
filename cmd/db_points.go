@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"paas-cli/internal/api"
 )
@@ -85,6 +86,31 @@ func findBackupTier(cat *api.MarketplaceCatalog, slug string) (api.CatalogBackup
 		}
 	}
 	return api.CatalogBackupTier{}, false
+}
+
+// dbTierSlugs lists the catalog's DB tier slugs ordered by Position, for the
+// "available tiers" hint in validateDBTier.
+func dbTierSlugs(cat *api.MarketplaceCatalog) []string {
+	tiers := sortedDBTiers(cat)
+	slugs := make([]string, len(tiers))
+	for i, t := range tiers {
+		slugs[i] = t.Slug
+	}
+	return slugs
+}
+
+// validateDBTier guards the --tier flag→slug value against the catalog (mirrors
+// validateAuthBracket). A blank value (server default) and a known slug pass; an
+// unknown slug errors, listing the available tiers. Only called when the catalog
+// is present — a missing catalog fails soft and defers to the backend.
+func validateDBTier(cat *api.MarketplaceCatalog, slug string) error {
+	if slug == "" {
+		return nil
+	}
+	if _, ok := findDBTier(cat, slug); ok {
+		return nil
+	}
+	return fmt.Errorf("unknown tier %q; choose one of: %s", slug, strings.Join(dbTierSlugs(cat), ", "))
 }
 
 // defaultDBTier / defaultBackupTier return the lowest-Position row — the

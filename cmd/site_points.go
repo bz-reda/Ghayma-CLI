@@ -115,3 +115,16 @@ func displayTier(slug string) string {
 	}
 	return slug
 }
+
+// unenvelopedTierError guards `site scale` on an app that has no compute tier
+// yet (currentTier == "") when the user did not pass --tier. Sending the
+// resolved empty tier would fail the backend's app_tier_slug binding:"required"
+// with a raw gin 400, so we reject early with an actionable message. When --tier
+// is set (tierSet true) — for any current state — the guard passes and the scale
+// proceeds unchanged. Returns "" when allowed.
+func unenvelopedTierError(currentTier string, tierSet bool) string {
+	if currentTier == "" && !tierSet {
+		return "this app has no compute tier yet — specify --tier <tier> to set one"
+	}
+	return ""
+}

@@ -98,6 +98,32 @@ func TestDBCostPreview_UnknownSlugs(t *testing.T) {
 	}
 }
 
+// validateDBTier guards the --tier flag value against the catalog (mirrors
+// validateAuthBracket): a blank value (server default) and a known slug pass; an
+// unknown slug errors, naming the available tiers. Only reached when the catalog
+// is present — a missing catalog fails soft and skips validation.
+func TestValidateDBTier(t *testing.T) {
+	cat := fixtureCatalog()
+
+	if err := validateDBTier(cat, ""); err != nil {
+		t.Errorf("blank tier (server default) must pass, got %v", err)
+	}
+	if err := validateDBTier(cat, "s"); err != nil {
+		t.Errorf("known tier s must pass, got %v", err)
+	}
+
+	err := validateDBTier(cat, "xl")
+	if err == nil {
+		t.Fatal("unknown tier must error")
+	}
+	// The error must name the bad slug and list the available tiers.
+	for _, want := range []string{"xl", "xs", "s", "m"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q (bad slug + available tiers)", err.Error(), want)
+		}
+	}
+}
+
 // The interactive tier line renders vCPU / memory / points from the catalog.
 func TestDBTierLabel(t *testing.T) {
 	label := dbTierLabel(api.CatalogDBTier{Slug: "xs", CPULimitMilli: 250, MemoryLimitMB: 256, PointsCost: 2})

@@ -161,6 +161,33 @@ func TestReplicasBelowMinimum(t *testing.T) {
 	}
 }
 
+// unenvelopedTierError guards `site scale` on an app that has no compute tier
+// yet (AppTierSlug == ""). With no --tier, resolveScaleValues would send
+// app_tier_slug:"" which the backend rejects with a raw binding:"required" 400,
+// so the CLI fails early with actionable guidance. Passing --tier (any current
+// state) clears the guard and the scale proceeds unchanged.
+func TestUnenvelopedTierError(t *testing.T) {
+	// Empty current tier + no --tier → error that tells the user to pass --tier.
+	msg := unenvelopedTierError("", false)
+	if msg == "" {
+		t.Fatal("empty current tier + no --tier must error")
+	}
+	if !strings.Contains(msg, "--tier") {
+		t.Errorf("error = %q; want it to tell the user to specify --tier", msg)
+	}
+
+	// Empty current tier + --tier given → proceeds (no error).
+	if msg := unenvelopedTierError("", true); msg != "" {
+		t.Errorf("empty tier + --tier given = %q; want empty (proceeds)", msg)
+	}
+
+	// Already-enveloped app (non-empty current tier), no --tier → proceeds
+	// keeping its current tier — behavior unchanged.
+	if msg := unenvelopedTierError("b", false); msg != "" {
+		t.Errorf("enveloped app without --tier = %q; want empty (keeps current tier)", msg)
+	}
+}
+
 // formatScaleLine shows the new total footprint (tier × replicas = N pts) and,
 // when a non-PAYG summary was fetchable, the remaining-after computed from the
 // DELTA (new − old) — a resize only spends the difference, so subtracting the

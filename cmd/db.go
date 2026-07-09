@@ -85,6 +85,15 @@ var dbCreateCmd = &cobra.Command{
 					fmt.Println("❌ Cancelled.")
 					return
 				}
+			} else if cmd.Flags().Changed("tier") {
+				// Flag path: guard an unknown --tier against the catalog before
+				// previewing (mirrors auth create's validateAuthBracket / init's
+				// validatePlanFlag), instead of deferring silently to a backend
+				// error. Fail-soft — only reached when the catalog is present.
+				if err := validateDBTier(cat, tier); err != nil {
+					fmt.Printf("❌ %v\n", err)
+					return
+				}
 			}
 			// Best-effort reserve preview from the resolved selections,
 			// defaulting the unset tier/backup to the catalog's smallest.
