@@ -661,15 +661,37 @@ type DatabaseInfo struct {
 	ProjectID   string `json:"project_id,omitempty"`
 	ReplicaSet  bool   `json:"replica_set,omitempty"`
 	CreatedAt   string `json:"created_at"`
+	// Points-marketplace footprint fields (mirror managed_databases columns).
+	// TierSlug/DiskGB/BackupTierSlug drive the resize preview and the
+	// client-side grow-only disk check.
+	TierSlug       string `json:"tier_slug,omitempty"`
+	DiskGB         int    `json:"disk_gb,omitempty"`
+	BackupTierSlug string `json:"backup_tier_slug,omitempty"`
 }
 
 // CreateDatabase creates a managed database. replicaSet is only meaningful for
 // MongoDB and is sent only when non-nil so the server's default (true for new
 // MongoDB instances) applies when the caller doesn't override it.
-func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool) (*DatabaseInfo, error) {
+//
+// The points-marketplace selectors are sent when set: tierSlug (wire field
+// "tier"), diskGB ("disk_gb", omitted at 0 so the server falls back to
+// ceil(size_mb/1024)), and backupSlug ("backup_tier_slug", omitted when blank
+// so the server applies the free weekly default). Non-201 responses route
+// through classifyAPIError so max-tier / insufficient-points / capacity classes
+// render.
+func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool, tierSlug string, diskGB int, backupSlug string) (*DatabaseInfo, error) {
 	payload := map[string]interface{}{"name": name, "type": dbType, "project_id": projectID}
 	if replicaSet != nil {
 		payload["replica_set"] = *replicaSet
+	}
+	if tierSlug != "" {
+		payload["tier"] = tierSlug
+	}
+	if diskGB > 0 {
+		payload["disk_gb"] = diskGB
+	}
+	if backupSlug != "" {
+		payload["backup_tier_slug"] = backupSlug
 	}
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/databases", bytes.NewReader(body))
@@ -679,9 +701,44 @@ func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("%s", errResp["error"])
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyAPIError(resp.StatusCode, respBody)
+	}
+
+	var result struct {
+		Database DatabaseInfo `json:"database"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return &result.Database, nil
+}
+
+// RetierDatabase changes a database's tier, disk, and/or backup schedule via
+// PATCH /api/v1/databases/:id/tier. At least one of tier/diskGB/backupSlug must
+// be meaningful; unset fields (blank slug, 0 disk) are omitted so a single-axis
+// change doesn't clobber the others. Non-200 responses route through
+// classifyAPIError so the marketplace classes render (disk grow-only is checked
+// client-side before this call).
+func (c *Client) RetierDatabase(id, tier string, diskGB int, backupSlug string) (*DatabaseInfo, error) {
+	payload := map[string]interface{}{}
+	if tier != "" {
+		payload["tier"] = tier
+	}
+	if diskGB > 0 {
+		payload["disk_gb"] = diskGB
+	}
+	if backupSlug != "" {
+		payload["backup_tier_slug"] = backupSlug
+	}
+	body, _ := json.Marshal(payload)
+	resp, err := c.authRequest("PATCH", "/api/v1/databases/"+id+"/tier", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {

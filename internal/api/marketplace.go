@@ -174,16 +174,23 @@ func (e *MarketplaceError) Error() string { return e.Message }
 //
 // Classification is by (status, message substring), verified against the live
 // handlers (internal/sites/handler.go, internal/databases/handler.go):
-//   - 409 + "exceeds the plan's maximum" → maxtier
-//   - 409 + "points budget"              → insufficient
-//   - 503 + "platform capacity"          → capacity
+//   - "exceeds the plan's maximum" (ANY status) → maxtier
+//   - 409 + "points budget"                     → insufficient
+//   - 503 + "platform capacity"                 → capacity
+//
+// maxtier is matched on the message ALONE, before the status switch: `db create`
+// maps a max-tier rejection to HTTP 400 (default branch) while `db resize`
+// returns 409, so keying it on 409 alone would miss the create path. The
+// substring is unique/mutually-exclusive across the handlers (verified), so a
+// status-agnostic match can't collide with the insufficient/capacity classes.
 func classifyAPIError(status int, body []byte) error {
 	msg := errorMessageFromBody(body)
+	if strings.Contains(msg, "exceeds the plan's maximum") {
+		return &MarketplaceError{Kind: "maxtier", Message: msg}
+	}
 	switch status {
 	case http.StatusConflict: // 409
 		switch {
-		case strings.Contains(msg, "exceeds the plan's maximum"):
-			return &MarketplaceError{Kind: "maxtier", Message: msg}
 		case strings.Contains(msg, "points budget"):
 			return &MarketplaceError{Kind: "insufficient", Message: msg}
 		default:
