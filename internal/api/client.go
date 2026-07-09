@@ -944,8 +944,18 @@ type BucketInfo struct {
 	CreatedAt         string `json:"created_at"`
 }
 
-func (c *Client) CreateBucket(name, projectID string) (*BucketInfo, error) {
-	body, _ := json.Marshal(map[string]string{"name": name, "project_id": projectID})
+// CreateBucket creates an object-storage bucket. sizeMB is the optional
+// per-bucket quota in MB (0 = omit → the server applies the plan's default);
+// the backend field is size_mb (there is NO quota_gb — the CLI's --quota-gb is
+// converted to MB by the caller). Non-201 responses route through
+// classifyAPIError so the marketplace insufficient-points / capacity classes
+// render.
+func (c *Client) CreateBucket(name, projectID string, sizeMB int) (*BucketInfo, error) {
+	payload := map[string]interface{}{"name": name, "project_id": projectID}
+	if sizeMB > 0 {
+		payload["size_mb"] = sizeMB
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/storage", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -953,9 +963,8 @@ func (c *Client) CreateBucket(name, projectID string) (*BucketInfo, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("%s", errResp["error"])
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -1136,8 +1145,18 @@ type AuthUserInfo struct {
 	CreatedAt     string `json:"created_at"`
 }
 
-func (c *Client) CreateAuthApp(name, appID, projectID string) (*AuthAppInfo, error) {
-	body, _ := json.Marshal(map[string]string{"name": name, "app_id": appID, "project_id": projectID})
+// CreateAuthApp creates a managed auth app. authTierSlug is the optional
+// user-capacity bracket (auth_tiers.slug — 1k/10k/100k/1m; blank = server
+// default). 2FA/SMS are NOT set here (the create endpoint doesn't accept them);
+// they are enabled afterward via UpdateAuthApp. Non-201 responses route through
+// classifyAPIError so the marketplace insufficient-points / capacity classes
+// render.
+func (c *Client) CreateAuthApp(name, appID, projectID, authTierSlug string) (*AuthAppInfo, error) {
+	payload := map[string]interface{}{"name": name, "app_id": appID, "project_id": projectID}
+	if authTierSlug != "" {
+		payload["auth_tier_slug"] = authTierSlug
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/auth-apps", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -1145,9 +1164,8 @@ func (c *Client) CreateAuthApp(name, appID, projectID string) (*AuthAppInfo, err
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("%s", errResp["error"])
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -1189,6 +1207,11 @@ func (c *Client) GetAuthApp(id string) (*AuthAppInfo, error) {
 	return &result.AuthApp, nil
 }
 
+// UpdateAuthApp PATCHes an auth app's settings (OAuth providers, expiries, and
+// the points-priced two_fa_enabled / sms_enabled toggles). Non-200 responses
+// route through classifyAPIError so a 409/503 points rejection when enabling
+// 2FA/SMS surfaces as a typed *MarketplaceError (rendered via
+// formatMarketplaceError), not swallowed as raw text.
 func (c *Client) UpdateAuthApp(id string, updates map[string]interface{}) error {
 	body, _ := json.Marshal(updates)
 	resp, err := c.authRequest("PUT", "/api/v1/auth-apps/"+id, bytes.NewReader(body))
@@ -1198,9 +1221,8 @@ func (c *Client) UpdateAuthApp(id string, updates map[string]interface{}) error 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return fmt.Errorf("%s", errResp["error"])
+		respBody, _ := io.ReadAll(resp.Body)
+		return classifyAPIError(resp.StatusCode, respBody)
 	}
 	return nil
 }
