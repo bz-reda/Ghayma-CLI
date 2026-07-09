@@ -219,6 +219,11 @@ type Site struct {
 	Name      string `json:"name"`
 	Slug      string `json:"slug"`
 	Status    string `json:"status"`
+	// Points-allowance marketplace: every app carries its compute tier slug +
+	// replica count so `site scale` can show the current size before changing it
+	// and price the change as AppCost(tier.PointsCost, replicas).
+	AppTierSlug string `json:"app_tier_slug"`
+	Replicas    int    `json:"replicas"`
 }
 
 func (c *Client) CreateSite(projectID, name string) (*Site, error) {
@@ -255,6 +260,36 @@ func (c *Client) ListSites(projectID string) ([]Site, error) {
 	var sites []Site
 	json.NewDecoder(resp.Body).Decode(&sites)
 	return sites, nil
+}
+
+// SetAppTier changes an app's compute tier and/or replica count via
+// PUT /api/v1/projects/:id/sites/:siteId/tier (the sites handler is mounted
+// project-scoped, so the project id is part of the path even though the handler
+// keys off siteId). Both fields are always sent — app_tier_slug is required on
+// the wire, so the caller defaults an unset flag to the site's current value.
+// Non-2xx responses route through classifyAPIError so the marketplace classes
+// render: 409 maxtier (ErrAppTierExceedsPlan) / 409 insufficient (points
+// budget) / 503 capacity; a 400 replicas-below-minimum surfaces its raw reason
+// (the CLI validates replicas >= 1 client-side before ever calling this).
+func (c *Client) SetAppTier(projectID, siteID, tierSlug string, replicas int) (*Site, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"app_tier_slug": tierSlug,
+		"replicas":      replicas,
+	})
+	resp, err := c.authRequest("PUT", "/api/v1/projects/"+projectID+"/sites/"+siteID+"/tier", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyAPIError(resp.StatusCode, respBody)
+	}
+
+	var site Site
+	json.NewDecoder(resp.Body).Decode(&site)
+	return &site, nil
 }
 
 // Domains

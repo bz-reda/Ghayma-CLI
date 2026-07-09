@@ -180,10 +180,104 @@ var siteUseCmd = &cobra.Command{
 	},
 }
 
+var (
+	siteScaleSite     string
+	siteScaleTier     string
+	siteScaleReplicas int
+)
+
+var siteScaleCmd = &cobra.Command{
+	Use:   "scale",
+	Short: "Change an app's compute tier and/or replica count (priced in points)",
+	Long: `Change an app's compute tier and/or replica count.
+
+Both flags are optional. An omitted --tier keeps the current tier; an omitted
+--replicas keeps the current count. The current size is shown first, then the
+new points footprint (tier × replicas) is previewed before the change is sent.
+
+Examples:
+  ghayma site scale --tier c            # bigger tier, same replicas
+  ghayma site scale --replicas 3        # more replicas, same tier
+  ghayma site scale --site api --tier b --replicas 2`,
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := config.Load()
+		if cfg.Token == "" {
+			fmt.Println("❌ Please login first: ghayma login")
+			return
+		}
+
+		projectID, configSiteID, _, err := localConfig()
+		if err != nil {
+			fmt.Printf("❌ %v\n", err)
+			return
+		}
+
+		client := api.NewClient(cfg)
+		sites, err := client.ListSites(projectID)
+		if err != nil {
+			fmt.Printf("❌ Failed to list sites: %v\n", err)
+			return
+		}
+
+		site, err := resolveScaleTarget(sites, siteScaleSite, configSiteID)
+		if err != nil {
+			fmt.Printf("❌ %v\n", err)
+			return
+		}
+
+		// Show the current size first (the brief requires it).
+		fmt.Printf("📌 %s (slug: %s)\n", site.Name, site.Slug)
+		fmt.Printf("   Current: tier %s · %d replica(s)\n", displayTier(site.AppTierSlug), site.Replicas)
+
+		if !cmd.Flags().Changed("tier") && !cmd.Flags().Changed("replicas") {
+			fmt.Println("\nNothing to change. Pass --tier and/or --replicas.")
+			return
+		}
+
+		tier, replicas := resolveScaleValues(site, siteScaleTier, siteScaleReplicas, cmd.Flags().Changed("replicas"))
+
+		// Reject scale-to-zero client-side with the backend's own reason — never
+		// send a sub-1 request.
+		if msg := replicasBelowMinimum(replicas); msg != "" {
+			fmt.Printf("❌ %s\n", msg)
+			return
+		}
+
+		// Fail-soft preview. An older backend (pre-catalog) returns
+		// ErrCatalogUnavailable — skip the points line and fall back to a bare
+		// scale; never block the change.
+		if cat, catErr := client.GetMarketplaceCatalog(); catErr == nil && cat != nil {
+			if newCost, err := appCostPreview(cat, tier, replicas); err == nil {
+				// A resize only spends the delta; fall back to the full new cost
+				// when the current tier can't be priced (e.g. not in the catalog).
+				delta := newCost
+				if oldCost, oerr := appCostPreview(cat, site.AppTierSlug, site.Replicas); oerr == nil {
+					delta = newCost - oldCost
+				}
+				summary, _ := client.GetProjectPoints(projectID)
+				fmt.Println(formatScaleLine(tier, replicas, newCost, delta, summary))
+			}
+		}
+
+		updated, err := client.SetAppTier(projectID, site.ID, tier, replicas)
+		if err != nil {
+			fmt.Printf("❌ Failed to scale: %s\n", formatMarketplaceError(err))
+			return
+		}
+
+		fmt.Printf("✅ '%s' scaled to tier %s · %d replica(s)\n", updated.Name, displayTier(updated.AppTierSlug), updated.Replicas)
+	},
+}
+
 func init() {
 	siteCmd.AddCommand(siteListCmd)
 	siteCmd.AddCommand(siteCreateCmd)
 	siteCmd.AddCommand(siteAddCmd) // hidden deprecated alias
 	siteCmd.AddCommand(siteUseCmd)
+	siteCmd.AddCommand(siteScaleCmd)
 	rootCmd.AddCommand(siteCmd)
+
+	siteScaleCmd.Flags().StringVar(&siteScaleSite, "site", "", "Site name or slug to scale (defaults to the project's active or only site)")
+	siteScaleCmd.Flags().StringVar(&siteScaleTier, "tier", "", "New app compute tier (e.g. a, b, c, d). Keeps the current tier when omitted.")
+	siteScaleCmd.Flags().IntVar(&siteScaleReplicas, "replicas", 0, "New replica count (must be >= 1). Keeps the current count when omitted.")
 }
