@@ -121,9 +121,10 @@ func TestResolvePlan_FlagInvalid(t *testing.T) {
 	}
 }
 
-// TestResolvePlan_FetchFailedFallback: a 404 (old/self-hosted server) degrades
-// to the empty plan (server default) with NO error — init must never block.
-// Holds whether or not --plan was passed.
+// TestResolvePlan_FetchFailedFallback: without --plan, a 404 (old/self-hosted
+// server) degrades to the empty plan (server default) with NO error — init must
+// never block. The explicit-flag case is covered by
+// TestResolvePlan_FlagSurvivesFetchFailure below, which sends the slug through.
 func TestResolvePlan_FetchFailedFallback(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -131,14 +132,33 @@ func TestResolvePlan_FetchFailedFallback(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	for _, flag := range []string{"", "pro"} {
-		got, err := resolvePlan(planTestClient(ts.URL), flag)
-		if err != nil {
-			t.Fatalf("resolvePlan(flag=%q): want fail-soft nil error, got %v", flag, err)
-		}
-		if got != "" {
-			t.Errorf("resolvePlan(flag=%q) = %q; want empty (server default)", flag, got)
-		}
+	got, err := resolvePlan(planTestClient(ts.URL), "")
+	if err != nil {
+		t.Fatalf("resolvePlan(no flag): want fail-soft nil error, got %v", err)
+	}
+	if got != "" {
+		t.Errorf("resolvePlan(no flag) = %q; want empty (server default)", got)
+	}
+}
+
+// TestResolvePlan_FlagSurvivesFetchFailure: with --plan set and a failing plans
+// fetch, resolvePlan must NOT drop the flag to the server default (that would
+// silently create a scripted `init --plan pro` on hobby). It sends the slug
+// through unvalidated — the server then validates/rejects it — with NO error so
+// init is never blocked.
+func TestResolvePlan_FlagSurvivesFetchFailure(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"404 page not found"}`))
+	}))
+	defer ts.Close()
+
+	got, err := resolvePlan(planTestClient(ts.URL), "pro")
+	if err != nil {
+		t.Fatalf("resolvePlan(--plan pro, fetch fails): want nil error, got %v", err)
+	}
+	if got != "pro" {
+		t.Errorf("resolvePlan(--plan pro, fetch fails) = %q; want %q (sent as-is)", got, "pro")
 	}
 }
 

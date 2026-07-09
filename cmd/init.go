@@ -324,8 +324,11 @@ var promptPlanSelectFn = promptPlanSelect
 //     cancel returns errPlanSelectionCancelled so init aborts — it never
 //     falls through to the default plan.
 //   - Fetch failure (old/self-hosted server without the endpoint, or any
-//     error) or an empty plan list: returns "" (server default) with a
-//     printed note. Never blocks init.
+//     error) WITH --plan set: sends the slug through unvalidated — the server
+//     validates/rejects it, so a scripted `init --plan pro` never silently
+//     lands on the default plan. A note flags that it wasn't validated.
+//   - Fetch failure WITHOUT --plan (interactive), or an empty plan list:
+//     returns "" (server default) with a printed note. Never blocks init.
 //
 // Note the deliberate distinction: a fetch failure degrades to the server
 // default, but a user cancel aborts — the two must not be conflated.
@@ -333,10 +336,13 @@ func resolvePlan(client *api.Client, planFlag string) (string, error) {
 	plans, err := client.GetPlans()
 	if err != nil {
 		if planFlag != "" {
-			fmt.Printf("ℹ️  Couldn't fetch plans to validate --plan %q; the server's default plan will apply.\n", planFlag)
-		} else {
-			fmt.Println("ℹ️  Couldn't fetch plans; the server's default plan will apply.")
+			// Don't drop an explicit flag on a catalog blip — send it as-is
+			// and let the server validate it (silent-wrong-plan is the bug
+			// Task 6 fixes; dropping to the default here would reintroduce it).
+			fmt.Printf("ℹ️  Couldn't fetch plans to validate --plan %q; sending it as-is for the server to validate.\n", planFlag)
+			return planFlag, nil
 		}
+		fmt.Println("ℹ️  Couldn't fetch plans; the server's default plan will apply.")
 		return "", nil
 	}
 
