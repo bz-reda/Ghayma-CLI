@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> **Source of truth — Ghayma-Architect.** Before changing platform behavior, read the relevant page in the Ghayma-Architect repo (sibling folder `Ghayma-Architect/`); update it in the same work-cycle after merging a behavior change. Every PR here carries the `Ghayma-Architect updated / not needed` checkbox.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project
