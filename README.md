@@ -176,7 +176,7 @@ make build
 
 ## Documentation
 
-Full documentation at [docs.ghayma.dev/cli](https://docs.ghayma.dev/cli).
+Full documentation at [docs.ghayma.cloud/cli](https://docs.ghayma.cloud/cli).
 
 ## License
 
