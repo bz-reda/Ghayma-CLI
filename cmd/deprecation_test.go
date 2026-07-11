@@ -50,7 +50,7 @@ func captureStderr(t *testing.T, fn func()) string {
 func TestMaybeWarnDeprecated_PrintsOnFirstCall(t *testing.T) {
 	withFakeHome(t, func(home string) {
 		out := captureStderr(t, func() {
-			maybeWarnDeprecated("site add", "site create", "v0.3.0")
+			maybeWarnDeprecated("site add", "site create", "a future release")
 		})
 		if !strings.Contains(out, "[deprecation]") {
 			t.Errorf("expected deprecation marker, got %q", out)
@@ -58,7 +58,7 @@ func TestMaybeWarnDeprecated_PrintsOnFirstCall(t *testing.T) {
 		if !strings.Contains(out, "'site add' is deprecated") {
 			t.Errorf("missing old command name: %q", out)
 		}
-		if !strings.Contains(out, "removed in v0.3.0") {
+		if !strings.Contains(out, "removed in a future release") {
 			t.Errorf("missing removal version: %q", out)
 		}
 		if !strings.Contains(out, "use 'site create' instead") {
@@ -82,14 +82,14 @@ func TestMaybeWarnDeprecated_PrintsOnFirstCall(t *testing.T) {
 func TestMaybeWarnDeprecated_SilentWithinInterval(t *testing.T) {
 	withFakeHome(t, func(home string) {
 		first := captureStderr(t, func() {
-			maybeWarnDeprecated("domain add", "domain create", "v0.3.0")
+			maybeWarnDeprecated("domain add", "domain create", "a future release")
 		})
 		if !strings.Contains(first, "[deprecation]") {
 			t.Fatalf("first call should have printed, got %q", first)
 		}
 
 		second := captureStderr(t, func() {
-			maybeWarnDeprecated("domain add", "domain create", "v0.3.0")
+			maybeWarnDeprecated("domain add", "domain create", "a future release")
 		})
 		if second != "" {
 			t.Errorf("second call within interval should be silent, got %q", second)
@@ -107,7 +107,7 @@ func TestMaybeWarnDeprecated_PrintsAgainAfterInterval(t *testing.T) {
 		cfg.Save()
 
 		out := captureStderr(t, func() {
-			maybeWarnDeprecated("env remove", "env delete", "v0.3.0")
+			maybeWarnDeprecated("env remove", "env delete", "a future release")
 		})
 		if !strings.Contains(out, "[deprecation]") {
 			t.Errorf("expected re-warning after interval, got %q", out)
@@ -126,7 +126,7 @@ func TestMaybeWarnDeprecated_DifferentNoticesIndependent(t *testing.T) {
 
 		// Warning about a different alias should still fire.
 		out := captureStderr(t, func() {
-			maybeWarnDeprecated("domain add", "domain create", "v0.3.0")
+			maybeWarnDeprecated("domain add", "domain create", "a future release")
 		})
 		if !strings.Contains(out, "[deprecation]") {
 			t.Errorf("expected warning for unrelated notice id, got %q", out)

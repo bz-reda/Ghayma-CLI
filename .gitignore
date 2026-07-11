@@ -1,3 +1,4 @@
 ghayma
 dist/
 *.exe
+.DS_Store

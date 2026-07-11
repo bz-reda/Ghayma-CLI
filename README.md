@@ -1,6 +1,6 @@
 # Ghayma CLI
 
-Command-line tool for deploying and managing applications on [Ghayma](https://dashboard.ghayma.dev).
+Command-line tool for deploying and managing applications on [Ghayma](https://dash.ghayma.cloud).
 
 ## Installation
 
@@ -16,7 +16,7 @@ curl -fsSL https://dash.ghayma.cloud/install.sh | sh
 irm https://dash.ghayma.cloud/install.ps1 | iex
 ```
 
-Or download a binary for your platform from [Releases](https://github.com/bz-reda/Espace-Tech-Cloud-CLI/releases).
+Or download a binary for your platform from [Releases](https://github.com/bz-reda/Ghayma-CLI/releases).
 
 ## Quick Start
 
@@ -37,6 +37,7 @@ ghayma deploy --prod      # Deploy to production
 | `ghayma login` | Authenticate with Ghayma (opens browser) |
 | `ghayma login --email` | Authenticate with email/password |
 | `ghayma logout` | Log out and clear saved credentials |
+| `ghayma whoami` | Show the current CLI identity |
 | `ghayma version` | Show CLI version |
 
 ### Projects
@@ -45,6 +46,8 @@ ghayma deploy --prod      # Deploy to production
 |---|---|
 | `ghayma init` | Initialize a new project in the current directory |
 | `ghayma init --plan <slug>` | Initialize with a specific plan (e.g. `hobby`, `pro`); interactive plan picker when omitted |
+| `ghayma link` | Link the current directory to an existing project |
+| `ghayma project transfer` | Transfer project ownership (also: `project pending`, `project cancel`, `project accept`) |
 | `ghayma deploy` | Deploy the current project (preview) |
 | `ghayma deploy --prod` | Deploy to production |
 | `ghayma status` | List your projects |
@@ -66,7 +69,7 @@ Each project has a points budget (or runs pay-as-you-go). Databases, apps, stora
 | Command | Description |
 |---|---|
 | `ghayma site list` | List all sites in the current project |
-| `ghayma site add [name]` | Add a new site to the current project |
+| `ghayma site create [name]` | Add a new site to the current project |
 | `ghayma site use <slug>` | Switch the active site for the project |
 | `ghayma site scale --tier <tier>` | Scale the active app to a new compute tier (e.g. `a`, `b`, `c`, `d`) |
 | `ghayma site scale --replicas <n>` | Scale the active app to `n` replicas (must be >= 1) |
@@ -76,9 +79,9 @@ Each project has a points budget (or runs pay-as-you-go). Databases, apps, stora
 
 | Command | Description |
 |---|---|
-| `ghayma domain add [domain]` | Add a custom domain to the current project |
+| `ghayma domain create [domain]` | Add a custom domain to the current project |
 | `ghayma domain list` | List domains for the current project |
-| `ghayma domain remove [domain]` | Remove a domain from the current project |
+| `ghayma domain delete [domain]` | Remove a domain from the current project |
 
 ### Environment Variables
 
@@ -87,7 +90,7 @@ Each project has a points budget (or runs pay-as-you-go). Databases, apps, stora
 | `ghayma env set KEY=VALUE` | Set environment variables |
 | `ghayma env set --file .env.production` | Set from file |
 | `ghayma env list` | List environment variables |
-| `ghayma env remove KEY` | Remove an environment variable |
+| `ghayma env delete KEY` | Remove an environment variable |
 
 ### Databases
 
@@ -165,8 +168,8 @@ New projects use `.ghayma.json`. Existing projects that already have a `.espacet
 ## Building from Source
 
 ```bash
-git clone https://github.com/bz-reda/Espace-Tech-Cloud-CLI.git
-cd Espace-Tech-Cloud-CLI
+git clone https://github.com/bz-reda/Ghayma-CLI.git
+cd Ghayma-CLI
 make build
 ./ghayma version
 ```

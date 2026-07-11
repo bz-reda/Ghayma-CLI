@@ -25,11 +25,12 @@ Tests are Go tests: `cmd/*_test.go` and `internal/api/*_test.go`. Run with `go t
 - `root.go` — root command, version command, ldflags vars (`version`, `commit`, `date`)
 - `deploy.go` — tarball upload + deployment polling loop; has monorepo detection via `turbo.json`
 - `init.go` — interactive project init, writes `.ghayma.json`
-- `site.go` — `site add|list|use` subcommands
-- `db.go` — `db create|list|info|credentials|link|unlink|expose|unexpose|stop|start|rotate|delete`
+- `site.go` — `site create|list|use|scale` subcommands (`site add` kept as hidden deprecated alias)
+- `db.go` — `db create|resize|list|info|credentials|link|unlink|expose|unexpose|stop|start|rotate|delete`
 - `storage.go` — `storage create|list|info|credentials|link|unlink|expose|unexpose|rotate|delete`
 - `auth.go` — `auth create|list|info|config|users|stats|rotate-keys|delete`
-- `domain.go`, `env.go`, `logs.go`, `rollback.go`, `status.go`, `delete.go`, `login.go`, `logout.go`, `register.go`
+- `points.go` — `points` (project points meter + per-resource breakdown)
+- `domain.go`, `env.go`, `logs.go`, `rollback.go`, `status.go`, `delete.go`, `login.go`, `logout.go`, `register.go`, `whoami.go`, `link.go`, `project.go` (ownership transfer)
 
 **`internal/api/client.go`** — single API client struct wrapping `net/http`. All backend calls go through `authRequest()` which adds the Bearer token. The client handles projects, deployments, domains, env vars, databases, storage buckets, and auth apps.
 

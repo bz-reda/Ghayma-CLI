@@ -115,7 +115,7 @@ var siteAddCmd = &cobra.Command{
 	Hidden: true,
 	Args:   cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		maybeWarnDeprecated("site add", "site create", "v0.3.0")
+		maybeWarnDeprecated("site add", "site create", "a future release")
 		runSiteCreate(cmd, args)
 	},
 }
