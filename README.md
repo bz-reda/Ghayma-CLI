@@ -47,7 +47,7 @@ ghayma deploy --prod      # Deploy to production
 | `ghayma init` | Initialize a new project in the current directory |
 | `ghayma init --plan <slug>` | Initialize with a specific plan (e.g. `hobby`, `pro`); interactive plan picker when omitted |
 | `ghayma link` | Link the current directory to an existing project |
-| `ghayma project transfer` | Transfer project ownership (also: `project pending`, `project cancel`, `project accept`) |
+| `ghayma project transfer` | Transfer project ownership (also: `project status`, `project cancel`, `project accept`) |
 | `ghayma deploy` | Deploy the current project (preview) |
 | `ghayma deploy --prod` | Deploy to production |
 | `ghayma status` | List your projects |
@@ -97,7 +97,7 @@ Each project has a points budget (or runs pay-as-you-go). Databases, apps, stora
 | Command | Description |
 |---|---|
 | `ghayma db create [name]` | Create a managed database |
-| `ghayma db create [name] --type redis` | Create with specific type (postgres, redis, mongodb) |
+| `ghayma db create [name] --type mongodb` | Create with specific type (postgres, mongodb) |
 | `ghayma db create [name] --tier <tier> --disk-gb <gb> --backup <schedule>` | Create with a specific compute tier, disk size, and backup schedule (weekly, daily, sixhourly); interactive pickers appear when you pass none of these |
 | `ghayma db resize [name] --tier <tier>` | Change a database's compute tier |
 | `ghayma db resize [name] --disk-gb <gb>` | Grow a database's disk (grow-only — cannot shrink) |
