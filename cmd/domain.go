@@ -61,7 +61,7 @@ var domainAddCmd = &cobra.Command{
 	Hidden: true,
 	Args:   requireOneArg("domain", ""),
 	Run: func(cmd *cobra.Command, args []string) {
-		maybeWarnDeprecated("domain add", "domain create", "v0.3.0")
+		maybeWarnDeprecated("domain add", "domain create", "a future release")
 		runDomainCreate(cmd, args)
 	},
 }
@@ -158,7 +158,7 @@ var domainRemoveCmd = &cobra.Command{
 	Hidden: true,
 	Args:   requireOneArg("domain", "domain list"),
 	Run: func(cmd *cobra.Command, args []string) {
-		maybeWarnDeprecated("domain remove", "domain delete", "v0.3.0")
+		maybeWarnDeprecated("domain remove", "domain delete", "a future release")
 		runDomainDelete(cmd, args)
 	},
 }

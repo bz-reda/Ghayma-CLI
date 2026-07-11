@@ -268,7 +268,7 @@ var envRemoveCmd = &cobra.Command{
 	Hidden: true,
 	Args:   requireAtLeastOneArg("KEY", "env list"),
 	Run: func(cmd *cobra.Command, args []string) {
-		maybeWarnDeprecated("env remove", "env delete", "v0.3.0")
+		maybeWarnDeprecated("env remove", "env delete", "a future release")
 		runEnvDelete(cmd, args)
 	},
 }
