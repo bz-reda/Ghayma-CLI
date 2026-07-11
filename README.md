@@ -47,7 +47,7 @@ ghayma deploy --prod      # Deploy to production
 | `ghayma init` | Initialize a new project in the current directory |
 | `ghayma init --plan <slug>` | Initialize with a specific plan (e.g. `hobby`, `pro`); interactive plan picker when omitted |
 | `ghayma link` | Link the current directory to an existing project |
-| `ghayma project transfer` | Transfer project ownership (also: `project pending`, `project cancel`, `project accept`) |
+| `ghayma project transfer` | Transfer project ownership (also: `project status`, `project cancel`, `project accept`) |
 | `ghayma deploy` | Deploy the current project (preview) |
 | `ghayma deploy --prod` | Deploy to production |
 | `ghayma status` | List your projects |
