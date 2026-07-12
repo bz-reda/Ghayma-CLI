@@ -1,9 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 
 	"paas-cli/internal/api"
 	"paas-cli/internal/config"
@@ -18,7 +17,9 @@ var linkCmd = &cobra.Command{
 	Long: `Link the current directory to a project that already exists on Ghayma.
 
 Use this instead of 'init' when you clone a repository on a new machine:
-init creates a brand-new project, while link connects to one you already own.`,
+init creates a brand-new project, while link connects to one you already own.
+In a monorepo, run it from your app's subdirectory (or from the root and pick
+the subdir) — link can attach to an existing site or create a new one.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
@@ -27,7 +28,15 @@ init creates a brand-new project, while link connects to one you already own.`,
 			return
 		}
 
-		if _, err := findProjectConfig("."); err == nil {
+		// In a monorepo root, write the config into the chosen app subdir so
+		// deploy uploads the whole workspace and builds the right target.
+		appSubdir := detectMonorepoAppSubdir()
+		configDir := "."
+		if appSubdir != "" {
+			configDir = appSubdir
+		}
+
+		if _, err := findProjectConfig(configDir); err == nil {
 			fmt.Println("⚠️  This directory is already linked. Delete the project config to re-link.")
 			return
 		}
@@ -77,57 +86,15 @@ init creates a brand-new project, while link connects to one you already own.`,
 			project = &projects[idx]
 		}
 
-		sites, err := client.ListSites(project.ID)
-		if err != nil {
-			fmt.Printf("❌ Failed to list sites: %v\n", err)
-			return
-		}
-		if len(sites) == 0 {
-			fmt.Println("❌ This project has no sites. Create one with: ghayma site add <name>")
-			return
-		}
-
-		var site *api.Site
-		if len(sites) == 1 {
-			site = &sites[0]
-		} else {
-			labels := make([]string, len(sites))
-			for i, s := range sites {
-				labels[i] = fmt.Sprintf("%s  (slug: %s, status: %s)", s.Name, s.Slug, s.Status)
-			}
-			sel := promptui.Select{
-				Label: "Select a site",
-				Items: labels,
-				Size:  10,
-			}
-			idx, _, err := sel.Run()
-			if err != nil {
+		// Resolve or create the site under the chosen project, then write the
+		// config into configDir. Shared with init's use-existing branch.
+		if err := attachToExistingProject(client, project, configDir); err != nil {
+			if errors.Is(err, errAttachCancelled) {
 				fmt.Println("❌ Cancelled")
-				return
+			} else {
+				fmt.Printf("❌ %v\n", err)
 			}
-			site = &sites[idx]
 		}
-
-		projectCfg := ProjectConfig{
-			ProjectID: project.ID,
-			Name:      project.Name,
-			Slug:      project.Slug,
-			Framework: project.Framework,
-			SiteID:    site.ID,
-			SiteName:  site.Name,
-			SiteSlug:  site.Slug,
-		}
-		data, _ := json.MarshalIndent(projectCfg, "", "  ")
-		configPath := projectConfigWritePath(".")
-		if err := os.WriteFile(configPath, data, 0644); err != nil {
-			fmt.Printf("❌ Failed to write %s: %v\n", configPath, err)
-			return
-		}
-
-		fmt.Printf("✅ Linked to project '%s' (slug: %s)\n", project.Name, project.Slug)
-		fmt.Printf("   Site: %s (slug: %s)\n", site.Name, site.Slug)
-		fmt.Printf("📁 Config saved to %s\n", configPath)
-		fmt.Println("\nNext: run 'ghayma deploy --prod' to deploy")
 	},
 }
 
