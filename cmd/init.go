@@ -83,23 +83,53 @@ var initCmd = &cobra.Command{
 		// subdir instead — or ask for the app subdir and write the config
 		// inside it so the deploy flow sends the correct root_directory.
 		appSubdir := detectMonorepoAppSubdir()
+		configDir := "."
 		if appSubdir != "" {
 			if existing, err := findProjectConfig(appSubdir); err == nil {
 				fmt.Printf("⚠️  %s already exists. Delete it to re-initialize.\n", existing)
 				return
 			}
+			configDir = appSubdir
 		}
+
+		client := api.NewClient(cfg)
+
+		// Offer to attach to an EXISTING project instead of always creating a
+		// new one — the only way to add a second monorepo app (e.g. apps/admin)
+		// as its own site under a project that already exists. A failed list
+		// (old/self-hosted server) silently falls through to the create path.
+		if projects, err := client.ListProjects(); err == nil && len(projects) > 0 {
+			idx, err := promptProjectChoiceFn(projects)
+			if err != nil {
+				fmt.Println("❌ Cancelled.")
+				return
+			}
+			if idx != createNewIdx {
+				if err := attachToExistingProject(client, &projects[idx], configDir); err != nil {
+					if errors.Is(err, errAttachCancelled) {
+						fmt.Println("❌ Cancelled.")
+					} else {
+						fmt.Printf("❌ %v\n", err)
+					}
+				}
+				return
+			}
+		}
+
+		// --- create a NEW project ---
 
 		// Project name
 		namePrompt := promptui.Prompt{Label: "Project name"}
-		name, _ := namePrompt.Run()
+		name, err := namePrompt.Run()
+		if err != nil {
+			fmt.Println("❌ Cancelled.")
+			return
+		}
 
 		// Framework — auto-detected from the project files (no longer a
 		// hardcoded nextjs picker). "auto" defers to the platform.
 		framework := detectFramework(".")
 		fmt.Printf("🔎 Detected framework: %s\n", framework)
-
-		client := api.NewClient(cfg)
 
 		// Resolve the billing account for the new project. The API
 		// requires billing_account_id for billable plans (init creates
@@ -142,7 +172,11 @@ var initCmd = &cobra.Command{
 			Label:   "Site name (e.g. frontend, admin — leave empty for 'main')",
 			Default: "",
 		}
-		siteName, _ := sitePrompt.Run()
+		siteName, err := sitePrompt.Run()
+		if err != nil {
+			fmt.Println("❌ Cancelled.")
+			return
+		}
 		if siteName == "" {
 			siteName = "main"
 		}
@@ -179,7 +213,11 @@ var initCmd = &cobra.Command{
 			Label:   "Domain (e.g., mysite.com, leave empty to skip)",
 			Default: "",
 		}
-		domain, _ := domainPrompt.Run()
+		domain, err := domainPrompt.Run()
+		if err != nil {
+			fmt.Println("❌ Cancelled.")
+			return
+		}
 
 		if domain != "" {
 			if err := client.AddDomain(project.ID, siteID, domain); err != nil {
@@ -199,10 +237,7 @@ var initCmd = &cobra.Command{
 			SiteName:  siteName,
 			SiteSlug:  siteSlug,
 		}
-		configPath := projectConfigWritePath(".")
-		if appSubdir != "" {
-			configPath = projectConfigWritePath(appSubdir)
-		}
+		configPath := projectConfigWritePath(configDir)
 		data, _ := json.MarshalIndent(projectCfg, "", "  ")
 		if err := os.WriteFile(configPath, data, 0644); err != nil {
 			fmt.Printf("❌ Failed to write config: %v\n", err)
