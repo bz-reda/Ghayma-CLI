@@ -98,8 +98,7 @@ func findInitializedApps(root string) []appChoice {
 			json.Unmarshal(data, &cfg)
 
 			appDir := filepath.Dir(path)
-			rel, _ := filepath.Rel(root, appDir)
-			choice := appChoice{Config: cfg, Dir: appDir, RelDir: rel}
+			choice := appChoice{Config: cfg, Dir: appDir, RelDir: monorepoRelDir(root, appDir)}
 
 			if i, seen := indexByDir[appDir]; seen {
 				// Already recorded from the legacy file; the new config wins.
@@ -114,6 +113,20 @@ func findInitializedApps(root string) []appChoice {
 		return nil
 	})
 	return apps
+}
+
+// monorepoRelDir returns appDir relative to monorepoRoot as a forward-slash
+// path — safe to send to the build server. filepath.Rel yields OS-native
+// separators (backslashes on Windows), but the platform joins root_directory
+// onto a POSIX source path, so a backslash produces
+// `/tmp/sources/<id>/apps\admin` — a literal filename that doesn't exist on
+// Linux (2026-07-12 Windows deploy incident; same class as the #7 tar-name fix).
+func monorepoRelDir(monorepoRoot, appDir string) string {
+	rel, err := filepath.Rel(monorepoRoot, appDir)
+	if err != nil {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 var deployCmd = &cobra.Command{
@@ -187,12 +200,12 @@ var deployCmd = &cobra.Command{
 
 		if projCfg.RootDirectory != "" {
 			// Config is at the monorepo root and explicitly points at an app subdir.
-			rootDirectory = projCfg.RootDirectory
+			rootDirectory = filepath.ToSlash(projCfg.RootDirectory)
 			fmt.Printf("🚀 Deploying %s (monorepo: %s, from config)...\n", projCfg.Name, rootDirectory)
 		} else if monorepoRoot := findMonorepoRoot(appDir); monorepoRoot != "" && monorepoRoot != appDir {
 			// Config is at the app subdir; derive rootDirectory from filesystem layout.
-			relPath, _ := filepath.Rel(monorepoRoot, appDir)
-			rootDirectory = relPath
+			// ToSlash so Windows backslashes never leak to the POSIX build server.
+			rootDirectory = monorepoRelDir(monorepoRoot, appDir)
 			sourceDir = monorepoRoot
 			fmt.Printf("🚀 Deploying %s (monorepo: %s)...\n", projCfg.Name, rootDirectory)
 		} else {
@@ -224,7 +237,7 @@ var deployCmd = &cobra.Command{
 			OutputDirectory: projCfg.OutputDirectory,
 			Port:            projCfg.Port,
 		}
-		resp, err := client.Deploy(projCfg.ProjectID, projCfg.SiteID, sourceDir, "CLI deploy", deployProd, rootDirectory, projCfg.DockerfilePath, bc, rules)
+		resp, err := client.Deploy(projCfg.ProjectID, projCfg.SiteID, sourceDir, "CLI deploy", deployProd, rootDirectory, filepath.ToSlash(projCfg.DockerfilePath), bc, rules)
 		if err != nil {
 			fmt.Printf("❌ Deploy failed: %v\n", err)
 			return
