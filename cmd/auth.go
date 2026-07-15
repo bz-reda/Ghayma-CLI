@@ -47,6 +47,14 @@ func formatUpdatesList(updates map[string]interface{}) []string {
 	return lines
 }
 
+// normalizeAuthName trims a requested auth-app display name and reports whether
+// it is usable. An all-whitespace name is rejected so a rename can never blank
+// the app's label.
+func normalizeAuthName(raw string) (name string, ok bool) {
+	name = strings.TrimSpace(raw)
+	return name, name != ""
+}
+
 var authCmd = &cobra.Command{
 	Use:   "auth",
 	Short: "Manage authentication services",
@@ -279,25 +287,36 @@ var authInfoCmd = &cobra.Command{
 
 // Config flags
 var (
-	authProject               string
-	authAppSlug               string
-	authCreateUsers           string
-	authCreate2FA             bool
-	authCreateSMS             bool
-	authConfigGoogleID        string
-	authConfigGoogleSecret    string
-	authConfigGitHubID        string
-	authConfigGitHubSecret    string
-	authConfigEmailVerify     string
-	authConfigAllowedOrigins  string
-	authConfigJWTExpiry       int
-	authConfigRefreshExpiry   int
+	authProject              string
+	authAppSlug              string
+	authCreateUsers          string
+	authCreate2FA            bool
+	authCreateSMS            bool
+	authConfigName           string
+	authConfigGoogleID       string
+	authConfigGoogleSecret   string
+	authConfigGitHubID       string
+	authConfigGitHubSecret   string
+	authConfigEmailVerify    string
+	authConfigAllowedOrigins string
+	authConfigJWTExpiry      int
+	authConfigRefreshExpiry  int
 )
 
 var authConfigCmd = &cobra.Command{
 	Use:   "config [name]",
-	Short: "Configure an auth app (OAuth providers, settings)",
-	Args:  requireOneArg("name", "auth list"),
+	Short: "Configure an auth app (OAuth providers, settings) or rename it",
+	Long: `Configure an auth app's OAuth providers and settings, or rename it.
+
+Only the flags you pass take effect; anything you omit is left unchanged. Pass
+--name to change the app's display name. OAuth client secrets are redacted from
+the confirmation output.
+
+Examples:
+  ghayma auth config myapp --name "Production Auth"
+  ghayma auth config myapp --google-client-id <id> --google-client-secret <secret>
+  ghayma auth config myapp --email-verify true`,
+	Args: requireOneArg("name", "auth list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		if cfg.Token == "" {
@@ -314,6 +333,14 @@ var authConfigCmd = &cobra.Command{
 
 		updates := map[string]interface{}{}
 
+		if authConfigName != "" {
+			name, ok := normalizeAuthName(authConfigName)
+			if !ok {
+				fmt.Println("❌ --name cannot be empty")
+				return
+			}
+			updates["name"] = name
+		}
 		if authConfigGoogleID != "" {
 			updates["google_client_id"] = authConfigGoogleID
 		}
@@ -345,6 +372,7 @@ var authConfigCmd = &cobra.Command{
 
 		if len(updates) == 0 {
 			fmt.Println("❌ No configuration changes specified. Available flags:")
+			fmt.Println("   --name (new display name)")
 			fmt.Println("   --google-client-id, --google-client-secret")
 			fmt.Println("   --github-client-id, --github-client-secret")
 			fmt.Println("   --email-verify (true/false)")
@@ -539,6 +567,7 @@ func init() {
 	authCreateCmd.Flags().BoolVar(&authCreate2FA, "2fa", false, "Enable two-factor auth (adds the flat 2FA points add-on).")
 	authCreateCmd.Flags().BoolVar(&authCreateSMS, "sms", false, "Enable SMS (adds the selected bracket's SMS points add-on).")
 
+	authConfigCmd.Flags().StringVar(&authConfigName, "name", "", "New display name for the auth app")
 	authConfigCmd.Flags().StringVar(&authConfigGoogleID, "google-client-id", "", "Google OAuth client ID")
 	authConfigCmd.Flags().StringVar(&authConfigGoogleSecret, "google-client-secret", "", "Google OAuth client secret")
 	authConfigCmd.Flags().StringVar(&authConfigGitHubID, "github-client-id", "", "GitHub OAuth client ID")
