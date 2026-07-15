@@ -84,3 +84,45 @@ func TestFormatUpdatesList_NeverLeaksSecretValues(t *testing.T) {
 		}
 	}
 }
+
+// TestFormatUpdatesList_NameNotRedacted guards the display-name rename path:
+// `name` is public metadata, so `auth config --name` must echo the new value
+// back verbatim rather than <redacted>.
+func TestFormatUpdatesList_NameNotRedacted(t *testing.T) {
+	updates := map[string]interface{}{
+		"name": "Production Auth",
+	}
+
+	out := strings.Join(formatUpdatesList(updates), "\n")
+
+	if !strings.Contains(out, "name = Production Auth") {
+		t.Errorf("expected name to render verbatim, got:\n%s", out)
+	}
+	if strings.Contains(out, "<redacted>") {
+		t.Errorf("name must not be redacted, got:\n%s", out)
+	}
+}
+
+// TestNormalizeAuthName covers the --name flag→updates mapping guard: the value
+// is trimmed, and an empty or all-whitespace name is rejected so a rename can
+// never blank the app's label.
+func TestNormalizeAuthName(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantName string
+		wantOK   bool
+	}{
+		{"Production Auth", "Production Auth", true},
+		{"  Padded Name  ", "Padded Name", true},
+		{"", "", false},
+		{"   ", "", false},
+		{"\t\n", "", false},
+	}
+	for _, c := range cases {
+		gotName, gotOK := normalizeAuthName(c.in)
+		if gotName != c.wantName || gotOK != c.wantOK {
+			t.Errorf("normalizeAuthName(%q) = (%q, %v), want (%q, %v)",
+				c.in, gotName, gotOK, c.wantName, c.wantOK)
+		}
+	}
+}
