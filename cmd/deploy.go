@@ -41,6 +41,22 @@ type projectConfig struct {
 	StartCommand    string `json:"start_command,omitempty"`
 	OutputDirectory string `json:"output_directory,omitempty"`
 	Port            int    `json:"port,omitempty"`
+	// Crons is config-as-code for per-site cron jobs (cron-jobs spec §7). Kept
+	// as raw JSON so the deploy forwards the array verbatim: key present
+	// (including "[]") ⇒ authoritative site sync; key absent ⇒ deploy never
+	// touches jobs. json.RawMessage is nil exactly when the key is absent.
+	Crons json.RawMessage `json:"crons,omitempty"`
+}
+
+// cronsFormField returns the raw JSON of a project config's `crons` key for the
+// deploy upload form, or "" when the key is absent. Empty (nil) ⇒ omit the form
+// field so the backend never touches cron jobs; present ⇒ authoritative sync
+// (cron-jobs spec §7). Pure so the presence/absence logic is unit-tested.
+func cronsFormField(crons json.RawMessage) string {
+	if len(crons) == 0 {
+		return ""
+	}
+	return string(crons)
 }
 
 type appChoice struct {
@@ -236,6 +252,7 @@ var deployCmd = &cobra.Command{
 			StartCommand:    projCfg.StartCommand,
 			OutputDirectory: projCfg.OutputDirectory,
 			Port:            projCfg.Port,
+			Crons:           cronsFormField(projCfg.Crons),
 		}
 		resp, err := client.Deploy(projCfg.ProjectID, projCfg.SiteID, sourceDir, "CLI deploy", deployProd, rootDirectory, filepath.ToSlash(projCfg.DockerfilePath), bc, rules)
 		if err != nil {

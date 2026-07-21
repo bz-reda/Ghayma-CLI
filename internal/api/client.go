@@ -375,6 +375,10 @@ type DeployBuildConfig struct {
 	StartCommand    string
 	OutputDirectory string
 	Port            int
+	// Crons is the raw JSON of ghayma.json's `crons` array (cron-jobs spec §7),
+	// forwarded verbatim. Empty ⇒ the field is omitted and the backend never
+	// touches cron jobs; a present-but-empty "[]" is authoritative.
+	Crons string
 }
 
 // Deploy uploads a tarball to /api/v1/deploy/upload and starts a build.
@@ -423,6 +427,12 @@ func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isPr
 	}
 	if bc.Port > 0 {
 		writer.WriteField("port", strconv.Itoa(bc.Port))
+	}
+	// cron-jobs spec §7: forward ghayma.json's `crons` array verbatim. Absent
+	// (empty) ⇒ omit the field so the backend never touches jobs; present
+	// (including "[]") ⇒ authoritative per-site sync.
+	if bc.Crons != "" {
+		writer.WriteField("crons", bc.Crons)
 	}
 
 	file, err := os.Open(tarPath)
