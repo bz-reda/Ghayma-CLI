@@ -181,11 +181,13 @@ var initCmd = &cobra.Command{
 			siteName = "main"
 		}
 
-		// The "main" site is auto-created by the backend on project creation.
-		// For any other name, create a new site via the API.
+		// The main site is materialized lazily by the backend on first deploy
+		// (2026-07-23) — a fresh project has no site yet. If one already exists
+		// (re-init, or the user created it), record its id; otherwise leave the
+		// fields empty and let deploy create main + its default domain on the fly.
+		// Any other name creates the site now via the API.
 		var siteID, siteSlug string
 		if siteName == "main" {
-			// Fetch the auto-created main site to get its ID
 			sites, err := client.ListSites(project.ID)
 			if err == nil {
 				for _, s := range sites {
