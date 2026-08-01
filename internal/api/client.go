@@ -1261,8 +1261,8 @@ type AuthUserInfo struct {
 
 // CreateAuthApp creates a managed auth app. authTierSlug is the optional
 // user-capacity bracket (auth_tiers.slug — 1k/10k/100k/1m; blank = server
-// default). 2FA/SMS are NOT set here (the create endpoint doesn't accept them);
-// they are enabled afterward via UpdateAuthApp. Non-201 responses route through
+// default). 2FA is NOT set here (the create endpoint doesn't accept it); it is
+// enabled afterward via UpdateAuthApp. Non-201 responses route through
 // classifyAPIError so the marketplace insufficient-points / capacity classes
 // render.
 func (c *Client) CreateAuthApp(name, appID, projectID, authTierSlug string) (*AuthAppInfo, error) {
@@ -1322,10 +1322,10 @@ func (c *Client) GetAuthApp(id string) (*AuthAppInfo, error) {
 }
 
 // UpdateAuthApp PATCHes an auth app's settings (OAuth providers, expiries, and
-// the points-priced two_fa_enabled / sms_enabled toggles). Non-200 responses
-// route through classifyAPIError so a 409/503 points rejection when enabling
-// 2FA/SMS surfaces as a typed *MarketplaceError (rendered via
-// formatMarketplaceError), not swallowed as raw text.
+// the points-priced two_fa_enabled toggle). Non-200 responses route through
+// classifyAPIError so a 409/503 points rejection when enabling 2FA surfaces as
+// a typed *MarketplaceError (rendered via formatMarketplaceError), not
+// swallowed as raw text.
 func (c *Client) UpdateAuthApp(id string, updates map[string]interface{}) error {
 	body, _ := json.Marshal(updates)
 	resp, err := c.authRequest("PUT", "/api/v1/auth-apps/"+id, bytes.NewReader(body))
