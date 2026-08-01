@@ -137,8 +137,7 @@ Each project has a points budget (or runs pay-as-you-go). Databases, apps, stora
 | `ghayma auth create [name]` | Create a managed auth service |
 | `ghayma auth create [name] --app-id my-app` | Create with custom app ID |
 | `ghayma auth create [name] --users <bracket>` | Set the user-capacity bracket (1k, 10k, 100k, 1m); interactive picker when omitted |
-| `ghayma auth create [name] --2fa` | Enable two-factor authentication |
-| `ghayma auth create [name] --sms` | Enable SMS |
+| `ghayma auth create [name] --2fa` | Enable two-factor authentication (authenticator app / TOTP) |
 | `ghayma auth list` | List your auth apps |
 | `ghayma auth info [name]` | Show auth app details and endpoints |
 | `ghayma auth config [name]` | Configure OAuth providers and settings |

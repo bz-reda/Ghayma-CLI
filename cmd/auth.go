@@ -106,7 +106,6 @@ var authCreateCmd = &cobra.Command{
 
 		bracketSlug := authCreateUsers
 		twofa := authCreate2FA
-		sms := authCreateSMS
 
 		// Fail-soft pricing. An older backend (pre-catalog) returns
 		// ErrCatalogUnavailable — skip all pricing UI and fall back to bare
@@ -114,9 +113,9 @@ var authCreateCmd = &cobra.Command{
 		if cat, catErr := client.GetMarketplaceCatalog(); catErr == nil && cat != nil {
 			// Interactive only when the user set NONE of the pricing flags, so
 			// a scripted run (any flag present) stays fully non-interactive.
-			if !cmd.Flags().Changed("users") && !cmd.Flags().Changed("2fa") && !cmd.Flags().Changed("sms") {
+			if !cmd.Flags().Changed("users") && !cmd.Flags().Changed("2fa") {
 				var selErr error
-				bracketSlug, twofa, sms, selErr = promptAuthSelections(cat)
+				bracketSlug, twofa, selErr = promptAuthSelections(cat)
 				if selErr != nil {
 					// A promptui cancel (Ctrl-C) must abort — never fall
 					// through to a create at a default bracket.
@@ -127,9 +126,9 @@ var authCreateCmd = &cobra.Command{
 				fmt.Printf("❌ %v\n", err)
 				return
 			}
-			// Reserve preview on the FULL total (bracket + 2FA + SMS). A blank
+			// Reserve preview on the FULL total (bracket + 2FA). A blank
 			// bracket defaults to the catalog's smallest for the estimate.
-			printAuthReservePreview(client, cat, projectID, bracketSlug, twofa, sms)
+			printAuthReservePreview(client, cat, projectID, bracketSlug, twofa)
 		}
 
 		app, err := client.CreateAuthApp(args[0], authAppSlug, projectID, bracketSlug)
@@ -142,24 +141,18 @@ var authCreateCmd = &cobra.Command{
 		fmt.Printf("   App ID:    %s\n", app.AppID)
 		fmt.Printf("   Status:    %s\n", app.Status)
 
-		// 2FA/SMS aren't accepted by the create endpoint — enable them via a
-		// follow-up PATCH. A points rejection here is NOT swallowed: the app
-		// exists at its bracket, so report the partial success and how to
-		// recover rather than pretend the toggle took.
-		if twofa || sms {
-			updates := map[string]interface{}{}
-			if twofa {
-				updates["two_fa_enabled"] = true
-			}
-			if sms {
-				updates["sms_enabled"] = true
-			}
+		// 2FA isn't accepted by the create endpoint — enable it via a follow-up
+		// PATCH. A points rejection here is NOT swallowed: the app exists at
+		// its bracket, so report the partial success and how to recover rather
+		// than pretend the toggle took.
+		if twofa {
+			updates := map[string]interface{}{"two_fa_enabled": true}
 			if err := client.UpdateAuthApp(app.ID, updates); err != nil {
-				fmt.Printf("\n⚠️  Auth app created at bracket '%s', but enabling %s failed:\n%s\n",
-					bracketOrDefault(bracketSlug), enabledFeatureList(twofa, sms), formatMarketplaceError(err))
-				fmt.Printf("   Free up points, then enable them from the dashboard (or delete and recreate).\n")
+				fmt.Printf("\n⚠️  Auth app created at bracket '%s', but enabling 2FA failed:\n%s\n",
+					bracketOrDefault(bracketSlug), formatMarketplaceError(err))
+				fmt.Printf("   Free up points, then enable it from the dashboard (or delete and recreate).\n")
 			} else {
-				fmt.Printf("   Enabled:   %s\n", enabledFeatureList(twofa, sms))
+				fmt.Printf("   Enabled:   2FA\n")
 			}
 		}
 
@@ -176,14 +169,14 @@ var authCreateCmd = &cobra.Command{
 // remaining-after tail when the points summary is fetchable) before submit.
 // Every step is fail-soft: a blank bracket defaults to the catalog's smallest,
 // and a failed summary fetch just prints less — it never blocks the create.
-func printAuthReservePreview(client *api.Client, cat *api.MarketplaceCatalog, projectID, bracketSlug string, twofa, sms bool) {
+func printAuthReservePreview(client *api.Client, cat *api.MarketplaceCatalog, projectID, bracketSlug string, twofa bool) {
 	previewBracket := bracketSlug
 	if previewBracket == "" {
 		if dt, ok := defaultAuthTier(cat); ok {
 			previewBracket = dt.Slug
 		}
 	}
-	cost, err := authCostPreview(cat, previewBracket, twofa, sms)
+	cost, err := authCostPreview(cat, previewBracket, twofa)
 	if err != nil {
 		return
 	}
@@ -291,7 +284,6 @@ var (
 	authAppSlug              string
 	authCreateUsers          string
 	authCreate2FA            bool
-	authCreateSMS            bool
 	authConfigName           string
 	authConfigGoogleID       string
 	authConfigGoogleSecret   string
@@ -564,8 +556,7 @@ func init() {
 	authCreateCmd.Flags().StringVar(&authAppSlug, "app-id", "", "App slug/identifier (required)")
 	authCreateCmd.MarkFlagRequired("app-id")
 	authCreateCmd.Flags().StringVar(&authCreateUsers, "users", "", "User-capacity bracket: 1k|10k|100k|1m (auth_tiers.slug), priced in points. Interactive picker when omitted; server default if no catalog.")
-	authCreateCmd.Flags().BoolVar(&authCreate2FA, "2fa", false, "Enable two-factor auth (adds the flat 2FA points add-on).")
-	authCreateCmd.Flags().BoolVar(&authCreateSMS, "sms", false, "Enable SMS (adds the selected bracket's SMS points add-on).")
+	authCreateCmd.Flags().BoolVar(&authCreate2FA, "2fa", false, "Enable two-factor auth via authenticator app/TOTP (adds the flat 2FA points add-on).")
 
 	authConfigCmd.Flags().StringVar(&authConfigName, "name", "", "New display name for the auth app")
 	authConfigCmd.Flags().StringVar(&authConfigGoogleID, "google-client-id", "", "Google OAuth client ID")

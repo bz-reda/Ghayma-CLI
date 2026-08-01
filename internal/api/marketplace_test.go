@@ -57,7 +57,10 @@ func TestGetMarketplaceCatalog_Parses(t *testing.T) {
 	if len(cat.DBTiers) != 1 || cat.DBTiers[0].Slug != "xs" || cat.DBTiers[0].MemoryLimitMB != 512 {
 		t.Errorf("db tiers = %+v; want one tier xs 512MB", cat.DBTiers)
 	}
-	if len(cat.AuthTiers) != 1 || cat.AuthTiers[0].MaxUsers != 1000 || cat.AuthTiers[0].SMSPoints != 1 {
+	// The fixture still carries sms_points/sms_included_monthly: a server that
+	// has not yet dropped them must decode cleanly and the CLI must simply
+	// ignore them.
+	if len(cat.AuthTiers) != 1 || cat.AuthTiers[0].MaxUsers != 1000 || cat.AuthTiers[0].PointsCost != 0 {
 		t.Errorf("auth tiers = %+v; want one free tier 1000 users", cat.AuthTiers)
 	}
 	if len(cat.BackupTiers) != 1 || cat.BackupTiers[0].IntervalHours != 168 || cat.BackupTiers[0].Multiplier != 0 {

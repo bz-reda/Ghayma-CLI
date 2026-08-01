@@ -34,14 +34,14 @@ type CatalogDBTier struct {
 	Position      int    `json:"position"`
 }
 
-// CatalogAuthTier is one auth-tier row.
+// CatalogAuthTier is one auth-tier row. SMS pricing is deliberately absent: the
+// backend no longer publishes sms_points, and the CLI must never price a second
+// factor it cannot enable.
 type CatalogAuthTier struct {
-	Slug               string `json:"slug"`
-	MaxUsers           int64  `json:"max_users"`
-	PointsCost         int    `json:"points_cost"`
-	SMSPoints          int    `json:"sms_points"`
-	SMSIncludedMonthly int    `json:"sms_included_monthly"`
-	Position           int    `json:"position"`
+	Slug       string `json:"slug"`
+	MaxUsers   int64  `json:"max_users"`
+	PointsCost int    `json:"points_cost"`
+	Position   int    `json:"position"`
 }
 
 // CatalogBackupTier is one backup-tier row.

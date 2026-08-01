@@ -18,11 +18,14 @@ import (
 
 // authCostPreview computes an auth app's points footprint from the catalog:
 //
-//	cost = bracket.PointsCost + (twofa ? rates.TwoFAPoints : 0) + (sms ? bracket.SMSPoints : 0)
+//	cost = bracket.PointsCost + (twofa ? rates.TwoFAPoints : 0)
 //
-// The SMS add-on is priced from the SELECTED bracket (not a flat rate). Returns
-// an error when the catalog is nil or the bracket slug is unknown.
-func authCostPreview(cat *api.MarketplaceCatalog, bracketSlug string, twofa, sms bool) (int64, error) {
+// There is no SMS term: the CLI never enables SMS, so the backend's AuthCost
+// always resolves with smsEnabled=false and the preview matches its admission
+// charge by construction — not by reading a sms_points the catalog no longer
+// publishes. Returns an error when the catalog is nil or the bracket slug is
+// unknown.
+func authCostPreview(cat *api.MarketplaceCatalog, bracketSlug string, twofa bool) (int64, error) {
 	if cat == nil {
 		return 0, fmt.Errorf("no marketplace catalog")
 	}
@@ -33,9 +36,6 @@ func authCostPreview(cat *api.MarketplaceCatalog, bracketSlug string, twofa, sms
 	cost := int64(b.PointsCost)
 	if twofa {
 		cost += cat.Rates.TwoFAPoints
-	}
-	if sms {
-		cost += int64(b.SMSPoints)
 	}
 	return cost, nil
 }
@@ -107,29 +107,10 @@ func bracketOrDefault(slug string) string {
 	return slug
 }
 
-// enabledFeatureList joins the features being turned on into a human phrase
-// ("2FA", "SMS", or "2FA + SMS"). Returns "" when neither is set.
-func enabledFeatureList(twofa, sms bool) string {
-	var parts []string
-	if twofa {
-		parts = append(parts, "2FA")
-	}
-	if sms {
-		parts = append(parts, "SMS")
-	}
-	return strings.Join(parts, " + ")
-}
-
 // authBracketLabel renders an interactive bracket choice, e.g.
 // "10k — up to 10000 users · 3 pts".
 func authBracketLabel(t api.CatalogAuthTier) string {
 	return fmt.Sprintf("%s — up to %d users · %d pts", t.Slug, t.MaxUsers, t.PointsCost)
-}
-
-// authSMSLabel renders the SMS add-on price line from the selected bracket,
-// e.g. "+3 pts, includes 500 msgs/mo".
-func authSMSLabel(t api.CatalogAuthTier) string {
-	return fmt.Sprintf("+%d pts, includes %d msgs/mo", t.SMSPoints, t.SMSIncludedMonthly)
 }
 
 // The interactive pickers are indirected through function variables so tests
@@ -137,27 +118,22 @@ func authSMSLabel(t api.CatalogAuthTier) string {
 var (
 	promptAuthBracketFn = promptAuthBracket
 	promptAuth2FAFn     = promptAuth2FA
-	promptAuthSMSFn     = promptAuthSMS
 )
 
-// promptAuthSelections renders the catalog-driven bracket/2FA/SMS pickers for an
+// promptAuthSelections renders the catalog-driven bracket/2FA pickers for an
 // interactive create. A promptui cancel (Ctrl-C) from any picker returns a
 // non-nil error so the caller aborts WITHOUT creating an auth app — an empty
 // brackets catalog is NOT a cancel and still degrades to the server default.
-func promptAuthSelections(cat *api.MarketplaceCatalog) (string, bool, bool, error) {
+func promptAuthSelections(cat *api.MarketplaceCatalog) (string, bool, error) {
 	bracket, err := promptAuthBracketFn(cat)
 	if err != nil {
-		return "", false, false, err
+		return "", false, err
 	}
 	twofa, err := promptAuth2FAFn(cat)
 	if err != nil {
-		return "", false, false, err
+		return "", false, err
 	}
-	sms, err := promptAuthSMSFn(cat, bracket)
-	if err != nil {
-		return "", false, false, err
-	}
-	return bracket, twofa, sms, nil
+	return bracket, twofa, nil
 }
 
 func promptAuthBracket(cat *api.MarketplaceCatalog) (string, error) {
@@ -181,23 +157,7 @@ func promptAuthBracket(cat *api.MarketplaceCatalog) (string, error) {
 // answer is a valid selection and can't be confused with a Ctrl-C cancel).
 func promptAuth2FA(cat *api.MarketplaceCatalog) (bool, error) {
 	items := []string{"No", fmt.Sprintf("Yes — +%d pts", cat.Rates.TwoFAPoints)}
-	sel := promptui.Select{Label: "Enable two-factor auth (2FA)?", Items: items}
-	idx, _, err := sel.Run()
-	if err != nil {
-		return false, err
-	}
-	return idx == 1, nil
-}
-
-// promptAuthSMS offers a No/Yes choice; the Yes line carries the SELECTED
-// bracket's SMS price and included allowance.
-func promptAuthSMS(cat *api.MarketplaceCatalog, bracketSlug string) (bool, error) {
-	yes := "Yes"
-	if t, ok := findAuthTier(cat, bracketSlug); ok {
-		yes = "Yes — " + authSMSLabel(t)
-	}
-	items := []string{"No", yes}
-	sel := promptui.Select{Label: "Enable SMS?", Items: items}
+	sel := promptui.Select{Label: "Enable two-factor auth (authenticator app)?", Items: items}
 	idx, _, err := sel.Run()
 	if err != nil {
 		return false, err
