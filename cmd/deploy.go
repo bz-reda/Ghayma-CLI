@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,7 +17,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var deployProd bool
+var (
+	deployProd bool
+	deploySite string
+)
 
 type projectConfig struct {
 	ProjectID     string `json:"project_id"`
@@ -156,17 +160,24 @@ var deployCmd = &cobra.Command{
 		}
 
 		cwd, _ := os.Getwd()
-		var projCfg projectConfig
-		var appDir string
 
-		// Try to read the project config from CWD
-		configPath, err := findProjectConfig(cwd)
-		var data []byte
-		if err == nil {
-			data, err = os.ReadFile(configPath)
-		}
+		// One resolver decides which site this deploy targets: the per-app
+		// config in CWD, the workspace manifest (--site, the only site, or a
+		// question), or this directory's entry in an ancestor manifest.
+		ctx, err := resolveSiteContext(cwd, deploySite, "deploy")
 		if err != nil {
-			// No config in CWD - check if inside a monorepo
+			if errors.Is(err, errAttachCancelled) {
+				fmt.Println("❌ Cancelled")
+				return
+			}
+			if !errors.Is(err, errNoProjectConfig) {
+				fmt.Printf("❌ %v\n", err)
+				return
+			}
+
+			// Nothing here or above describes a site — keep the pre-manifest
+			// turbo scan-and-pick fallback so monorepos that only carry
+			// per-app configs deploy from the root exactly as before.
 			monorepoRoot := findMonorepoRoot(cwd)
 			if monorepoRoot == "" {
 				fmt.Println("❌ No project config found.")
@@ -203,38 +214,20 @@ var deployCmd = &cobra.Command{
 				selected = apps[choice-1]
 			}
 
-			projCfg = selected.Config
-			appDir = selected.Dir
-		} else {
-			json.Unmarshal(data, &projCfg)
-			appDir = cwd
-		}
-
-		// Determine source directory and root_directory
-		sourceDir := appDir
-		rootDirectory := ""
-
-		if projCfg.RootDirectory != "" {
-			// Config is at the monorepo root and explicitly points at an app subdir.
-			rootDirectory = filepath.ToSlash(projCfg.RootDirectory)
-			fmt.Printf("🚀 Deploying %s (monorepo: %s, from config)...\n", projCfg.Name, rootDirectory)
-		} else if monorepoRoot := findMonorepoRoot(appDir); monorepoRoot != "" && monorepoRoot != appDir {
-			// Config is at the app subdir; derive rootDirectory from filesystem layout.
-			// ToSlash so Windows backslashes never leak to the POSIX build server.
-			rootDirectory = monorepoRelDir(monorepoRoot, appDir)
-			sourceDir = monorepoRoot
-			fmt.Printf("🚀 Deploying %s (monorepo: %s)...\n", projCfg.Name, rootDirectory)
-		} else {
-			siteLabel := ""
-			if projCfg.SiteName != "" && projCfg.SiteName != "main" {
-				siteLabel = fmt.Sprintf(" [site: %s]", projCfg.SiteName)
+			// Re-enter the resolver at the chosen app dir so the upload plan
+			// is derived in exactly one place.
+			ctx, err = resolveSiteContext(selected.Dir, deploySite, "deploy")
+			if err != nil {
+				fmt.Printf("❌ %v\n", err)
+				return
 			}
-			fmt.Printf("🚀 Deploying %s%s...\n", projCfg.Name, siteLabel)
 		}
+
+		fmt.Println(deployHeadline(ctx))
 
 		client := api.NewClient(cfg)
 
-		rules := api.LoadIgnoreRules(sourceDir)
+		rules := api.LoadIgnoreRules(ctx.SourceDir)
 		printIgnoreRules(rules)
 
 		// Part 2 PR-C: surface custom Dockerfile usage at deploy time
@@ -243,18 +236,18 @@ var deployCmd = &cobra.Command{
 		// (gated by projects.custom_dockerfile_enabled on the project);
 		// this is purely the UX hint. Quiet for projects on the
 		// auto-generated path — same output as before in that case.
-		printCustomDockerfileHint(sourceDir, rootDirectory, projCfg.DockerfilePath)
+		printCustomDockerfileHint(ctx.SourceDir, ctx.RootDirectory, ctx.Site.DockerfilePath)
 
 		bc := api.DeployBuildConfig{
-			Framework:       projCfg.Framework,
-			BuildCommand:    projCfg.BuildCommand,
-			InstallCommand:  projCfg.InstallCommand,
-			StartCommand:    projCfg.StartCommand,
-			OutputDirectory: projCfg.OutputDirectory,
-			Port:            projCfg.Port,
-			Crons:           cronsFormField(projCfg.Crons),
+			Framework:       ctx.Site.Framework,
+			BuildCommand:    ctx.Site.BuildCommand,
+			InstallCommand:  ctx.Site.InstallCommand,
+			StartCommand:    ctx.Site.StartCommand,
+			OutputDirectory: ctx.Site.OutputDirectory,
+			Port:            ctx.Site.Port,
+			Crons:           cronsFormField(ctx.Site.Crons),
 		}
-		resp, err := client.Deploy(projCfg.ProjectID, projCfg.SiteID, sourceDir, "CLI deploy", deployProd, rootDirectory, filepath.ToSlash(projCfg.DockerfilePath), bc, rules)
+		resp, err := client.Deploy(ctx.ProjectID, ctx.Site.SiteID, ctx.SourceDir, "CLI deploy", deployProd, ctx.RootDirectory, filepath.ToSlash(ctx.Site.DockerfilePath), bc, rules)
 		if err != nil {
 			fmt.Printf("❌ Deploy failed: %v\n", err)
 			return
@@ -304,7 +297,44 @@ var deployCmd = &cobra.Command{
 
 func init() {
 	deployCmd.Flags().BoolVarP(&deployProd, "prod", "p", false, "Deploy to production")
+	deployCmd.Flags().StringVar(&deploySite, "site", "", "Site to deploy (slug); at a workspace root with several sites this replaces the picker")
 	rootCmd.AddCommand(deployCmd)
+}
+
+// deployHeadline is the line printed just before the upload starts. The three
+// per-app forms are exactly what deploy printed before the manifest existed.
+// The manifest form additionally names the tree being uploaded: "app" and
+// "workspace" send different tarballs, and this line is the only place the
+// user can see which one is on the wire (2026-08-16).
+func deployHeadline(ctx *SiteContext) string {
+	if ctx.FromManifest {
+		return fmt.Sprintf("🚀 Deploying %s [site: %s] (%s)...", ctx.ProjectName, siteLabel(ctx.Site), uploadDescription(ctx))
+	}
+	if ctx.RootFromConfig {
+		return fmt.Sprintf("🚀 Deploying %s (monorepo: %s, from config)...", ctx.ProjectName, ctx.RootDirectory)
+	}
+	if ctx.RootDirectory != "" {
+		return fmt.Sprintf("🚀 Deploying %s (monorepo: %s)...", ctx.ProjectName, ctx.RootDirectory)
+	}
+	site := ""
+	if ctx.Site.SiteName != "" && ctx.Site.SiteName != "main" {
+		site = fmt.Sprintf(" [site: %s]", ctx.Site.SiteName)
+	}
+	return fmt.Sprintf("🚀 Deploying %s%s...", ctx.ProjectName, site)
+}
+
+// uploadDescription describes a manifest deploy's upload mode: a root_directory
+// on the context means the whole workspace is uploaded and one app built inside
+// it; no root_directory means only that app directory is uploaded.
+func uploadDescription(ctx *SiteContext) string {
+	if ctx.RootDirectory != "" {
+		return fmt.Sprintf("uploading the workspace, building %s", ctx.RootDirectory)
+	}
+	dir := ctx.Site.RootDirectory
+	if dir == "" {
+		dir = "."
+	}
+	return fmt.Sprintf("uploading %s only", dir)
 }
 
 func printIgnoreRules(rules *api.IgnoreRules) {

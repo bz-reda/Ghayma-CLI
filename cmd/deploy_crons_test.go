@@ -54,8 +54,10 @@ func TestDeploySendsCronsField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(deploy), "Crons:           cronsFormField(projCfg.Crons)") {
-		t.Error("deploy.go must set bc.Crons from the project config's crons key")
+	// Whitespace-insensitive: the site now comes from resolveSiteContext, so
+	// the pin guards the wiring (crons → form field), not the alignment.
+	if !strings.Contains(string(deploy), "cronsFormField(ctx.Site.Crons)") {
+		t.Error("deploy.go must set bc.Crons from the resolved site's crons key")
 	}
 
 	client, err := os.ReadFile("../internal/api/client.go")
