@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -477,5 +478,43 @@ func TestResolveSiteContext_NoConfigAnywhere(t *testing.T) {
 		t.Fatal("want errNoProjectConfig")
 	} else if !errors.Is(err, errNoProjectConfig) {
 		t.Errorf("err = %v; want errNoProjectConfig", err)
+	}
+}
+
+// TestStdinIsTerminal: the probe decides whether a command may ask a question.
+// A pipe is obviously not a terminal — and neither is /dev/null, which IS a
+// character device and is exactly what CI hands a command as stdin. Getting
+// that wrong turns the actionable "pass --site" error into a picker that
+// aborts on EOF (2026-08-16, caught deploying with stdin < /dev/null).
+func TestStdinIsTerminal(t *testing.T) {
+	swap := func(t *testing.T, f *os.File) {
+		t.Helper()
+		orig := os.Stdin
+		t.Cleanup(func() { os.Stdin = orig })
+		os.Stdin = f
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close()
+	defer w.Close()
+	swap(t, r)
+	if stdinIsTerminal() {
+		t.Error("a pipe must not count as a terminal")
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("NUL device semantics differ on Windows")
+	}
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer devNull.Close()
+	swap(t, devNull)
+	if stdinIsTerminal() {
+		t.Error("/dev/null must not count as a terminal")
 	}
 }

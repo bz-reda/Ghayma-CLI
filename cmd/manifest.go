@@ -279,10 +279,22 @@ func defaultUploadMode(root string) string {
 }
 
 // stdinIsTerminal reports whether stdin is a terminal, so the resolver knows if
-// it may ask a question. No new dependency: a character device is a TTY.
+// it may ask a question. No new dependency: a pipe or a file is not a character
+// device, so it cannot be a terminal.
+//
+// /dev/null needs its own answer: it IS a character device, and it is what CI
+// and `ghayma deploy < /dev/null` hand the process. Treating it as a terminal
+// turns the actionable "pass --site <slug>" error into a picker that reads EOF
+// and aborts with "Cancelled" (2026-08-16).
 func stdinIsTerminal() bool {
 	fi, err := os.Stdin.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	if devNull, err := os.Stat(os.DevNull); err == nil && os.SameFile(fi, devNull) {
+		return false
+	}
+	return true
 }
 
 // resolveSiteContext is the single "which site am I acting on?" resolver, used
