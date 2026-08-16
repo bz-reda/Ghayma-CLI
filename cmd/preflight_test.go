@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"paas-cli/internal/config"
+
+	"github.com/spf13/cobra"
 )
 
 func jwtExpiring(t *testing.T, at time.Time) string {
@@ -131,5 +133,34 @@ func TestWhoamiAuthJSON(t *testing.T) {
 	unknown := whoamiAuthFields(&config.Config{Token: "opaque"})
 	if _, present := unknown["session_expires_at"]; present {
 		t.Error("session_expires_at should be omitted when the expiry can't be read")
+	}
+}
+
+// TestTopLevelCommandName keeps the skip list keyed on the command under root:
+// `ghayma completion zsh` reports Name()=="zsh", which is not in the list, so
+// keying on Name() would lock a dead session out of shell completion.
+func TestTopLevelCommandName(t *testing.T) {
+	root := &cobra.Command{Use: "ghayma"}
+	completion := &cobra.Command{Use: "completion"}
+	zsh := &cobra.Command{Use: "zsh"}
+	db := &cobra.Command{Use: "db"}
+	list := &cobra.Command{Use: "list"}
+	root.AddCommand(completion, db)
+	completion.AddCommand(zsh)
+	db.AddCommand(list)
+
+	for cmd, want := range map[*cobra.Command]string{zsh: "completion", completion: "completion", list: "db", db: "db", root: "ghayma"} {
+		if got := topLevelCommandName(cmd); got != want {
+			t.Errorf("topLevelCommandName(%s) = %q; want %q", cmd.Name(), got, want)
+		}
+	}
+	// And the property that matters end to end:
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	expired := &config.Config{Token: jwtExpiring(t, now.Add(-time.Hour))}
+	if err := sessionPreflight(expired, topLevelCommandName(zsh), now); err != nil {
+		t.Errorf("completion zsh must stay reachable on an expired session: %v", err)
+	}
+	if err := sessionPreflight(expired, topLevelCommandName(list), now); err == nil {
+		t.Error("db list must be blocked on an expired session")
 	}
 }

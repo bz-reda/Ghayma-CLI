@@ -23,11 +23,21 @@ var rootCmd = &cobra.Command{
 	Short: "Ghayma CLI",
 	Long:  "Deploy and manage your applications on Ghayma",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		if err := sessionPreflight(config.Load(), cmd.Name(), time.Now()); err != nil {
+		if err := sessionPreflight(config.Load(), topLevelCommandName(cmd), time.Now()); err != nil {
 			fmt.Printf("❌ %v\n", err)
 			os.Exit(1)
 		}
 	},
+}
+
+// topLevelCommandName walks up to the command directly under root, so the
+// skip list is keyed on `completion` / `help` rather than on `zsh` or `db`'s
+// subcommand names — `ghayma completion zsh` must work on a dead session.
+func topLevelCommandName(cmd *cobra.Command) string {
+	for cmd.HasParent() && cmd.Parent().HasParent() {
+		cmd = cmd.Parent()
+	}
+	return cmd.Name()
 }
 
 // unauthenticatedCommands don't need a live session — and two of them are how
