@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -17,7 +18,17 @@ import (
 var envCmd = &cobra.Command{
 	Use:   "env",
 	Short: "Manage environment variables",
+	Long: `Manage environment variables.
+
+Variables belong to a SITE. Inside an app directory that site is the one the
+directory is linked to. At the root of a workspace linked with 'ghayma link'
+(whole project) these commands ask which site to act on, or take --site <slug> —
+required when the shell is not interactive.`,
 }
+
+// envSite is the site to act on, for the workspace-root case. Persistent on the
+// group so every subcommand takes it.
+var envSite string
 
 // localConfig reads the nearest project config at or above the working
 // directory and returns projectID + siteID. It is the project-scoped read: the
@@ -40,25 +51,34 @@ func localConfig() (projectID, siteID, name string, err error) {
 	return cfg.ProjectID, cfg.SiteID, cfg.Name, nil
 }
 
-// localSiteConfig is the site-scoped read: env acts on ONE site and takes
-// site_id straight from the file in THIS directory, so it neither walks up nor
-// accepts a workspace manifest (see rejectManifest) — it would otherwise
-// silently write to the project-wide endpoint.
-func localSiteConfig(action string) (projectID, siteID, name string, err error) {
-	data, readErr := readProjectConfig(".")
-	if readErr != nil {
-		return "", "", "", fmt.Errorf("no project config found — run 'ghayma init' first")
-	}
-	if err := rejectManifest(data, action); err != nil {
+// envSiteContext resolves which site an env command acts on. Env vars are
+// SITE-scoped, so this goes through the shared resolver rather than reading
+// site_id out of whatever file happens to be here: at a workspace root that
+// file is a manifest with no site_id at all, and falling back to the
+// project-wide endpoint would write one app's variables onto another's site.
+//
+// verb lands in the picker label ("Which site do you want to <verb>?"), so it
+// must read as an action.
+//
+// The two sentinel errors are translated here rather than at the four call
+// sites, which all just print the error: a cancel prints "❌ Cancelled" and a
+// missing config keeps the wording env has always used.
+func envSiteContext(verb string) (projectID, siteID, name string, err error) {
+	cwd, err := os.Getwd()
+	if err != nil {
 		return "", "", "", err
 	}
-	var cfg struct {
-		ProjectID string `json:"project_id"`
-		Name      string `json:"name"`
-		SiteID    string `json:"site_id"`
+
+	ctx, err := resolveSiteContext(cwd, envSite, verb)
+	switch {
+	case errors.Is(err, errAttachCancelled):
+		return "", "", "", errors.New("Cancelled")
+	case errors.Is(err, errNoProjectConfig):
+		return "", "", "", errors.New("no project config found — run 'ghayma init' first")
+	case err != nil:
+		return "", "", "", err
 	}
-	json.Unmarshal(data, &cfg)
-	return cfg.ProjectID, cfg.SiteID, cfg.Name, nil
+	return ctx.ProjectID, ctx.Site.SiteID, ctx.ProjectName, nil
 }
 
 // getEnvVarsSnapshot fetches env vars with build-time markers.
@@ -114,7 +134,7 @@ pass --force to override.`,
 			return
 		}
 
-		projectID, siteID, _, err := localSiteConfig("ghayma env")
+		projectID, siteID, _, err := envSiteContext("set env vars on")
 		if err != nil {
 			fmt.Printf("❌ %v\n", err)
 			return
@@ -184,7 +204,7 @@ var envListCmd = &cobra.Command{
 			return
 		}
 
-		projectID, siteID, name, err := localSiteConfig("ghayma env")
+		projectID, siteID, name, err := envSiteContext("list env vars for")
 		if err != nil {
 			fmt.Printf("❌ %v\n", err)
 			return
@@ -220,7 +240,7 @@ func runEnvDelete(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	projectID, siteID, _, err := localSiteConfig("ghayma env")
+	projectID, siteID, _, err := envSiteContext("delete env vars from")
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
 		return
@@ -336,7 +356,7 @@ By default, existing vars are overwritten with a printed diff. Use
 			return
 		}
 
-		projectID, siteID, name, err := localSiteConfig("ghayma env")
+		projectID, siteID, name, err := envSiteContext("import env vars into")
 		if err != nil {
 			fmt.Printf("❌ %v\n", err)
 			return
@@ -484,6 +504,10 @@ func parseDotenv(path string) ([]dotenvEntry, error) {
 }
 
 func init() {
+	// Persistent so every env subcommand takes it, including the hidden
+	// `env remove` alias.
+	envCmd.PersistentFlags().StringVar(&envSite, "site", "", "Site name or slug to act on (required at a workspace root when the shell is not interactive)")
+
 	envSetCmd.Flags().BoolVar(&envSetBuildTime, "build-time", false, "mark these keys as build-time (available to next build, etc.)")
 	envSetCmd.Flags().BoolVar(&envSetForce, "force", false, "bypass secret-pattern rejection for --build-time keys")
 

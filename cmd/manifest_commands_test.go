@@ -36,6 +36,7 @@ func cliHome(t *testing.T, apiHost string) {
 // otherwise leak into the next.
 func resetCommandFlags() {
 	deploySite, deployProd = "", false
+	envSite, domainSite = "", ""
 }
 
 // runCLI executes `ghayma <args...>` in dir and returns everything it printed.
@@ -139,6 +140,87 @@ func TestProjectScopedCommand_FromNestedDir(t *testing.T) {
 	}
 	if len(*paths) != 2 {
 		t.Errorf("served %d requests; want one per run", len(*paths))
+	}
+}
+
+// --- env --------------------------------------------------------------------
+
+// TestEnvList_SiteFlagAtWorkspaceRoot: env is SITE-scoped, so at a workspace
+// root it must address the site --site names — not the project-wide endpoint,
+// which would write one app's variables onto whichever site the server picks.
+func TestEnvList_SiteFlagAtWorkspaceRoot(t *testing.T) {
+	ts, paths := sitesStub(t, `[]`)
+	cliHome(t, ts.URL)
+	root := manifestFixture(t)
+	forceStdin(t, false)
+	noPrompt(t)
+
+	out := runCLI(t, root, "env", "list", "--site", "taarefni-admin")
+	if !strings.Contains(out, "API_URL") {
+		t.Errorf("env list printed %q; want the stub's variables", out)
+	}
+	if len(*paths) != 1 || !strings.Contains((*paths)[0], "/sites/s2/env") {
+		t.Errorf("requested %v; want the admin site's env endpoint (site s2)", *paths)
+	}
+}
+
+// TestEnvList_NoSiteAtWorkspaceRootIsRefused: several sites, no TTY, no --site
+// ⇒ name the flag instead of guessing a site.
+func TestEnvList_NoSiteAtWorkspaceRootIsRefused(t *testing.T) {
+	ts, paths := sitesStub(t, `[]`)
+	cliHome(t, ts.URL)
+	root := manifestFixture(t)
+	forceStdin(t, false)
+	noPrompt(t)
+
+	out := runCLI(t, root, "env", "list")
+	if !strings.Contains(out, "--site") {
+		t.Errorf("output %q should tell the user to pass --site", out)
+	}
+	if len(*paths) != 0 {
+		t.Errorf("no request should have gone out, got %v", *paths)
+	}
+}
+
+// TestEnvList_FromAppDirNeedsNoFlag: inside an app the directory pins the site,
+// exactly as it did before the manifest existed.
+func TestEnvList_FromAppDirNeedsNoFlag(t *testing.T) {
+	ts, paths := sitesStub(t, `[]`)
+	cliHome(t, ts.URL)
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		"pnpm-workspace.yaml":                realPnpmWorkspaceYAML,
+		"apps/taarefni/package.json":         `{}`,
+		"apps/taarefni/" + projectConfigName: perAppJSON,
+	})
+	forceStdin(t, true)
+	noPrompt(t)
+
+	runCLI(t, filepath.Join(root, "apps", "taarefni"), "env", "list")
+	if len(*paths) != 1 || !strings.Contains((*paths)[0], "/sites/s1/env") {
+		t.Errorf("requested %v; want this directory's own site (s1), with no question asked", *paths)
+	}
+}
+
+// --- domain create ----------------------------------------------------------
+
+// TestDomainCreate_SiteFlagAtWorkspaceRoot: a domain is attached to ONE site,
+// so --site has to reach the request body.
+func TestDomainCreate_SiteFlagAtWorkspaceRoot(t *testing.T) {
+	var body map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(ts.Close)
+	cliHome(t, ts.URL)
+	root := manifestFixture(t)
+	forceStdin(t, false)
+	noPrompt(t)
+
+	runCLI(t, root, "domain", "create", "admin.example.com", "--site", "admin")
+	if body["site_id"] != "s2" || body["project_id"] != "p1" {
+		t.Errorf("posted %v; want the admin site of the workspace project", body)
 	}
 }
 
