@@ -38,13 +38,14 @@ func TestSiteScopedCommandsGuardManifests(t *testing.T) {
 	if strings.Count(env, `localSiteConfig("ghayma env")`) < 4 {
 		t.Error("env.go: all four env subcommands must use localSiteConfig")
 	}
-	for _, file := range []string{"domain.go", "site.go"} {
-		if !strings.Contains(readCmdSource(t, file), "rejectManifest(data,") {
-			t.Errorf("%s must guard against a workspace manifest before using site_id", file)
-		}
+	if !strings.Contains(readCmdSource(t, "domain.go"), "rejectManifest(data,") {
+		t.Error("domain.go must guard against a workspace manifest before using site_id")
 	}
 	site := readCmdSource(t, "site.go")
-	if strings.Index(site, `rejectManifest(data, "ghayma site use")`) > strings.Index(site, "writeProjectConfigUpdate(") {
+	if !strings.Contains(site, "manifestHasNoActiveSite(data)") {
+		t.Error("site use must refuse a workspace manifest before it touches site_id")
+	}
+	if strings.Index(site, "manifestHasNoActiveSite(data)") > strings.Index(site, "writeProjectConfigUpdate(") {
 		t.Error("site use must reject a manifest before the write-back that would destroy it")
 	}
 }

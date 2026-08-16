@@ -53,7 +53,11 @@ func readProjectConfig(dir string) ([]byte, error) {
 // so a legacy .espacetech.json project stays on that file instead of silently
 // migrating to .ghayma.json. Use projectConfigWritePath (not this) for brand-new
 // configs created by init/link.
-func writeProjectConfigUpdate(dir string, cfg ProjectConfig) error {
+//
+// cfg is untyped so callers round-trip the FULL shape they read (perAppConfig)
+// instead of a narrower struct: marshalling a subset here is exactly how
+// `site use` used to delete dockerfile_path and crons (2026-08-16).
+func writeProjectConfigUpdate(dir string, cfg any) error {
 	path, err := findProjectConfig(dir)
 	if err != nil {
 		return err

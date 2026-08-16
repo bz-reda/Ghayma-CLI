@@ -591,6 +591,18 @@ func promptManifestSite(verb string, sites []SiteEntry) (int, error) {
 	return idx, nil
 }
 
+// manifestHasNoActiveSite is `site use`'s permanent answer at a workspace root.
+// Unlike the other site-scoped commands, `site use` has nothing to resolve: it
+// PINS one site into a config file, and a manifest's whole point is that the
+// root has no single active site. Say so, and point at the two ways to choose
+// one (2026-08-16).
+func manifestHasNoActiveSite(data []byte) error {
+	if !isManifest(data) {
+		return nil
+	}
+	return fmt.Errorf("./%s is a workspace manifest — there is no single active site here: every command takes --site or asks; run 'ghayma site use' inside the app's directory to pin its site", projectConfigName)
+}
+
 // rejectManifest is the interim guard for site-scoped commands that still read
 // one site_id straight out of the config file. At a workspace root that file is
 // a manifest, so they would either act project-wide (env, domain add) or — for
