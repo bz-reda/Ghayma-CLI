@@ -17,7 +17,7 @@ var domainCmd = &cobra.Command{
 
 func runDomainCreate(cmd *cobra.Command, args []string) {
 	cfg := config.Load()
-	if cfg.Token == "" {
+	if !cfg.LoggedIn() {
 		fmt.Println("❌ Please login first: ghayma login")
 		return
 	}
@@ -71,7 +71,7 @@ var domainListCmd = &cobra.Command{
 	Short: "List domains for the current project",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -108,7 +108,7 @@ var domainDeleteYes bool
 
 func runDomainDelete(cmd *cobra.Command, args []string) {
 	cfg := config.Load()
-	if cfg.Token == "" {
+	if !cfg.LoggedIn() {
 		fmt.Println("❌ Please login first: ghayma login")
 		return
 	}

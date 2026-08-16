@@ -18,7 +18,7 @@ var deleteCmd = &cobra.Command{
 	Short: "Delete the current project and all its resources",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

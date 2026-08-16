@@ -66,7 +66,7 @@ var authCreateCmd = &cobra.Command{
 	Args:  requireOneArg("name", ""),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -189,7 +189,7 @@ var authListCmd = &cobra.Command{
 	Short: "List your auth apps",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -226,7 +226,7 @@ var authInfoCmd = &cobra.Command{
 	Args:  requireOneArg("name", "auth list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -311,7 +311,7 @@ Examples:
 	Args: requireOneArg("name", "auth list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -393,7 +393,7 @@ var authUsersCmd = &cobra.Command{
 	Args:  requireOneArg("name", "auth list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -437,7 +437,7 @@ var authStatsCmd = &cobra.Command{
 	Args:  requireOneArg("name", "auth list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -468,7 +468,7 @@ var authDeleteCmd = &cobra.Command{
 	Args:  requireOneArg("name", "auth list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -504,7 +504,7 @@ var authRotateKeysCmd = &cobra.Command{
 	Args:  requireOneArg("name", "auth list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

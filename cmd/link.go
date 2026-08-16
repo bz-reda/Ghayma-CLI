@@ -23,8 +23,22 @@ the subdir) — link can attach to an existing site or create a new one.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
+			return
+		}
+
+		// Fetch first: an expired session or an empty account should be
+		// reported before the user is walked through the monorepo prompt.
+		client := api.NewClient(cfg)
+
+		projects, err := client.ListProjects()
+		if err != nil {
+			fmt.Printf("❌ Failed to list projects: %v\n", err)
+			return
+		}
+		if len(projects) == 0 {
+			fmt.Println("❌ You don't have any projects yet. Create one with: ghayma init")
 			return
 		}
 
@@ -38,18 +52,6 @@ the subdir) — link can attach to an existing site or create a new one.`,
 
 		if _, err := findProjectConfig(configDir); err == nil {
 			fmt.Println("⚠️  This directory is already linked. Delete the project config to re-link.")
-			return
-		}
-
-		client := api.NewClient(cfg)
-
-		projects, err := client.ListProjects()
-		if err != nil {
-			fmt.Printf("❌ Failed to list projects: %v\n", err)
-			return
-		}
-		if len(projects) == 0 {
-			fmt.Println("❌ You don't have any projects yet. Create one with: ghayma init")
 			return
 		}
 

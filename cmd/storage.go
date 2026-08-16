@@ -23,7 +23,7 @@ var storageCreateCmd = &cobra.Command{
 	Args:  requireOneArg("name", ""),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -94,7 +94,7 @@ var storageListCmd = &cobra.Command{
 	Short: "List your storage buckets",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -135,7 +135,7 @@ var storageInfoCmd = &cobra.Command{
 	Args:  requireOneArg("name", "storage list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -170,7 +170,7 @@ var storageCredentialsCmd = &cobra.Command{
 	Args:  requireOneArg("name", "storage list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -206,7 +206,7 @@ var storageLinkCmd = &cobra.Command{
 	Args:  requireOneArg("bucket-name", "storage list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -265,7 +265,7 @@ var storageUnlinkCmd = &cobra.Command{
 	Args:  requireOneArg("bucket-name", "storage list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -293,7 +293,7 @@ var storageExposeCmd = &cobra.Command{
 	Args:  requireOneArg("name", "storage list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -322,7 +322,7 @@ var storageUnexposeCmd = &cobra.Command{
 	Args:  requireOneArg("name", "storage list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -350,7 +350,7 @@ var storageRotateCmd = &cobra.Command{
 	Args:  requireOneArg("name", "storage list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -389,7 +389,7 @@ var storageDeleteCmd = &cobra.Command{
 	Args:  requireOneArg("name", "storage list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

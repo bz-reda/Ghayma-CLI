@@ -49,7 +49,7 @@ Examples:
 
 func runDBSites(cmd *cobra.Command, args []string) {
 	cfg := config.Load()
-	if cfg.Token == "" {
+	if !cfg.LoggedIn() {
 		fmt.Println("❌ Please login first: ghayma login")
 		return
 	}

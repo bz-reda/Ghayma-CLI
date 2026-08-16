@@ -150,7 +150,7 @@ var deployCmd = &cobra.Command{
 	Short: "Deploy the current project",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

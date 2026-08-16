@@ -17,7 +17,7 @@ var pointsCmd = &cobra.Command{
 	Short: "Show this project's points meter and per-resource breakdown",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

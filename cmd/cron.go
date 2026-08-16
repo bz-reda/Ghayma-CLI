@@ -50,7 +50,7 @@ var cronTriggerCmd = &cobra.Command{
 
 func runCronList(cmd *cobra.Command, args []string) {
 	cfg := config.Load()
-	if cfg.Token == "" {
+	if !cfg.LoggedIn() {
 		fmt.Println("❌ Please login first: ghayma login")
 		return
 	}
@@ -86,7 +86,7 @@ func runCronList(cmd *cobra.Command, args []string) {
 
 func runCronRuns(cmd *cobra.Command, args []string) {
 	cfg := config.Load()
-	if cfg.Token == "" {
+	if !cfg.LoggedIn() {
 		fmt.Println("❌ Please login first: ghayma login")
 		return
 	}
@@ -114,7 +114,7 @@ func runCronRuns(cmd *cobra.Command, args []string) {
 
 func runCronTrigger(cmd *cobra.Command, args []string) {
 	cfg := config.Load()
-	if cfg.Token == "" {
+	if !cfg.LoggedIn() {
 		fmt.Println("❌ Please login first: ghayma login")
 		return
 	}

@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -11,13 +12,33 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"paas-cli/internal/config"
 )
 
+// ErrUnauthorized is returned for every 401 the API answers, so callers can
+// tell "your credential is dead" apart from "you own nothing". Before this
+// the status was ignored and an expired session decoded into an empty result
+// — `ghayma link` then claimed the user had no projects (2026-08-16).
+var ErrUnauthorized = errors.New("session expired or revoked — run: ghayma login")
+
+// APIError carries the server's own message for a non-2xx response.
+type APIError struct {
+	Status  int
+	Message string
+}
+
+func (e *APIError) Error() string {
+	if e.Message == "" {
+		return fmt.Sprintf("HTTP %d", e.Status)
+	}
+	return e.Message
+}
+
 type Client struct {
-	cfg    *config.Config
-	http   *http.Client
+	cfg  *config.Config
+	http *http.Client
 }
 
 func NewClient(cfg *config.Config) *Client {
@@ -114,6 +135,75 @@ func (c *Client) GetMe(token string) (*MeResponse, error) {
 	var result MeResponse
 	json.NewDecoder(resp.Body).Decode(&result)
 	return &result, nil
+}
+
+// API tokens
+//
+// Personal access tokens (gh_ prefix) are the credential the API is designed
+// to be driven by. The CLI mints one per machine at login so a command run a
+// month later still works — the browser handoff only ever yields the
+// Dashboard's 7-day session JWT, which has no refresh (2026-08-16).
+
+// CreatedAPIToken is the 201 body of POST /tokens — the one and only time the
+// server returns the raw token.
+type CreatedAPIToken struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Token     string     `json:"token"`
+	ExpiresAt *time.Time `json:"expires_at"`
+}
+
+// APITokenInfo is a listed token; the raw secret is never returned again.
+type APITokenInfo struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	TokenPrefix string     `json:"token_prefix"`
+	Scope       string     `json:"scope"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+func (c *Client) CreateAPIToken(name, scope string, expiresInDays int) (*CreatedAPIToken, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":            name,
+		"scope":           scope,
+		"expires_in_days": expiresInDays,
+	})
+	resp, err := c.authRequest("POST", "/api/v1/tokens", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var created CreatedAPIToken
+	if err := c.decodeJSON(resp, &created); err != nil {
+		return nil, err
+	}
+	return &created, nil
+}
+
+func (c *Client) ListAPITokens() ([]APITokenInfo, error) {
+	resp, err := c.authRequest("GET", "/api/v1/tokens", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var tokens []APITokenInfo
+	if err := c.decodeJSON(resp, &tokens); err != nil {
+		return nil, err
+	}
+	return tokens, nil
+}
+
+func (c *Client) DeleteAPIToken(id string) error {
+	resp, err := c.authRequest("DELETE", "/api/v1/tokens/"+id, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	return c.decodeJSON(resp, nil)
 }
 
 // Projects
@@ -249,7 +339,9 @@ func (c *Client) ListProjects() ([]Project, error) {
 	defer resp.Body.Close()
 
 	var projects []Project
-	json.NewDecoder(resp.Body).Decode(&projects)
+	if err := c.decodeJSON(resp, &projects); err != nil {
+		return nil, err
+	}
 	return projects, nil
 }
 
@@ -452,7 +544,7 @@ func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isPr
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	req.Header.Set("Authorization", "Bearer "+c.cfg.Bearer())
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := c.http.Do(req)
@@ -460,6 +552,13 @@ func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isPr
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// Upload builds its own request, so it needs the same 401 mapping
+	// authRequest does — otherwise a dead session reads as "deploy failed".
+	if resp.StatusCode == http.StatusUnauthorized {
+		io.Copy(io.Discard, resp.Body)
+		return nil, ErrUnauthorized
+	}
 
 	if resp.StatusCode != 201 {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -489,7 +588,9 @@ func (c *Client) GetDeployment(id string) (*Deployment, error) {
 	defer resp.Body.Close()
 
 	var deployment Deployment
-	json.NewDecoder(resp.Body).Decode(&deployment)
+	if err := c.decodeJSON(resp, &deployment); err != nil {
+		return nil, err
+	}
 	return &deployment, nil
 }
 
@@ -501,7 +602,9 @@ func (c *Client) GetDeploymentLogs(id string) (string, error) {
 	defer resp.Body.Close()
 
 	var result map[string]string
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return "", err
+	}
 	return result["logs"], nil
 }
 
@@ -515,7 +618,9 @@ func (c *Client) ListDomains(projectID string) ([]string, error) {
 	var domains []struct {
 		Domain string `json:"domain"`
 	}
-	json.NewDecoder(resp.Body).Decode(&domains)
+	if err := c.decodeJSON(resp, &domains); err != nil {
+		return nil, err
+	}
 
 	var result []string
 	for _, d := range domains {
@@ -620,7 +725,9 @@ func (c *Client) GetEnvVarsSnapshotBySite(projectID, siteID string) (*EnvVarsSna
 		EnvVars       map[string]string `json:"env_vars"`
 		BuildTimeKeys []string          `json:"build_time_keys"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return nil, err
+	}
 	if result.EnvVars == nil {
 		result.EnvVars = make(map[string]string)
 	}
@@ -683,7 +790,9 @@ func (c *Client) ListDeployments(projectID string) ([]DeploymentInfo, error) {
 	defer resp.Body.Close()
 
 	var deployments []DeploymentInfo
-	json.NewDecoder(resp.Body).Decode(&deployments)
+	if err := c.decodeJSON(resp, &deployments); err != nil {
+		return nil, err
+	}
 	return deployments, nil
 }
 
@@ -872,7 +981,9 @@ func (c *Client) ListDatabases() ([]DatabaseInfo, error) {
 	var result struct {
 		Databases []DatabaseInfo `json:"databases"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return nil, err
+	}
 	return result.Databases, nil
 }
 
@@ -946,11 +1057,44 @@ func (c *Client) authRequest(method, path string, body io.Reader) (*http.Respons
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+	req.Header.Set("Authorization", "Bearer "+c.cfg.Bearer())
 	req.Header.Set("Content-Type", "application/json")
-	return c.http.Do(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return nil, ErrUnauthorized
+	}
+	return resp, nil
 }
 
+// decodeJSON turns a response into either a decoded result or a real error.
+// A non-2xx yields the server's {"error":...} message as *APIError; a 2xx
+// decodes into out and — crucially — returns the decode error rather than
+// leaving the caller with a zero value and a nil error (2026-08-16).
+func (c *Client) decodeJSON(resp *http.Response, out any) error {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		raw, _ := io.ReadAll(resp.Body)
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		json.Unmarshal(raw, &errResp)
+		return &APIError{Status: resp.StatusCode, Message: errResp.Error}
+	}
+	if out == nil {
+		return nil
+	}
+	// An empty 2xx body leaves out at its zero value, as it always did; only a
+	// body that is present but mis-shaped is a real decode failure.
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
+}
 
 func (c *Client) ExposeDatabase(id string) (map[string]interface{}, error) {
 	resp, err := c.authRequest("POST", "/api/v1/databases/"+id+"/expose", nil)
@@ -1098,7 +1242,9 @@ func (c *Client) ListBuckets() ([]BucketInfo, error) {
 	var result struct {
 		Buckets []BucketInfo `json:"buckets"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return nil, err
+	}
 	return result.Buckets, nil
 }
 
@@ -1299,7 +1445,9 @@ func (c *Client) ListAuthApps() ([]AuthAppInfo, error) {
 	var result struct {
 		AuthApps []AuthAppInfo `json:"auth_apps"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return nil, err
+	}
 	return result.AuthApps, nil
 }
 
@@ -1397,7 +1545,9 @@ func (c *Client) ListAuthAppUsers(appID string) ([]AuthUserInfo, int, error) {
 		Users []AuthUserInfo `json:"users"`
 		Total int            `json:"total"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return nil, 0, err
+	}
 	return result.Users, result.Total, nil
 }
 

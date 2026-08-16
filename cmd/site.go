@@ -21,7 +21,7 @@ var siteListCmd = &cobra.Command{
 	Short: "List all sites in the current project",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -64,7 +64,7 @@ var siteListCmd = &cobra.Command{
 
 func runSiteCreate(cmd *cobra.Command, args []string) {
 	cfg := config.Load()
-	if cfg.Token == "" {
+	if !cfg.LoggedIn() {
 		fmt.Println("❌ Please login first: ghayma login")
 		return
 	}
@@ -126,7 +126,7 @@ var siteUseCmd = &cobra.Command{
 	Args:  requireOneArg("slug", "site list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -201,7 +201,7 @@ Examples:
   ghayma site scale --site api --tier b --replicas 2`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

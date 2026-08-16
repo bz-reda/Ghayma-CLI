@@ -69,12 +69,10 @@ var registerCmd = &cobra.Command{
 
 		// Auto-login if token is returned
 		if resp.Token != "" {
-			cfg.Token = resp.Token
-			cfg.APIToken = resp.APIToken
 			cfg.UserID = resp.User.ID
 			cfg.Email = resp.User.Email
-			cfg.Save()
 			fmt.Println("🔑 Automatically logged in")
+			provisionCLIToken(client, cfg, resp.Token)
 		} else {
 			fmt.Println("📋 Please verify your email, then run: ghayma login")
 		}
