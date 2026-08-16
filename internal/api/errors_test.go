@@ -203,3 +203,22 @@ func TestDeployUpload_Bearer(t *testing.T) {
 		t.Errorf("upload Authorization = %q; want Bearer gh_x", got)
 	}
 }
+
+// TestDecodeJSON_EmptyBodyIsNotAnError keeps the pre-2026-08-16 tolerance for
+// an empty 2xx body: the converted reads used to zero-value it silently, and a
+// bare "EOF" at the user would be a regression, not a fix. Mis-shaped bodies
+// still surface (see TestListProjects_DecodeErrorSurfaces).
+func TestDecodeJSON_EmptyBodyIsNotAnError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	projects, err := newTestClient(ts.URL).ListProjects()
+	if err != nil {
+		t.Fatalf("empty 200 body: err = %v; want nil", err)
+	}
+	if len(projects) != 0 {
+		t.Errorf("empty 200 body: got %d projects; want 0", len(projects))
+	}
+}

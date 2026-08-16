@@ -1088,7 +1088,12 @@ func (c *Client) decodeJSON(resp *http.Response, out any) error {
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	// An empty 2xx body leaves out at its zero value, as it always did; only a
+	// body that is present but mis-shaped is a real decode failure.
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }
 
 func (c *Client) ExposeDatabase(id string) (map[string]interface{}, error) {
