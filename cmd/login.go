@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -14,6 +15,73 @@ import (
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
 )
+
+// Browser login hands the CLI the Dashboard's 7-day session JWT, and there is
+// no refresh — sessions died once a week and the failure surfaced as nonsense
+// like "you don't have any projects yet" (2026-08-16). A personal access token
+// is the credential the API is actually designed to be driven by, so login
+// trades the fresh JWT for one straight away.
+const (
+	cliTokenTTLDays = 365
+	cliTokenScope   = "full"
+	// cliTokenNameMax mirrors the backend's 100-char limit on token names.
+	cliTokenNameMax = 100
+)
+
+// cliTokenName identifies this machine's token, so re-logging in replaces it
+// rather than eating another slot of the account's 10-token ceiling.
+func cliTokenName() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	name := "ghayma-cli@" + host
+	if len(name) > cliTokenNameMax {
+		name = name[:cliTokenNameMax]
+	}
+	return name
+}
+
+// provisionCLIToken swaps a freshly-issued session JWT for a long-lived token.
+// The JWT is stored first and any token left over from an earlier login on
+// this machine is cleared, because the mint call is itself authenticated: a
+// stale PAT would be preferred by Bearer() and 401 the request that is
+// supposed to replace it.
+func provisionCLIToken(client *api.Client, cfg *config.Config, jwt string) {
+	cfg.Token = jwt
+	cfg.APIToken = ""
+	cfg.APITokenID = ""
+	cfg.Save()
+
+	name := cliTokenName()
+
+	// One token per machine: drop the previous one before minting its
+	// replacement. Best-effort — an older CLI may not have left one.
+	if existing, err := client.ListAPITokens(); err == nil {
+		for _, tok := range existing {
+			if tok.Name == name {
+				client.DeleteAPIToken(tok.ID)
+			}
+		}
+	}
+
+	created, err := client.CreateAPIToken(name, cliTokenScope, cliTokenTTLDays)
+	if err != nil {
+		fmt.Printf("⚠️  Could not create a long-lived CLI token (%v) — using a 7-day session instead.\n", err)
+		return
+	}
+
+	cfg.APIToken = created.Token
+	cfg.APITokenID = created.ID
+	cfg.Save()
+
+	expires := time.Now().AddDate(0, 0, cliTokenTTLDays)
+	if created.ExpiresAt != nil {
+		expires = *created.ExpiresAt
+	}
+	fmt.Printf("🔑 Created a long-lived CLI token %q (expires %s). Revoke it with 'ghayma logout' or in the Dashboard → Settings → API Tokens.\n",
+		name, expires.Format("2006-01-02"))
+}
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
@@ -37,13 +105,11 @@ var loginCmd = &cobra.Command{
 				return
 			}
 
-			cfg.Token = resp.Token
-			cfg.APIToken = resp.APIToken
 			cfg.UserID = resp.User.ID
 			cfg.Email = resp.User.Email
-			cfg.Save()
 
 			fmt.Printf("✅ Logged in as %s (%s)\n", resp.User.Name, resp.User.Email)
+			provisionCLIToken(client, cfg, resp.Token)
 			return
 		}
 
@@ -98,7 +164,6 @@ func browserLogin(cfg *config.Config, client *api.Client) {
 		}
 
 		if result.Confirmed && result.Token != "" {
-			cfg.Token = result.Token
 			cfg.Email = result.Email
 
 			me, err := client.GetMe(result.Token)
@@ -107,8 +172,8 @@ func browserLogin(cfg *config.Config, client *api.Client) {
 				cfg.Email = me.Email
 			}
 
-			cfg.Save()
 			fmt.Printf("✅ Logged in as %s\n", cfg.Email)
+			provisionCLIToken(client, cfg, result.Token)
 			return
 		}
 	}

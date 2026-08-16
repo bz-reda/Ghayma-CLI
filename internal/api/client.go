@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"paas-cli/internal/config"
 )
@@ -134,6 +135,75 @@ func (c *Client) GetMe(token string) (*MeResponse, error) {
 	var result MeResponse
 	json.NewDecoder(resp.Body).Decode(&result)
 	return &result, nil
+}
+
+// API tokens
+//
+// Personal access tokens (gh_ prefix) are the credential the API is designed
+// to be driven by. The CLI mints one per machine at login so a command run a
+// month later still works — the browser handoff only ever yields the
+// Dashboard's 7-day session JWT, which has no refresh (2026-08-16).
+
+// CreatedAPIToken is the 201 body of POST /tokens — the one and only time the
+// server returns the raw token.
+type CreatedAPIToken struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Token     string     `json:"token"`
+	ExpiresAt *time.Time `json:"expires_at"`
+}
+
+// APITokenInfo is a listed token; the raw secret is never returned again.
+type APITokenInfo struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	TokenPrefix string     `json:"token_prefix"`
+	Scope       string     `json:"scope"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+func (c *Client) CreateAPIToken(name, scope string, expiresInDays int) (*CreatedAPIToken, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":            name,
+		"scope":           scope,
+		"expires_in_days": expiresInDays,
+	})
+	resp, err := c.authRequest("POST", "/api/v1/tokens", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var created CreatedAPIToken
+	if err := c.decodeJSON(resp, &created); err != nil {
+		return nil, err
+	}
+	return &created, nil
+}
+
+func (c *Client) ListAPITokens() ([]APITokenInfo, error) {
+	resp, err := c.authRequest("GET", "/api/v1/tokens", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var tokens []APITokenInfo
+	if err := c.decodeJSON(resp, &tokens); err != nil {
+		return nil, err
+	}
+	return tokens, nil
+}
+
+func (c *Client) DeleteAPIToken(id string) error {
+	resp, err := c.authRequest("DELETE", "/api/v1/tokens/"+id, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	return c.decodeJSON(resp, nil)
 }
 
 // Projects
