@@ -28,6 +28,20 @@ the subdir) — link can attach to an existing site or create a new one.`,
 			return
 		}
 
+		// Fetch first: an expired session or an empty account should be
+		// reported before the user is walked through the monorepo prompt.
+		client := api.NewClient(cfg)
+
+		projects, err := client.ListProjects()
+		if err != nil {
+			fmt.Printf("❌ Failed to list projects: %v\n", err)
+			return
+		}
+		if len(projects) == 0 {
+			fmt.Println("❌ You don't have any projects yet. Create one with: ghayma init")
+			return
+		}
+
 		// In a monorepo root, write the config into the chosen app subdir so
 		// deploy uploads the whole workspace and builds the right target.
 		appSubdir := detectMonorepoAppSubdir()
@@ -38,18 +52,6 @@ the subdir) — link can attach to an existing site or create a new one.`,
 
 		if _, err := findProjectConfig(configDir); err == nil {
 			fmt.Println("⚠️  This directory is already linked. Delete the project config to re-link.")
-			return
-		}
-
-		client := api.NewClient(cfg)
-
-		projects, err := client.ListProjects()
-		if err != nil {
-			fmt.Printf("❌ Failed to list projects: %v\n", err)
-			return
-		}
-		if len(projects) == 0 {
-			fmt.Println("❌ You don't have any projects yet. Create one with: ghayma init")
 			return
 		}
 
