@@ -317,7 +317,7 @@ func resolveSiteContext(cwd, siteFlag, verb string) (*SiteContext, error) {
 			return nil, fmt.Errorf("could not read %s: %w", path, err)
 		}
 		if !isManifest(data) {
-			return perAppSiteContext(cwd, path, data, siteFlag)
+			return perAppSiteContext(cwd, path, data, siteFlag, verb)
 		}
 		manifest, err := parseManifest(data, path)
 		if err != nil {
@@ -338,7 +338,7 @@ func resolveSiteContext(cwd, siteFlag, verb string) (*SiteContext, error) {
 	if entry == nil {
 		return nil, fmt.Errorf("this directory is not listed in %s — run 'ghayma link' from the workspace root to add it", path)
 	}
-	if err := checkSiteFlag(*entry, siteFlag); err != nil {
+	if err := checkSiteFlag(*entry, siteFlag, verb); err != nil {
 		return nil, err
 	}
 	return manifestSiteContext(root, path, manifest, *entry)
@@ -367,12 +367,12 @@ func nearestListedEntry(sites []SiteEntry, rel string) *SiteEntry {
 // root_directory points at a subdir from where the config lives; otherwise a
 // turbo ancestor makes the workspace the upload root; otherwise the app
 // directory is uploaded on its own.
-func perAppSiteContext(cwd, configPath string, data []byte, siteFlag string) (*SiteContext, error) {
+func perAppSiteContext(cwd, configPath string, data []byte, siteFlag, verb string) (*SiteContext, error) {
 	var cfg perAppConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("%s is not valid JSON: %w", configPath, err)
 	}
-	if err := checkSiteFlag(cfg.SiteEntry, siteFlag); err != nil {
+	if err := checkSiteFlag(cfg.SiteEntry, siteFlag, verb); err != nil {
 		return nil, err
 	}
 
@@ -536,12 +536,14 @@ func matchSiteEntry(sites []SiteEntry, want string) *SiteEntry {
 
 // checkSiteFlag guards the directory-pinned paths (a per-app config, or a
 // manifest entry matched by the directory we're in): a --site naming a
-// different site must never silently deploy this one.
-func checkSiteFlag(entry SiteEntry, siteFlag string) error {
+// different site must never silently act on this one. The verb keeps the advice
+// true for every caller — this used to say "deploy another site" to someone
+// running `ghayma env list`.
+func checkSiteFlag(entry SiteEntry, siteFlag, verb string) error {
 	if siteFlag == "" || matchSiteEntry([]SiteEntry{entry}, siteFlag) != nil {
 		return nil
 	}
-	return fmt.Errorf("this directory is linked to site %q; run from the workspace root (or without --site) to deploy another site", siteLabel(entry))
+	return fmt.Errorf("this directory is linked to site %q; run from the workspace root (or without --site) to %s another site", siteLabel(entry), verb)
 }
 
 // siteLabel is how a site is named back to the user: slug, else name, else id.

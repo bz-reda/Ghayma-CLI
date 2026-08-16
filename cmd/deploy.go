@@ -154,9 +154,10 @@ var deployCmd = &cobra.Command{
 	Short: "Deploy the current project",
 	Long: `Deploy the current project.
 
-Inside an app directory this deploys that directory's site. At the root of a
-workspace linked with 'ghayma link' (whole project) it asks which site to
-deploy, or takes --site <slug> — required when the shell is not interactive.`,
+Inside an app directory — or anywhere below it — this deploys that directory's
+site. At the root of a workspace linked with 'ghayma link' (whole project) it
+asks which site to deploy, or takes --site <slug> — required when the shell is
+not interactive.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		if !cfg.LoggedIn() {

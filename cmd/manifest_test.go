@@ -577,3 +577,20 @@ func TestStdinIsTerminal(t *testing.T) {
 		t.Error("/dev/null must not count as a terminal")
 	}
 }
+
+// TestCheckSiteFlag_VerbInAdvice: the mismatch error is shared by every
+// site-scoped command, so it must not tell an `env list` user how to "deploy
+// another site" (2026-08-16 smoke catch).
+func TestCheckSiteFlag_VerbInAdvice(t *testing.T) {
+	entry := SiteEntry{SiteSlug: "web"}
+	err := checkSiteFlag(entry, "admin", "list env vars for")
+	if err == nil {
+		t.Fatal("a --site naming another site must be refused")
+	}
+	if !strings.Contains(err.Error(), "list env vars for another site") {
+		t.Errorf("error %q should carry the caller's verb", err)
+	}
+	if err := checkSiteFlag(entry, "web", "list env vars for"); err != nil {
+		t.Errorf("this directory's own site must pass: %v", err)
+	}
+}
