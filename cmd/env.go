@@ -19,27 +19,38 @@ var envCmd = &cobra.Command{
 	Short: "Manage environment variables",
 }
 
-// localConfig reads the project config and returns projectID + siteID.
+// localConfig reads the nearest project config at or above the working
+// directory and returns projectID + siteID. It is the project-scoped read: the
+// commands using it (site, cron, …) act on the whole project, so running from a
+// subdirectory of a linked workspace must work.
+//
+// siteID is "" for a workspace manifest — the file pins no active site — which
+// those callers already treat as project-wide.
 func localConfig() (projectID, siteID, name string, err error) {
-	return localConfigFor("")
+	data, readErr := readProjectConfigUp(".")
+	if readErr != nil {
+		return "", "", "", fmt.Errorf("no project config found — run 'ghayma init' first")
+	}
+	var cfg struct {
+		ProjectID string `json:"project_id"`
+		Name      string `json:"name"`
+		SiteID    string `json:"site_id"`
+	}
+	json.Unmarshal(data, &cfg)
+	return cfg.ProjectID, cfg.SiteID, cfg.Name, nil
 }
 
-// localSiteConfig is localConfig for commands that act on ONE site and read
-// site_id straight from the file: a workspace manifest is refused (see
-// rejectManifest) instead of silently degrading to the project-wide endpoint.
+// localSiteConfig is the site-scoped read: env acts on ONE site and takes
+// site_id straight from the file in THIS directory, so it neither walks up nor
+// accepts a workspace manifest (see rejectManifest) — it would otherwise
+// silently write to the project-wide endpoint.
 func localSiteConfig(action string) (projectID, siteID, name string, err error) {
-	return localConfigFor(action)
-}
-
-func localConfigFor(siteScopedAction string) (projectID, siteID, name string, err error) {
 	data, readErr := readProjectConfig(".")
 	if readErr != nil {
 		return "", "", "", fmt.Errorf("no project config found — run 'ghayma init' first")
 	}
-	if siteScopedAction != "" {
-		if err := rejectManifest(data, siteScopedAction); err != nil {
-			return "", "", "", err
-		}
+	if err := rejectManifest(data, action); err != nil {
+		return "", "", "", err
 	}
 	var cfg struct {
 		ProjectID string `json:"project_id"`

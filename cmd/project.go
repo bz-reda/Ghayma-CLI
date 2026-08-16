@@ -181,7 +181,7 @@ to.`,
 // project's UUID and display name. Kept separate from deploy's projectConfig
 // so it can be used from any directory regardless of site-level linking.
 func readProjectIDAndName() (string, string, error) {
-	data, err := readProjectConfig(".")
+	data, err := readProjectConfigUp(".")
 	if err != nil {
 		return "", "", fmt.Errorf("no project config found — run 'ghayma init' or 'ghayma link' first")
 	}

@@ -45,7 +45,7 @@ var siteListCmd = &cobra.Command{
 			return
 		}
 
-		data, _ := readProjectConfig(".")
+		data, _ := readProjectConfigUp(".")
 		var localCfg struct {
 			SiteID string `json:"site_id"`
 		}

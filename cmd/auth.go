@@ -92,7 +92,7 @@ var authCreateCmd = &cobra.Command{
 				return
 			}
 		} else {
-			data, err := readProjectConfig(".")
+			data, err := readProjectConfigUp(".")
 			if err != nil {
 				fmt.Println("❌ No --project flag and no project config found")
 				return

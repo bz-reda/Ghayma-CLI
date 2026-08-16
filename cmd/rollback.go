@@ -20,7 +20,7 @@ var rollbackCmd = &cobra.Command{
 			return
 		}
 
-		data, err := readProjectConfig(".")
+		data, err := readProjectConfigUp(".")
 		if err != nil {
 			fmt.Println("❌ No project config found. Run 'ghayma init' first.")
 			return

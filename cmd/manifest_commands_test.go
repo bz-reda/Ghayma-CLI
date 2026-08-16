@@ -97,6 +97,51 @@ func sitesStub(t *testing.T, sites string) (*httptest.Server, *[]string) {
 	return ts, &paths
 }
 
+// manifestFixture materializes the two-site workspace on disk.
+func manifestFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		"pnpm-workspace.yaml":                  realPnpmWorkspaceYAML,
+		"apps/taarefni/package.json":           `{}`,
+		"apps/taarefni/src/app/page.tsx":       "// deep",
+		"apps/taarefni-admin/package.json":     `{}`,
+		"apps/taarefni-admin/src/app/page.tsx": "// deep",
+		projectConfigName:                      manifestJSON,
+	})
+	return root
+}
+
+// --- project-scoped commands ------------------------------------------------
+
+// TestProjectScopedCommand_FromNestedDir: `site list` is about the PROJECT, so
+// it must work from wherever the user happens to be inside a linked workspace —
+// including a directory the manifest doesn't list at all.
+func TestProjectScopedCommand_FromNestedDir(t *testing.T) {
+	ts, paths := sitesStub(t, `[{"id":"s1","name":"main","slug":"taarefni","status":"running"},{"id":"s2","name":"admin","slug":"taarefni-admin","status":"running"}]`)
+	cliHome(t, ts.URL)
+	root := manifestFixture(t)
+	writeFiles(t, root, map[string]string{"apps/newapp/package.json": `{}`})
+
+	for _, dir := range []string{
+		filepath.Join(root, "apps", "taarefni", "src", "app"),
+		filepath.Join(root, "apps", "newapp"), // not in the manifest, same project
+	} {
+		out := runCLI(t, dir, "site", "list")
+		if !strings.Contains(out, "taarefni-admin") {
+			t.Errorf("site list from %s printed %q; want the project's sites", dir, out)
+		}
+	}
+	for _, got := range *paths {
+		if got != "/api/v1/projects/p1/sites" {
+			t.Errorf("requested %q; want the workspace project's sites", got)
+		}
+	}
+	if len(*paths) != 2 {
+		t.Errorf("served %d requests; want one per run", len(*paths))
+	}
+}
+
 // --- site use ---------------------------------------------------------------
 
 // perAppWithBuildConfig is a per-app config carrying the keys `site use` used to
