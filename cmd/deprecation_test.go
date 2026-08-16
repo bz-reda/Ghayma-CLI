@@ -12,16 +12,15 @@ import (
 	"paas-cli/internal/config"
 )
 
-// withFakeHome runs fn with HOME pointing at a temp dir so config read/write
-// goes to a fresh location. Restores the original HOME on return.
+// withFakeHome runs fn with the home directory pointing at a temp dir so
+// config read/write goes to a fresh location. os.UserHomeDir reads HOME on
+// Unix but USERPROFILE on Windows — setting only HOME left the Windows CI job
+// red on every main run from 2026-07-01 to 2026-08-16. t.Setenv restores both.
 func withFakeHome(t *testing.T, fn func(home string)) {
 	t.Helper()
 	dir := t.TempDir()
-	orig := os.Getenv("HOME")
-	if err := os.Setenv("HOME", dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Setenv("HOME", orig) })
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 	fn(dir)
 }
 

@@ -12,9 +12,12 @@ import (
 func TestDefaultAPIHostIsGhayma(t *testing.T) {
 	const want = "https://api.ghayma.tech"
 
-	// Point HOME at an empty dir so Load() can't find a real config file and
-	// must fall back to the compiled-in default.
-	t.Setenv("HOME", t.TempDir())
+	// Point the home dir at an empty dir so Load() can't find a real config
+	// file and must fall back to the compiled-in default (USERPROFILE is what
+	// os.UserHomeDir reads on Windows).
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	if got := Load().APIHost; got != want {
 		t.Fatalf("default APIHost = %q, want %q", got, want)
