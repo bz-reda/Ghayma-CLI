@@ -224,6 +224,147 @@ func TestDomainCreate_SiteFlagAtWorkspaceRoot(t *testing.T) {
 	}
 }
 
+// --- site create ------------------------------------------------------------
+
+// createSiteStub answers POST /sites with a freshly created site.
+func createSiteStub(t *testing.T) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/sites") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			io.WriteString(w, `{"id":"s3","name":"api","slug":"taarefni-api","status":"created"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// forceNewSiteDirPrompt substitutes the directory picker shown after a site is
+// created and records what it was offered.
+func forceNewSiteDirPrompt(t *testing.T, fn func(slug string, dirs []string) (int, error)) {
+	t.Helper()
+	orig := promptNewSiteDirFn
+	t.Cleanup(func() { promptNewSiteDirFn = orig })
+	promptNewSiteDirFn = fn
+}
+
+// TestSiteCreate_AppendsToManifest: a site created from a linked workspace is
+// useless until the manifest says which directory builds it, so offer to map it
+// right there. Everything already in the file must survive the rewrite.
+func TestSiteCreate_AppendsToManifest(t *testing.T) {
+	cliHome(t, createSiteStub(t).URL)
+	root := manifestFixture(t)
+	writeFiles(t, root, map[string]string{"apps/taarefni-api/package.json": `{}`})
+	forceStdin(t, true)
+
+	var offered []string
+	forceNewSiteDirPrompt(t, func(slug string, dirs []string) (int, error) {
+		offered = dirs
+		for i, d := range dirs {
+			if d == "apps/taarefni-api" {
+				return i, nil
+			}
+		}
+		t.Fatalf("apps/taarefni-api was not offered (got %v)", dirs)
+		return 0, nil
+	})
+
+	out := runCLI(t, root, "site", "create", "api")
+	if !strings.Contains(out, "apps/taarefni-api") {
+		t.Errorf("output %q should confirm the directory it mapped", out)
+	}
+	for _, taken := range []string{"apps/taarefni", "apps/taarefni-admin"} {
+		for _, got := range offered {
+			if got == taken {
+				t.Errorf("directory %s is already mapped and must not be offered", taken)
+			}
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, projectConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest ProjectManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("manifest is no longer valid JSON: %v", err)
+	}
+	if manifest.ProjectID != "p1" || manifest.Name != "taarefni" || manifest.Slug != "taarefni" {
+		t.Errorf("project fields = %+v; want them untouched", manifest)
+	}
+	if len(manifest.Sites) != 3 {
+		t.Fatalf("got %d sites; want the two existing ones plus the new one", len(manifest.Sites))
+	}
+	if manifest.Sites[0].SiteID != "s1" || manifest.Sites[1].SiteID != "s2" {
+		t.Errorf("existing entries changed: %+v", manifest.Sites[:2])
+	}
+	added := manifest.Sites[2]
+	if added.SiteID != "s3" || added.SiteSlug != "taarefni-api" || added.SiteName != "api" {
+		t.Errorf("appended entry = %+v; want the created site", added)
+	}
+	if added.RootDirectory != "apps/taarefni-api" {
+		t.Errorf("root_directory = %q; want the chosen directory", added.RootDirectory)
+	}
+	if added.Upload != uploadModeApp {
+		t.Errorf("upload = %q; want the mode its siblings use (%q)", added.Upload, uploadModeApp)
+	}
+}
+
+// TestSiteCreate_ManifestSkippedWithoutTTY: no terminal ⇒ no picker, no guess,
+// and the manifest is left exactly as it was.
+func TestSiteCreate_ManifestSkippedWithoutTTY(t *testing.T) {
+	cliHome(t, createSiteStub(t).URL)
+	root := manifestFixture(t)
+	writeFiles(t, root, map[string]string{"apps/taarefni-api/package.json": `{}`})
+	forceStdin(t, false)
+	forceNewSiteDirPrompt(t, func(slug string, dirs []string) (int, error) {
+		t.Fatal("the directory picker must not run without a terminal")
+		return 0, nil
+	})
+
+	before, err := os.ReadFile(filepath.Join(root, projectConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := runCLI(t, root, "site", "create", "api")
+	if !strings.Contains(out, projectConfigName) || !strings.Contains(out, "non-interactive") {
+		t.Errorf("output %q should say how to add the site by hand", out)
+	}
+
+	after, err := os.ReadFile(filepath.Join(root, projectConfigName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("manifest was rewritten without a choice:\n%s", after)
+	}
+}
+
+// TestSiteCreate_PerAppConfigIsNotTouched: outside a workspace manifest the
+// command keeps its old shape — nothing to map, nothing to rewrite.
+func TestSiteCreate_PerAppConfigIsNotTouched(t *testing.T) {
+	cliHome(t, createSiteStub(t).URL)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{projectConfigName: perAppJSON})
+	forceStdin(t, true)
+	forceNewSiteDirPrompt(t, func(slug string, dirs []string) (int, error) {
+		t.Fatal("a per-app config has no manifest to append to")
+		return 0, nil
+	})
+
+	out := runCLI(t, dir, "site", "create", "api")
+	if !strings.Contains(out, "created") {
+		t.Errorf("output %q should report the created site", out)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, projectConfigName))
+	if string(data) != perAppJSON {
+		t.Errorf("per-app config was rewritten:\n%s", data)
+	}
+}
+
 // --- site use ---------------------------------------------------------------
 
 // perAppWithBuildConfig is a per-app config carrying the keys `site use` used to

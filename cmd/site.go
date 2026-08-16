@@ -96,9 +96,22 @@ func runSiteCreate(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Printf("✅ Site '%s' created (slug: %s, id: %s)\n", site.Name, site.Slug, site.ID)
-	fmt.Printf("\nTo deploy to this site, switch to it first:\n")
-	fmt.Printf("  ghayma site use %s\n", site.Slug)
-	fmt.Printf("  ghayma deploy --prod\n")
+
+	// In a linked workspace the new site is unreachable until the manifest says
+	// which directory builds it, so offer that mapping here. `site use` is not
+	// the answer there — a manifest has no single active site.
+	inWorkspace, added := mapNewSiteInManifest(site)
+	switch {
+	case added:
+		fmt.Printf("\nTo deploy to this site:\n")
+		fmt.Printf("  ghayma deploy --site %s --prod\n", site.Slug)
+	case inWorkspace:
+		// mapNewSiteInManifest already said how to map it later.
+	default:
+		fmt.Printf("\nTo deploy to this site, switch to it first:\n")
+		fmt.Printf("  ghayma site use %s\n", site.Slug)
+		fmt.Printf("  ghayma deploy --prod\n")
+	}
 }
 
 var siteCreateCmd = &cobra.Command{

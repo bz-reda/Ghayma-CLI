@@ -602,4 +602,3 @@ func manifestHasNoActiveSite(data []byte) error {
 	}
 	return fmt.Errorf("./%s is a workspace manifest — there is no single active site here: every command takes --site or asks; run 'ghayma site use' inside the app's directory to pin its site", projectConfigName)
 }
-

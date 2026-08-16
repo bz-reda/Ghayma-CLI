@@ -30,11 +30,12 @@ const (
 // directory the user didn't choose.
 const skipSiteIdx = -1
 
-// promptLinkModeFn / promptSiteDirFn are indirected so tests can drive the
-// interactive flow without a TTY.
+// promptLinkModeFn / promptSiteDirFn / promptNewSiteDirFn are indirected so
+// tests can drive the interactive flow without a TTY.
 var (
-	promptLinkModeFn = promptLinkMode
-	promptSiteDirFn  = promptSiteDir
+	promptLinkModeFn   = promptLinkMode
+	promptSiteDirFn    = promptSiteDir
+	promptNewSiteDirFn = promptNewSiteDir
 )
 
 // linkModeLabels names both outcomes, including the file each one writes —
@@ -302,4 +303,134 @@ func manifestSummaryLines(manifest ProjectManifest) []string {
 		lines = append(lines, fmt.Sprintf("   %s → %s (%s)", siteLabel(entry), entry.RootDirectory, entry.Upload))
 	}
 	return lines
+}
+
+// Mapping a NEW site into an existing manifest (2026-08-16). `site create` at a
+// workspace root creates a site the manifest knows nothing about, so nothing
+// could deploy to it: --site wouldn't match, its directory wouldn't resolve, and
+// the only fix was deleting the manifest and re-running link. Offer the mapping
+// while the user is right there.
+
+// promptNewSiteDir asks which directory backs a freshly created site,
+// returning an index into dirs or skipSiteIdx.
+func promptNewSiteDir(slug string, dirs []string) (int, error) {
+	sel := promptui.Select{
+		Label: fmt.Sprintf("Which directory holds the new site %q?", slug),
+		Items: append(append([]string{}, dirs...), "⏭ don't add it to the manifest"),
+		Size:  10,
+	}
+	idx, _, err := sel.Run()
+	if err != nil {
+		return 0, err
+	}
+	if idx >= len(dirs) {
+		return skipSiteIdx, nil
+	}
+	return idx, nil
+}
+
+// mapNewSiteInManifest offers to record a newly created site in the workspace
+// manifest above the working directory. It reports whether there was a manifest
+// at all, and whether the site was added to it — `site create` prints different
+// next steps for each case, and "run 'ghayma site use'" is never one of them at
+// a workspace root.
+func mapNewSiteInManifest(site *api.Site) (inWorkspace, added bool) {
+	path, err := findProjectConfigUp(".")
+	if err != nil {
+		return false, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !isManifest(data) {
+		return false, false
+	}
+
+	// Unmarshal → append → write, so every other entry (and any key this
+	// version doesn't know) is carried over exactly as the user left it.
+	var manifest ProjectManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		fmt.Printf("⚠️  Could not read %s to add the new site: %v\n", path, err)
+		return true, false
+	}
+
+	if !stdinIsTerminalFn() {
+		fmt.Printf("ℹ️  Add it to ./%s by hand or re-run 'ghayma link' — non-interactive shell.\n", filepath.Base(path))
+		return true, false
+	}
+
+	root := filepath.Dir(path)
+	free := unmappedAppDirs(root, manifest)
+	if len(free) == 0 {
+		fmt.Printf("ℹ️  Every app directory in this workspace is already mapped — add '%s' to %s by hand.\n", siteIdentity(*site), path)
+		return true, false
+	}
+
+	idx, err := promptNewSiteDirFn(siteIdentity(*site), free)
+	if err != nil || idx == skipSiteIdx || idx < 0 || idx >= len(free) {
+		fmt.Printf("ℹ️  Site '%s' left out of the manifest — re-run 'ghayma link' to map it later.\n", siteIdentity(*site))
+		return true, false
+	}
+
+	entry := SiteEntry{
+		SiteID:        site.ID,
+		SiteName:      site.Name,
+		SiteSlug:      site.Slug,
+		RootDirectory: free[idx],
+		Upload:        manifestUploadMode(manifest, root),
+	}
+	manifest.Sites = append(manifest.Sites, entry)
+
+	out, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		fmt.Printf("⚠️  Could not update %s: %v\n", path, err)
+		return true, false
+	}
+	if err := os.WriteFile(path, out, 0644); err != nil {
+		fmt.Printf("⚠️  Could not update %s: %v\n", path, err)
+		return true, false
+	}
+
+	fmt.Printf("📁 Added %s → %s to %s\n", siteIdentity(*site), entry.RootDirectory, path)
+	return true, true
+}
+
+// unmappedAppDirs lists the workspace's app directories that no manifest entry
+// claims yet — a directory backs at most one site.
+func unmappedAppDirs(root string, manifest ProjectManifest) []string {
+	taken := make(map[string]bool, len(manifest.Sites))
+	for _, entry := range manifest.Sites {
+		taken[normalizeRelDir(entry.RootDirectory)] = true
+	}
+
+	var free []string
+	for _, dir := range workspaceAppDirs(root) {
+		if !taken[dir] {
+			free = append(free, dir)
+		}
+	}
+	return free
+}
+
+// manifestUploadMode picks the upload mode for a new entry: whatever the
+// existing entries agree on, else the workspace default. Copying the siblings
+// matters more than the default — a manifest written when the repo had
+// turbo.json keeps uploading the workspace even if turbo.json is gone today,
+// and a new site building a different tree than its siblings is a surprise.
+func manifestUploadMode(manifest ProjectManifest, root string) string {
+	agreed := ""
+	for _, entry := range manifest.Sites {
+		if entry.Upload == "" {
+			continue
+		}
+		if agreed == "" {
+			agreed = entry.Upload
+			continue
+		}
+		if entry.Upload != agreed {
+			return defaultUploadMode(root)
+		}
+	}
+	if agreed == "" {
+		return defaultUploadMode(root)
+	}
+	return agreed
 }
