@@ -572,3 +572,15 @@ func promptManifestSite(verb string, sites []SiteEntry) (int, error) {
 	}
 	return idx, nil
 }
+
+// rejectManifest is the interim guard for site-scoped commands that still read
+// one site_id straight out of the config file. At a workspace root that file is
+// a manifest, so they would either act project-wide (env, domain add) or — for
+// `site use` — rewrite the manifest as a per-app file and lose every other
+// site. Until they go through resolveSiteContext with --site, refuse loudly.
+func rejectManifest(data []byte, action string) error {
+	if !isManifest(data) {
+		return nil
+	}
+	return fmt.Errorf("./%s is a workspace manifest — run '%s' from the app's own directory (per-site --site support for it lands in the next release)", projectConfigName, action)
+}

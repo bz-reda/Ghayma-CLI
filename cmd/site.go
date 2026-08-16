@@ -138,6 +138,12 @@ var siteUseCmd = &cobra.Command{
 			fmt.Println("❌ No project config found. Run 'ghayma init' first.")
 			return
 		}
+		// A manifest must never round-trip through ProjectConfig here — the
+		// write-back below would drop `sites` and turn it into a per-app file.
+		if err := rejectManifest(data, "ghayma site use"); err != nil {
+			fmt.Printf("❌ %v\n", err)
+			return
+		}
 
 		var projCfg ProjectConfig
 		json.Unmarshal(data, &projCfg)
