@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -333,16 +334,33 @@ func resolveSiteContext(cwd, siteFlag, verb string) (*SiteContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	rel := monorepoRelDir(root, cwd)
-	for _, entry := range manifest.Sites {
-		if entry.RootDirectory != "" && entry.RootDirectory == rel {
-			if err := checkSiteFlag(entry, siteFlag); err != nil {
-				return nil, err
+	entry := nearestListedEntry(manifest.Sites, monorepoRelDir(root, cwd))
+	if entry == nil {
+		return nil, fmt.Errorf("this directory is not listed in %s — run 'ghayma link' from the workspace root to add it", path)
+	}
+	if err := checkSiteFlag(*entry, siteFlag); err != nil {
+		return nil, err
+	}
+	return manifestSiteContext(root, path, manifest, *entry)
+}
+
+// nearestListedEntry finds the site that owns the directory we're standing in:
+// the exact directory first, then each parent up to (but not including) the
+// workspace root. People work from apps/web/src, not apps/web, and matching
+// only the exact directory made every command there fail (2026-08-16). The
+// deepest match wins, so a nested app still beats the app that contains it.
+//
+// An entry with no root_directory is skipped: it describes the workspace root
+// itself and would otherwise swallow every unlisted directory in the repo.
+func nearestListedEntry(sites []SiteEntry, rel string) *SiteEntry {
+	for candidate := normalizeRelDir(rel); candidate != ""; candidate = normalizeRelDir(path.Dir(candidate)) {
+		for i := range sites {
+			if sites[i].RootDirectory != "" && sites[i].RootDirectory == candidate {
+				return &sites[i]
 			}
-			return manifestSiteContext(root, path, manifest, entry)
 		}
 	}
-	return nil, fmt.Errorf("this directory is not listed in %s — run 'ghayma link' from the workspace root to add it", path)
+	return nil
 }
 
 // perAppSiteContext keeps today's per-app semantics byte for byte: an explicit
