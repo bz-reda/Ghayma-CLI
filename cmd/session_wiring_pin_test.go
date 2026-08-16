@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -80,5 +81,23 @@ func TestLogout_RevokesCLIToken(t *testing.T) {
 	}
 	if strings.Index(src, "DeleteAPIToken(") > strings.Index(src, "os.Remove(configFile)") {
 		t.Error("logout must revoke before deleting the config that holds the token id")
+	}
+}
+
+// TestNoRawTokenGuards pins the sweep: every command gates on cfg.LoggedIn(),
+// never on the JWT field alone — a token-only config is a valid login.
+func TestNoRawTokenGuards(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		if strings.Contains(readCmdSource(t, name), `cfg.Token == ""`) {
+			t.Errorf("%s gates on cfg.Token alone; use cfg.LoggedIn()", name)
+		}
 	}
 }

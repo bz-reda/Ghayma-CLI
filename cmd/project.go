@@ -41,7 +41,7 @@ The transfer can be cancelled before it's accepted via:
 
 func runTransferInitiate(cmd *cobra.Command, args []string) {
 	cfg := config.Load()
-	if cfg.Token == "" {
+	if !cfg.LoggedIn() {
 		fmt.Println("❌ Please login first: ghayma login")
 		return
 	}
@@ -88,7 +88,7 @@ var projectTransferStatusCmd = &cobra.Command{
 	Short: "Show the pending transfer for the current project",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -123,7 +123,7 @@ var projectTransferCancelCmd = &cobra.Command{
 	Short: "Cancel a pending project transfer",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -155,7 +155,7 @@ to.`,
 	Args: requireOneArg("token", ""),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

@@ -131,3 +131,10 @@ func (c *Config) SessionExpired(now time.Time) bool {
 	exp, ok := c.SessionExpiry()
 	return ok && now.After(exp)
 }
+
+// LoggedIn reports whether the CLI holds any usable credential — a session
+// JWT or a real (prefixed) API token. Commands gate on this rather than on
+// Token alone, so a token-only config is not told to "login first" (2026-08-16).
+func (c *Config) LoggedIn() bool {
+	return c.Token != "" || IsAPIToken(c.APIToken)
+}

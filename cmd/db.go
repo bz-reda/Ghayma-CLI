@@ -35,7 +35,7 @@ var dbCreateCmd = &cobra.Command{
 	Args:  requireOneArg("name", ""),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -130,7 +130,7 @@ var dbResizeCmd = &cobra.Command{
 	Args:  requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -316,7 +316,7 @@ var dbListCmd = &cobra.Command{
 	Short: "List your databases",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -350,7 +350,7 @@ var dbInfoCmd = &cobra.Command{
 	Args:  requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -390,7 +390,7 @@ var dbLinkCmd = &cobra.Command{
 	Args:  requireOneArg("db-name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -451,7 +451,7 @@ var dbUnlinkCmd = &cobra.Command{
 	Args:  requireOneArg("db-name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -479,7 +479,7 @@ var dbDeleteCmd = &cobra.Command{
 	Args:  requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -529,7 +529,7 @@ var dbExposeCmd = &cobra.Command{
 	Args:  requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -562,7 +562,7 @@ var dbUnexposeCmd = &cobra.Command{
 	Args:  requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -590,7 +590,7 @@ var dbCredentialsCmd = &cobra.Command{
 	Args:  requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -635,7 +635,7 @@ var dbStopCmd = &cobra.Command{
 	Args:  requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -664,7 +664,7 @@ var dbStartCmd = &cobra.Command{
 	Args:  requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -692,7 +692,7 @@ var dbRotateCmd = &cobra.Command{
 	Args:  requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

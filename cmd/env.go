@@ -82,7 +82,7 @@ pass --force to override.`,
 	Args: requireAtLeastOneArg("KEY=VALUE", ""),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -152,7 +152,7 @@ var envListCmd = &cobra.Command{
 	Short: "List environment variables",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}
@@ -188,7 +188,7 @@ var envListCmd = &cobra.Command{
 
 func runEnvDelete(cmd *cobra.Command, args []string) {
 	cfg := config.Load()
-	if cfg.Token == "" {
+	if !cfg.LoggedIn() {
 		fmt.Println("❌ Please login first: ghayma login")
 		return
 	}
@@ -293,7 +293,7 @@ By default, existing vars are overwritten with a printed diff. Use
 	Args: requireOneArg("file", ""),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

@@ -68,7 +68,7 @@ var initCmd = &cobra.Command{
 	Short: "Initialize a new project in the current directory",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

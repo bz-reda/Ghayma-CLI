@@ -15,7 +15,7 @@ var rollbackCmd = &cobra.Command{
 	Short: "Rollback to a previous deployment",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		if cfg.Token == "" {
+		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
 			return
 		}

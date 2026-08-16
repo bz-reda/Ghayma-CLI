@@ -152,3 +152,23 @@ func TestAPITokenIDPersisted(t *testing.T) {
 		t.Errorf("APITokenID = %q; want tok-2", back.APITokenID)
 	}
 }
+
+// TestLoggedIn pins that a real API token counts as a login on its own, while
+// the legacy users.api_token UUID (never a bearer) does not.
+func TestLoggedIn(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"empty", Config{}, false},
+		{"jwt only", Config{Token: "a.b.c"}, true},
+		{"pat only", Config{APIToken: "gh_x"}, true},
+		{"legacy uuid only", Config{APIToken: "0b8f2c1e-1111-2222-3333-444455556666"}, false},
+	}
+	for _, tc := range cases {
+		if got := tc.cfg.LoggedIn(); got != tc.want {
+			t.Errorf("%s: LoggedIn() = %v; want %v", tc.name, got, tc.want)
+		}
+	}
+}

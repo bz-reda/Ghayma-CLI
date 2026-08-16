@@ -50,7 +50,7 @@ var whoamiCmd = &cobra.Command{
 	Long:    "Prints the email, user ID, API endpoint and CLI version for the currently logged-in session. Tokens are never printed.",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
-		loggedIn := cfg.Token != "" || cfg.APIToken != ""
+		loggedIn := cfg.LoggedIn()
 
 		if whoamiJSON {
 			out := map[string]interface{}{
