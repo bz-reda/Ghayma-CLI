@@ -311,15 +311,15 @@ func resolveSiteContext(cwd, siteFlag, verb string) (*SiteContext, error) {
 		cwd = abs
 	}
 
-	if path, err := findProjectConfig(cwd); err == nil {
-		data, err := os.ReadFile(path)
+	if configPath, err := findProjectConfig(cwd); err == nil {
+		data, err := os.ReadFile(configPath)
 		if err != nil {
-			return nil, fmt.Errorf("could not read %s: %w", path, err)
+			return nil, fmt.Errorf("could not read %s: %w", configPath, err)
 		}
 		if !isManifest(data) {
-			return perAppSiteContext(cwd, path, data, siteFlag, verb)
+			return perAppSiteContext(cwd, configPath, data, siteFlag, verb)
 		}
-		manifest, err := parseManifest(data, path)
+		manifest, err := parseManifest(data, configPath)
 		if err != nil {
 			return nil, err
 		}
@@ -327,21 +327,21 @@ func resolveSiteContext(cwd, siteFlag, verb string) (*SiteContext, error) {
 		if err != nil {
 			return nil, err
 		}
-		return manifestSiteContext(cwd, path, manifest, *entry)
+		return manifestSiteContext(cwd, configPath, manifest, *entry)
 	}
 
-	root, path, manifest, err := findAncestorManifest(cwd)
+	root, manifestPath, manifest, err := findAncestorManifest(cwd)
 	if err != nil {
 		return nil, err
 	}
 	entry := nearestListedEntry(manifest.Sites, monorepoRelDir(root, cwd))
 	if entry == nil {
-		return nil, fmt.Errorf("this directory is not listed in %s — run 'ghayma link' from the workspace root to add it", path)
+		return nil, fmt.Errorf("this directory is not listed in %s — run 'ghayma link' from the workspace root to add it", manifestPath)
 	}
 	if err := checkSiteFlag(*entry, siteFlag, verb); err != nil {
 		return nil, err
 	}
-	return manifestSiteContext(root, path, manifest, *entry)
+	return manifestSiteContext(root, manifestPath, manifest, *entry)
 }
 
 // nearestListedEntry finds the site that owns the directory we're standing in:
@@ -472,13 +472,13 @@ func selectManifestSite(manifest *ProjectManifest, siteFlag, verb string) (*Site
 func findAncestorManifest(dir string) (string, string, *ProjectManifest, error) {
 	current := filepath.Dir(dir)
 	for {
-		if path, err := findProjectConfig(current); err == nil {
-			if data, readErr := os.ReadFile(path); readErr == nil && isManifest(data) {
-				manifest, parseErr := parseManifest(data, path)
+		if configPath, err := findProjectConfig(current); err == nil {
+			if data, readErr := os.ReadFile(configPath); readErr == nil && isManifest(data) {
+				manifest, parseErr := parseManifest(data, configPath)
 				if parseErr != nil {
 					return "", "", nil, parseErr
 				}
-				return current, path, manifest, nil
+				return current, configPath, manifest, nil
 			}
 		}
 		parent := filepath.Dir(current)
@@ -602,5 +602,5 @@ func manifestHasNoActiveSite(data []byte) error {
 	if !isManifest(data) {
 		return nil
 	}
-	return fmt.Errorf("./%s is a workspace manifest — there is no single active site here: every command takes --site or asks; run 'ghayma site use' inside the app's directory to pin its site", projectConfigName)
+	return fmt.Errorf("./%s is a workspace manifest — there is no single active site here: every command takes --site or asks (the manifest's root_directory entries decide which site each app directory deploys)", projectConfigName)
 }

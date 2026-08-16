@@ -151,6 +151,15 @@ var siteUseCmd = &cobra.Command{
 		// THIS directory's config and writes that same file back.
 		configPath, err := findProjectConfig(".")
 		if err != nil {
+			// No file here — but a workspace manifest above may already map
+			// this directory to a site, in which case the manifest is the
+			// thing to edit, not a config to init.
+			if cwd, wdErr := os.Getwd(); wdErr == nil {
+				if ctx, resolveErr := resolveSiteContext(cwd, "", "switch"); resolveErr == nil && ctx.FromManifest {
+					fmt.Printf("❌ This directory builds site %q per %s — the manifest decides which site a directory deploys; edit its root_directory entries to change that.\n", siteLabel(ctx.Site), ctx.ConfigPath)
+					return
+				}
+			}
 			fmt.Println("❌ No project config found. Run 'ghayma init' first.")
 			return
 		}

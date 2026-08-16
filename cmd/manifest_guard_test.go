@@ -22,7 +22,7 @@ func TestManifestHasNoActiveSite(t *testing.T) {
 	if err == nil {
 		t.Fatal("manifest must be refused")
 	}
-	for _, want := range []string{"workspace manifest", "--site", "ghayma site use"} {
+	for _, want := range []string{"workspace manifest", "--site", "root_directory"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q should mention %q", err, want)
 		}

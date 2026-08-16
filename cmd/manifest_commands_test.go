@@ -447,7 +447,7 @@ func TestSiteUse_RefusesManifest(t *testing.T) {
 	})
 
 	out := runCLI(t, root, "site", "use", "taarefni-admin")
-	for _, want := range []string{"workspace manifest", "--site", "ghayma site use"} {
+	for _, want := range []string{"workspace manifest", "--site", "root_directory"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("refusal %q should mention %q", out, want)
 		}
@@ -474,3 +474,42 @@ const manifestJSON = `{
     {"site_id":"s2","site_name":"admin","site_slug":"taarefni-admin","root_directory":"apps/taarefni-admin","upload":"app"}
   ]
 }`
+
+// TestSiteUse_InManifestMappedDirExplains: inside an app directory that has no
+// per-app file but is mapped by the workspace manifest, `site use` must say the
+// manifest already decides this directory's site — not "run 'ghayma init'",
+// which is where the root refusal's advice used to dead-end (2026-08-16 review).
+func TestSiteUse_InManifestMappedDirExplains(t *testing.T) {
+	ts, _ := sitesStub(t, `[]`)
+	cliHome(t, ts.URL)
+	root := manifestFixture(t)
+
+	out := runCLI(t, filepath.Join(root, "apps", "taarefni-admin", "src"), "site", "use", "taarefni")
+	for _, want := range []string{"taarefni-admin", "manifest", "root_directory"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("site use in a manifest-mapped dir should mention %q, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "ghayma init") {
+		t.Errorf("site use in a manifest-mapped dir must not send the user to 'ghayma init':\n%s", out)
+	}
+}
+
+// TestFindProjectConfigUp_StopsAtRepoBoundary: a config ABOVE the repository
+// belongs to some other project; the walk must not adopt it.
+func TestFindProjectConfigUp_StopsAtRepoBoundary(t *testing.T) {
+	outer := t.TempDir()
+	writeFiles(t, outer, map[string]string{
+		projectConfigName:            `{"project_id":"someone-else"}`,
+		"repo/.git/HEAD":             "ref: refs/heads/main",
+		"repo/apps/web/package.json": `{}`,
+	})
+	if _, err := findProjectConfigUp(filepath.Join(outer, "repo", "apps", "web")); err == nil {
+		t.Fatal("walk crossed the repo's .git boundary and adopted an unrelated project's config")
+	}
+	// Inside the repo the walk still works.
+	writeFiles(t, outer, map[string]string{"repo/" + projectConfigName: manifestJSON})
+	if got, err := findProjectConfigUp(filepath.Join(outer, "repo", "apps", "web")); err != nil || !strings.HasSuffix(got, filepath.Join("repo", projectConfigName)) {
+		t.Fatalf("expected the repo's own manifest, got %q, %v", got, err)
+	}
+}

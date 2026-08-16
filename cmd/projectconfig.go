@@ -59,6 +59,12 @@ func findProjectConfigUp(dir string) (string, error) {
 		if firstErr == nil {
 			firstErr = err
 		}
+		// A repository boundary ends the walk: a config above the repo belongs
+		// to some other project, and silently acting on it from a subdirectory
+		// would be far worse than "no project config found".
+		if _, gitErr := os.Stat(filepath.Join(current, ".git")); gitErr == nil {
+			return "", firstErr
+		}
 		parent := filepath.Dir(current)
 		if parent == current {
 			return "", firstErr

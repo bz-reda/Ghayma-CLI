@@ -344,8 +344,9 @@ func mapNewSiteInManifest(site *api.Site) (inWorkspace, added bool) {
 		return false, false
 	}
 
-	// Unmarshal → append → write, so every other entry (and any key this
-	// version doesn't know) is carried over exactly as the user left it.
+	// Unmarshal → append → write: every other entry is carried over as the
+	// user left it. Keys this version doesn't know are NOT preserved (struct
+	// round-trip) — acceptable while the CLI is the only writer of this file.
 	var manifest ProjectManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		fmt.Printf("⚠️  Could not read %s to add the new site: %v\n", path, err)
