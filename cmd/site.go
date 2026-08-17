@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"paas-cli/internal/api"
 	"paas-cli/internal/config"
@@ -44,7 +45,7 @@ var siteListCmd = &cobra.Command{
 			return
 		}
 
-		data, _ := readProjectConfig(".")
+		data, _ := readProjectConfigUp(".")
 		var localCfg struct {
 			SiteID string `json:"site_id"`
 		}
@@ -95,9 +96,22 @@ func runSiteCreate(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Printf("✅ Site '%s' created (slug: %s, id: %s)\n", site.Name, site.Slug, site.ID)
-	fmt.Printf("\nTo deploy to this site, switch to it first:\n")
-	fmt.Printf("  ghayma site use %s\n", site.Slug)
-	fmt.Printf("  ghayma deploy --prod\n")
+
+	// In a linked workspace the new site is unreachable until the manifest says
+	// which directory builds it, so offer that mapping here. `site use` is not
+	// the answer there — a manifest has no single active site.
+	inWorkspace, added := mapNewSiteInManifest(site)
+	switch {
+	case added:
+		fmt.Printf("\nTo deploy to this site:\n")
+		fmt.Printf("  ghayma deploy --site %s --prod\n", site.Slug)
+	case inWorkspace:
+		// mapNewSiteInManifest already said how to map it later.
+	default:
+		fmt.Printf("\nTo deploy to this site, switch to it first:\n")
+		fmt.Printf("  ghayma site use %s\n", site.Slug)
+		fmt.Printf("  ghayma deploy --prod\n")
+	}
 }
 
 var siteCreateCmd = &cobra.Command{
@@ -133,23 +147,45 @@ var siteUseCmd = &cobra.Command{
 
 		slug := args[0]
 
-		data, err := readProjectConfig(".")
+		// The exact-directory read is deliberate: `site use` pins the site of
+		// THIS directory's config and writes that same file back.
+		configPath, err := findProjectConfig(".")
 		if err != nil {
+			// No file here — but a workspace manifest above may already map
+			// this directory to a site, in which case the manifest is the
+			// thing to edit, not a config to init.
+			if cwd, wdErr := os.Getwd(); wdErr == nil {
+				if ctx, resolveErr := resolveSiteContext(cwd, "", "switch"); resolveErr == nil && ctx.FromManifest {
+					fmt.Printf("❌ This directory builds site %q per %s — the manifest decides which site a directory deploys; edit its root_directory entries to change that.\n", siteLabel(ctx.Site), ctx.ConfigPath)
+					return
+				}
+			}
 			fmt.Println("❌ No project config found. Run 'ghayma init' first.")
 			return
 		}
-		// A manifest must never round-trip through ProjectConfig here — the
-		// write-back below would drop `sites` and turn it into a per-app file.
-		if err := rejectManifest(data, "ghayma site use"); err != nil {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			fmt.Printf("❌ Could not read %s: %v\n", configPath, err)
+			return
+		}
+		// A manifest has no single active site, and round-tripping it through a
+		// per-app struct would drop `sites` and destroy every other site.
+		if err := manifestHasNoActiveSite(data); err != nil {
 			fmt.Printf("❌ %v\n", err)
 			return
 		}
 
-		var projCfg ProjectConfig
-		json.Unmarshal(data, &projCfg)
+		// perAppConfig, not ProjectConfig: the write-back below rewrites the
+		// whole file, so anything the narrower struct doesn't carry
+		// (dockerfile_path, crons, …) would be silently deleted (2026-08-16).
+		var appCfg perAppConfig
+		if err := json.Unmarshal(data, &appCfg); err != nil {
+			fmt.Printf("❌ %s is not valid JSON: %v\n", configPath, err)
+			return
+		}
 
 		client := api.NewClient(cfg)
-		sites, err := client.ListSites(projCfg.ProjectID)
+		sites, err := client.ListSites(appCfg.ProjectID)
 		if err != nil {
 			fmt.Printf("❌ Failed to list sites: %v\n", err)
 			return
@@ -169,14 +205,14 @@ var siteUseCmd = &cobra.Command{
 			return
 		}
 
-		projCfg.SiteID = matched.ID
-		projCfg.SiteName = matched.Name
-		projCfg.SiteSlug = matched.Slug
+		appCfg.SiteID = matched.ID
+		appCfg.SiteName = matched.Name
+		appCfg.SiteSlug = matched.Slug
 
 		// Update-in-place: write back to the same file we read, so a legacy
 		// .espacetech.json project stays on .espacetech.json instead of silently
 		// migrating to .ghayma.json (which would strand teammates on the old CLI).
-		if err := writeProjectConfigUpdate(".", projCfg); err != nil {
+		if err := writeProjectConfigUpdate(".", appCfg); err != nil {
 			fmt.Printf("❌ Failed to update project config: %v\n", err)
 			return
 		}

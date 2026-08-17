@@ -422,20 +422,79 @@ func TestResolveSiteContext_SubdirListedInManifest(t *testing.T) {
 	}
 }
 
-// TestResolveSiteContext_SubdirNotListed: an unlisted directory is an error,
-// never a guess.
-func TestResolveSiteContext_SubdirNotListed(t *testing.T) {
-	root := manifestWorkspace(t, uploadModeApp)
-	writeFiles(t, root, map[string]string{"apps/planify/package.json": `{}`})
+// TestResolveSiteContext_NestedSubdirListedInManifest: standing anywhere INSIDE
+// a listed app resolves that app's site. Requiring the exact directory made
+// every command fail from apps/web/src — the one place people actually work
+// (2026-08-16). The nearest listed ancestor wins, so a nested entry still beats
+// its parent entry.
+func TestResolveSiteContext_NestedSubdirListedInManifest(t *testing.T) {
+	root := manifestWorkspace(t, uploadModeWorkspace)
+	writeFiles(t, root, map[string]string{"apps/taarefni-admin/src/app/page.tsx": "// deep"})
 	noPrompt(t)
 	forceStdin(t, true)
 
-	_, err := resolveSiteContext(filepath.Join(root, "apps", "planify"), "", "deploy")
-	if err == nil {
-		t.Fatal("want a 'not listed' error")
+	ctx, err := resolveSiteContext(filepath.Join(root, "apps", "taarefni-admin", "src", "app"), "", "deploy")
+	if err != nil {
+		t.Fatalf("resolveSiteContext: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not listed") || !strings.Contains(err.Error(), "ghayma link") {
-		t.Errorf("error %q should say the dir isn't listed and point at 'ghayma link'", err)
+	if ctx.Site.SiteID != "s2" {
+		t.Errorf("site = %q; want s2 (the nearest listed ancestor)", ctx.Site.SiteID)
+	}
+	if ctx.SourceDir != root || ctx.RootDirectory != "apps/taarefni-admin" {
+		t.Errorf("SourceDir/RootDirectory = %q/%q; want %q/apps/taarefni-admin — the site's own dir, not the cwd", ctx.SourceDir, ctx.RootDirectory, root)
+	}
+}
+
+// TestResolveSiteContext_NestedEntryBeatsParentEntry: with both a parent and a
+// nested directory listed, the deepest match wins — otherwise standing in the
+// nested app would ship its parent.
+func TestResolveSiteContext_NestedEntryBeatsParentEntry(t *testing.T) {
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		"pnpm-workspace.yaml":            realPnpmWorkspaceYAML,
+		"apps/web/package.json":          `{}`,
+		"apps/web/docs/package.json":     `{}`,
+		"apps/web/docs/content/index.md": "# hi",
+		projectConfigName: `{"project_id":"p1","name":"taarefni","sites":[
+			{"site_id":"s1","site_slug":"web","root_directory":"apps/web","upload":"app"},
+			{"site_id":"s2","site_slug":"docs","root_directory":"apps/web/docs","upload":"app"}
+		]}`,
+	})
+	noPrompt(t)
+	forceStdin(t, true)
+
+	ctx, err := resolveSiteContext(filepath.Join(root, "apps", "web", "docs", "content"), "", "deploy")
+	if err != nil {
+		t.Fatalf("resolveSiteContext: %v", err)
+	}
+	if ctx.Site.SiteID != "s2" {
+		t.Errorf("site = %q; want the deepest listed ancestor s2", ctx.Site.SiteID)
+	}
+}
+
+// TestResolveSiteContext_SubdirNotListed: an unlisted directory is an error,
+// never a guess — including from a nested directory whose ancestors are all
+// unlisted, which must not fall back to some other site.
+func TestResolveSiteContext_SubdirNotListed(t *testing.T) {
+	root := manifestWorkspace(t, uploadModeApp)
+	writeFiles(t, root, map[string]string{
+		"apps/planify/package.json": `{}`,
+		"apps/planify/src/index.ts": "// deep",
+	})
+	noPrompt(t)
+	forceStdin(t, true)
+
+	for _, dir := range []string{
+		filepath.Join(root, "apps", "planify"),
+		filepath.Join(root, "apps", "planify", "src"),
+	} {
+		_, err := resolveSiteContext(dir, "", "deploy")
+		if err == nil {
+			t.Fatalf("%s: want a 'not listed' error", dir)
+		}
+		if !strings.Contains(err.Error(), "not listed") || !strings.Contains(err.Error(), "ghayma link") {
+			t.Errorf("error %q should say the dir isn't listed and point at 'ghayma link'", err)
+		}
 	}
 }
 
@@ -516,5 +575,22 @@ func TestStdinIsTerminal(t *testing.T) {
 	swap(t, devNull)
 	if stdinIsTerminal() {
 		t.Error("/dev/null must not count as a terminal")
+	}
+}
+
+// TestCheckSiteFlag_VerbInAdvice: the mismatch error is shared by every
+// site-scoped command, so it must not tell an `env list` user how to "deploy
+// another site" (2026-08-16 smoke catch).
+func TestCheckSiteFlag_VerbInAdvice(t *testing.T) {
+	entry := SiteEntry{SiteSlug: "web"}
+	err := checkSiteFlag(entry, "admin", "list env vars for")
+	if err == nil {
+		t.Fatal("a --site naming another site must be refused")
+	}
+	if !strings.Contains(err.Error(), "list env vars for another site") {
+		t.Errorf("error %q should carry the caller's verb", err)
+	}
+	if err := checkSiteFlag(entry, "web", "list env vars for"); err != nil {
+		t.Errorf("this directory's own site must pass: %v", err)
 	}
 }

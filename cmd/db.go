@@ -42,7 +42,7 @@ var dbCreateCmd = &cobra.Command{
 
 		// Read project_id from the project config
 		projectID := ""
-		data, err := readProjectConfig(".")
+		data, err := readProjectConfigUp(".")
 		if err == nil {
 			var projectCfg struct {
 				ProjectID string `json:"project_id"`
@@ -423,7 +423,7 @@ var dbLinkCmd = &cobra.Command{
 				return
 			}
 		} else {
-			data, err := readProjectConfig(".")
+			data, err := readProjectConfigUp(".")
 			if err != nil {
 				fmt.Println("❌ No --project flag and no project config found")
 				return

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -310,15 +311,15 @@ func resolveSiteContext(cwd, siteFlag, verb string) (*SiteContext, error) {
 		cwd = abs
 	}
 
-	if path, err := findProjectConfig(cwd); err == nil {
-		data, err := os.ReadFile(path)
+	if configPath, err := findProjectConfig(cwd); err == nil {
+		data, err := os.ReadFile(configPath)
 		if err != nil {
-			return nil, fmt.Errorf("could not read %s: %w", path, err)
+			return nil, fmt.Errorf("could not read %s: %w", configPath, err)
 		}
 		if !isManifest(data) {
-			return perAppSiteContext(cwd, path, data, siteFlag)
+			return perAppSiteContext(cwd, configPath, data, siteFlag, verb)
 		}
-		manifest, err := parseManifest(data, path)
+		manifest, err := parseManifest(data, configPath)
 		if err != nil {
 			return nil, err
 		}
@@ -326,35 +327,52 @@ func resolveSiteContext(cwd, siteFlag, verb string) (*SiteContext, error) {
 		if err != nil {
 			return nil, err
 		}
-		return manifestSiteContext(cwd, path, manifest, *entry)
+		return manifestSiteContext(cwd, configPath, manifest, *entry)
 	}
 
-	root, path, manifest, err := findAncestorManifest(cwd)
+	root, manifestPath, manifest, err := findAncestorManifest(cwd)
 	if err != nil {
 		return nil, err
 	}
-	rel := monorepoRelDir(root, cwd)
-	for _, entry := range manifest.Sites {
-		if entry.RootDirectory != "" && entry.RootDirectory == rel {
-			if err := checkSiteFlag(entry, siteFlag); err != nil {
-				return nil, err
+	entry := nearestListedEntry(manifest.Sites, monorepoRelDir(root, cwd))
+	if entry == nil {
+		return nil, fmt.Errorf("this directory is not listed in %s — run 'ghayma link' from the workspace root to add it", manifestPath)
+	}
+	if err := checkSiteFlag(*entry, siteFlag, verb); err != nil {
+		return nil, err
+	}
+	return manifestSiteContext(root, manifestPath, manifest, *entry)
+}
+
+// nearestListedEntry finds the site that owns the directory we're standing in:
+// the exact directory first, then each parent up to (but not including) the
+// workspace root. People work from apps/web/src, not apps/web, and matching
+// only the exact directory made every command there fail (2026-08-16). The
+// deepest match wins, so a nested app still beats the app that contains it.
+//
+// An entry with no root_directory is skipped: it describes the workspace root
+// itself and would otherwise swallow every unlisted directory in the repo.
+func nearestListedEntry(sites []SiteEntry, rel string) *SiteEntry {
+	for candidate := normalizeRelDir(rel); candidate != ""; candidate = normalizeRelDir(path.Dir(candidate)) {
+		for i := range sites {
+			if sites[i].RootDirectory != "" && sites[i].RootDirectory == candidate {
+				return &sites[i]
 			}
-			return manifestSiteContext(root, path, manifest, entry)
 		}
 	}
-	return nil, fmt.Errorf("this directory is not listed in %s — run 'ghayma link' from the workspace root to add it", path)
+	return nil
 }
 
 // perAppSiteContext keeps today's per-app semantics byte for byte: an explicit
 // root_directory points at a subdir from where the config lives; otherwise a
 // turbo ancestor makes the workspace the upload root; otherwise the app
 // directory is uploaded on its own.
-func perAppSiteContext(cwd, configPath string, data []byte, siteFlag string) (*SiteContext, error) {
+func perAppSiteContext(cwd, configPath string, data []byte, siteFlag, verb string) (*SiteContext, error) {
 	var cfg perAppConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("%s is not valid JSON: %w", configPath, err)
 	}
-	if err := checkSiteFlag(cfg.SiteEntry, siteFlag); err != nil {
+	if err := checkSiteFlag(cfg.SiteEntry, siteFlag, verb); err != nil {
 		return nil, err
 	}
 
@@ -454,13 +472,13 @@ func selectManifestSite(manifest *ProjectManifest, siteFlag, verb string) (*Site
 func findAncestorManifest(dir string) (string, string, *ProjectManifest, error) {
 	current := filepath.Dir(dir)
 	for {
-		if path, err := findProjectConfig(current); err == nil {
-			if data, readErr := os.ReadFile(path); readErr == nil && isManifest(data) {
-				manifest, parseErr := parseManifest(data, path)
+		if configPath, err := findProjectConfig(current); err == nil {
+			if data, readErr := os.ReadFile(configPath); readErr == nil && isManifest(data) {
+				manifest, parseErr := parseManifest(data, configPath)
 				if parseErr != nil {
 					return "", "", nil, parseErr
 				}
-				return current, path, manifest, nil
+				return current, configPath, manifest, nil
 			}
 		}
 		parent := filepath.Dir(current)
@@ -518,12 +536,14 @@ func matchSiteEntry(sites []SiteEntry, want string) *SiteEntry {
 
 // checkSiteFlag guards the directory-pinned paths (a per-app config, or a
 // manifest entry matched by the directory we're in): a --site naming a
-// different site must never silently deploy this one.
-func checkSiteFlag(entry SiteEntry, siteFlag string) error {
+// different site must never silently act on this one. The verb keeps the advice
+// true for every caller — this used to say "deploy another site" to someone
+// running `ghayma env list`.
+func checkSiteFlag(entry SiteEntry, siteFlag, verb string) error {
 	if siteFlag == "" || matchSiteEntry([]SiteEntry{entry}, siteFlag) != nil {
 		return nil
 	}
-	return fmt.Errorf("this directory is linked to site %q; run from the workspace root (or without --site) to deploy another site", siteLabel(entry))
+	return fmt.Errorf("this directory is linked to site %q; run from the workspace root (or without --site) to %s another site", siteLabel(entry), verb)
 }
 
 // siteLabel is how a site is named back to the user: slug, else name, else id.
@@ -573,14 +593,14 @@ func promptManifestSite(verb string, sites []SiteEntry) (int, error) {
 	return idx, nil
 }
 
-// rejectManifest is the interim guard for site-scoped commands that still read
-// one site_id straight out of the config file. At a workspace root that file is
-// a manifest, so they would either act project-wide (env, domain add) or — for
-// `site use` — rewrite the manifest as a per-app file and lose every other
-// site. Until they go through resolveSiteContext with --site, refuse loudly.
-func rejectManifest(data []byte, action string) error {
+// manifestHasNoActiveSite is `site use`'s permanent answer at a workspace root.
+// Unlike the other site-scoped commands, `site use` has nothing to resolve: it
+// PINS one site into a config file, and a manifest's whole point is that the
+// root has no single active site. Say so, and point at the two ways to choose
+// one (2026-08-16).
+func manifestHasNoActiveSite(data []byte) error {
 	if !isManifest(data) {
 		return nil
 	}
-	return fmt.Errorf("./%s is a workspace manifest — run '%s' from the app's own directory (per-site --site support for it lands in the next release)", projectConfigName, action)
+	return fmt.Errorf("./%s is a workspace manifest — there is no single active site here: every command takes --site or asks (the manifest's root_directory entries decide which site each app directory deploys)", projectConfigName)
 }

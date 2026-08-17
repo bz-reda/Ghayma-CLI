@@ -32,6 +32,56 @@ func findProjectConfig(dir string) (string, error) {
 	return "", err
 }
 
+// findProjectConfigUp resolves the NEAREST project config walking up from dir,
+// stopping at the filesystem root. Either shape ends the walk: a per-app config
+// and a workspace manifest both carry project_id, which is all the
+// project-scoped commands (db, storage, points, logs, domains, …) need.
+//
+// Deliberately separate from findProjectConfig, which keeps its exact-directory
+// meaning: init/link's "already linked" checks, the write-back path of
+// `site use`, and step 1 of resolveSiteContext all mean "a config for THIS
+// directory", and walking up would make them claim a parent's project
+// (2026-08-16).
+func findProjectConfigUp(dir string) (string, error) {
+	current, err := filepath.Abs(dir)
+	if err != nil {
+		current = dir
+	}
+
+	// Keep the first miss: it is the os.IsNotExist error for the directory the
+	// user actually ran in, which is what callers report on.
+	var firstErr error
+	for {
+		path, err := findProjectConfig(current)
+		if err == nil {
+			return path, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		// A repository boundary ends the walk: a config above the repo belongs
+		// to some other project, and silently acting on it from a subdirectory
+		// would be far worse than "no project config found".
+		if _, gitErr := os.Stat(filepath.Join(current, ".git")); gitErr == nil {
+			return "", firstErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", firstErr
+		}
+		current = parent
+	}
+}
+
+// readProjectConfigUp reads the nearest project config at or above dir.
+func readProjectConfigUp(dir string) ([]byte, error) {
+	path, err := findProjectConfigUp(dir)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
+}
+
 // projectConfigWritePath returns the path new projects are written to —
 // always the current .ghayma.json name.
 func projectConfigWritePath(dir string) string {
@@ -53,7 +103,11 @@ func readProjectConfig(dir string) ([]byte, error) {
 // so a legacy .espacetech.json project stays on that file instead of silently
 // migrating to .ghayma.json. Use projectConfigWritePath (not this) for brand-new
 // configs created by init/link.
-func writeProjectConfigUpdate(dir string, cfg ProjectConfig) error {
+//
+// cfg is untyped so callers round-trip the FULL shape they read (perAppConfig)
+// instead of a narrower struct: marshalling a subset here is exactly how
+// `site use` used to delete dockerfile_path and crons (2026-08-16).
+func writeProjectConfigUpdate(dir string, cfg any) error {
 	path, err := findProjectConfig(dir)
 	if err != nil {
 		return err

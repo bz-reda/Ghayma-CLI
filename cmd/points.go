@@ -23,7 +23,7 @@ var pointsCmd = &cobra.Command{
 		}
 
 		projectID := ""
-		data, err := readProjectConfig(".")
+		data, err := readProjectConfigUp(".")
 		if err == nil {
 			var projectCfg ProjectConfig
 			json.Unmarshal(data, &projectCfg)

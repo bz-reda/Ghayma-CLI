@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 
 	"paas-cli/internal/api"
 	"paas-cli/internal/config"
@@ -22,29 +24,31 @@ func runDomainCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	data, err := readProjectConfig(".")
+	// A domain is attached to ONE site, so this resolves the same way deploy
+	// does: the app directory pins it, a workspace root asks or takes --site.
+	cwd, _ := os.Getwd()
+	ctx, err := resolveSiteContext(cwd, domainSite, "attach the domain to")
 	if err != nil {
-		fmt.Println("❌ No project config found. Run 'ghayma init' first.")
+		switch {
+		case errors.Is(err, errAttachCancelled):
+			fmt.Println("❌ Cancelled")
+		case errors.Is(err, errNoProjectConfig):
+			fmt.Println("❌ No project config found. Run 'ghayma init' first.")
+		default:
+			fmt.Printf("❌ %v\n", err)
+		}
 		return
 	}
-	if err := rejectManifest(data, "ghayma domain add"); err != nil {
-		fmt.Printf("❌ %v\n", err)
-		return
-	}
-
-	var projectCfg ProjectConfig
-	json.Unmarshal(data, &projectCfg)
 
 	client := api.NewClient(cfg)
 	domain := args[0]
 
-	err = client.AddDomain(projectCfg.ProjectID, projectCfg.SiteID, domain)
-	if err != nil {
+	if err := client.AddDomain(ctx.ProjectID, ctx.Site.SiteID, domain); err != nil {
 		fmt.Printf("❌ Failed to add domain: %v\n", err)
 		return
 	}
 
-	fmt.Printf("✅ Domain '%s' added to %s\n", domain, projectCfg.Name)
+	fmt.Printf("✅ Domain '%s' added to %s\n", domain, ctx.ProjectName)
 	fmt.Println("\n📋 Next steps:")
 	fmt.Printf("   1. Add an A record in your DNS: %s → 65.109.68.181\n", domain)
 	fmt.Printf("   2. Redeploy: ghayma deploy --prod\n")
@@ -54,9 +58,18 @@ func runDomainCreate(cmd *cobra.Command, args []string) {
 var domainCreateCmd = &cobra.Command{
 	Use:   "create [domain]",
 	Short: "Add a custom domain to the current project",
-	Args:  requireOneArg("domain", ""),
-	Run:   runDomainCreate,
+	Long: `Add a custom domain.
+
+The domain is attached to ONE site. Inside an app directory that site is the one
+the directory is linked to. At the root of a workspace linked with 'ghayma link'
+(whole project) this asks which site to attach it to, or takes --site <slug> —
+required when the shell is not interactive.`,
+	Args: requireOneArg("domain", ""),
+	Run:  runDomainCreate,
 }
+
+// domainSite is the site to attach the domain to, for the workspace-root case.
+var domainSite string
 
 // domainAddCmd is the deprecated alias; hidden.
 var domainAddCmd = &cobra.Command{
@@ -80,7 +93,8 @@ var domainListCmd = &cobra.Command{
 			return
 		}
 
-		data, err := readProjectConfig(".")
+		// Domains are project-scoped, so the config anywhere above works.
+		data, err := readProjectConfigUp(".")
 		if err != nil {
 			fmt.Println("❌ No project config found. Run 'ghayma init' first.")
 			return
@@ -117,7 +131,7 @@ func runDomainDelete(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	data, err := readProjectConfig(".")
+	data, err := readProjectConfigUp(".")
 	if err != nil {
 		fmt.Println("❌ No project config found. Run 'ghayma init' first.")
 		return
@@ -168,6 +182,10 @@ var domainRemoveCmd = &cobra.Command{
 }
 
 func init() {
+	const siteFlagUsage = "Site name or slug to attach the domain to (required at a workspace root when the shell is not interactive)"
+	domainCreateCmd.Flags().StringVar(&domainSite, "site", "", siteFlagUsage)
+	domainAddCmd.Flags().StringVar(&domainSite, "site", "", siteFlagUsage)
+
 	domainDeleteCmd.Flags().BoolVarP(&domainDeleteYes, "yes", "y", false, "skip the confirmation prompt")
 	domainRemoveCmd.Flags().BoolVarP(&domainDeleteYes, "yes", "y", false, "skip the confirmation prompt")
 
