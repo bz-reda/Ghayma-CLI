@@ -27,6 +27,10 @@ func runDomainCreate(cmd *cobra.Command, args []string) {
 		fmt.Println("❌ No project config found. Run 'ghayma init' first.")
 		return
 	}
+	if err := rejectManifest(data, "ghayma domain add"); err != nil {
+		fmt.Printf("❌ %v\n", err)
+		return
+	}
 
 	var projectCfg ProjectConfig
 	json.Unmarshal(data, &projectCfg)

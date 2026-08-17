@@ -21,9 +21,25 @@ var envCmd = &cobra.Command{
 
 // localConfig reads the project config and returns projectID + siteID.
 func localConfig() (projectID, siteID, name string, err error) {
+	return localConfigFor("")
+}
+
+// localSiteConfig is localConfig for commands that act on ONE site and read
+// site_id straight from the file: a workspace manifest is refused (see
+// rejectManifest) instead of silently degrading to the project-wide endpoint.
+func localSiteConfig(action string) (projectID, siteID, name string, err error) {
+	return localConfigFor(action)
+}
+
+func localConfigFor(siteScopedAction string) (projectID, siteID, name string, err error) {
 	data, readErr := readProjectConfig(".")
 	if readErr != nil {
 		return "", "", "", fmt.Errorf("no project config found — run 'ghayma init' first")
+	}
+	if siteScopedAction != "" {
+		if err := rejectManifest(data, siteScopedAction); err != nil {
+			return "", "", "", err
+		}
 	}
 	var cfg struct {
 		ProjectID string `json:"project_id"`
@@ -87,7 +103,7 @@ pass --force to override.`,
 			return
 		}
 
-		projectID, siteID, _, err := localConfig()
+		projectID, siteID, _, err := localSiteConfig("ghayma env")
 		if err != nil {
 			fmt.Printf("❌ %v\n", err)
 			return
@@ -157,7 +173,7 @@ var envListCmd = &cobra.Command{
 			return
 		}
 
-		projectID, siteID, name, err := localConfig()
+		projectID, siteID, name, err := localSiteConfig("ghayma env")
 		if err != nil {
 			fmt.Printf("❌ %v\n", err)
 			return
@@ -193,7 +209,7 @@ func runEnvDelete(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	projectID, siteID, _, err := localConfig()
+	projectID, siteID, _, err := localSiteConfig("ghayma env")
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
 		return
@@ -309,7 +325,7 @@ By default, existing vars are overwritten with a printed diff. Use
 			return
 		}
 
-		projectID, siteID, name, err := localConfig()
+		projectID, siteID, name, err := localSiteConfig("ghayma env")
 		if err != nil {
 			fmt.Printf("❌ %v\n", err)
 			return
