@@ -236,13 +236,17 @@ not interactive.`,
 		rules := api.LoadIgnoreRules(ctx.SourceDir)
 		printIgnoreRules(rules)
 
-		// Part 2 PR-C: surface custom Dockerfile usage at deploy time
-		// so the user can see which file the platform will build with.
-		// The actual override-vs-convention decision lives server-side
-		// (gated by projects.custom_dockerfile_enabled on the project);
-		// this is purely the UX hint. Quiet for projects on the
-		// auto-generated path — same output as before in that case.
-		printCustomDockerfileHint(ctx.SourceDir, ctx.RootDirectory, ctx.Site.DockerfilePath)
+		// Surface which Dockerfile the build will use. The gate is the
+		// project's "Use custom Dockerfile" toggle, so read it rather than
+		// assume it is on; the lookup is best-effort and never fails the
+		// deploy — an error just leaves the setting unknown (2026-08-17).
+		var customDockerfile *bool
+		if project, projErr := client.GetProject(ctx.ProjectID); projErr == nil {
+			customDockerfile = &project.CustomDockerfileEnabled
+		}
+		for _, line := range dockerfileHint(appDirOf(ctx.SourceDir, ctx.RootDirectory), ctx.Site.DockerfilePath, customDockerfile) {
+			fmt.Println(line)
+		}
 
 		bc := api.DeployBuildConfig{
 			Framework:       ctx.Site.Framework,
@@ -359,40 +363,52 @@ func printIgnoreRules(rules *api.IgnoreRules) {
 	}
 }
 
-// printCustomDockerfileHint prints a one-line "Using your Dockerfile..."
-// message if the upload appears to carry one. Inspection order:
+// appDirOf resolves the directory the build actually runs in: the upload root,
+// or the root_directory inside it for a monorepo/workspace upload.
+func appDirOf(sourceDir, rootDirectory string) string {
+	if rootDirectory == "" {
+		return sourceDir
+	}
+	return filepath.Join(sourceDir, filepath.FromSlash(rootDirectory))
+}
+
+// dockerfileHint returns the lines describing which Dockerfile the build will
+// use. flag is the project's custom_dockerfile_enabled toggle; nil means the
+// lookup failed and the setting is unknown.
 //
-//   1. Explicit dockerfile_path in .espacetech.json wins — if it exists
-//      on disk, name it. (If it's set but missing, the server will
-//      fail-fast with a helpful error during DetermineBuildStrategy;
-//      we don't pre-empt that here.)
-//   2. Otherwise look for a literal `Dockerfile` at the appDir
-//      (sourceDir + rootDirectory). If present, mention it.
+// The wording has to track the flag because the flag is the whole gate: with it
+// off the server always generates its own Dockerfile, however many Dockerfiles
+// the upload carries. The old message claimed "Using your Dockerfile" from the
+// file's presence alone, which read as a platform bug when the server was
+// correctly ignoring it (2026-08-17).
 //
-// We always show the message when one of the above applies so the
-// user can confirm the platform sees what they intended. The actual
-// gate (projects.custom_dockerfile_enabled) lives server-side; if
-// the flag is off, the platform silently ignores the file and uses
-// auto-generation, which the build logs make obvious.
-func printCustomDockerfileHint(sourceDir, rootDirectory, explicitPath string) {
-	appDir := sourceDir
-	if rootDirectory != "" {
-		appDir = filepath.Join(sourceDir, rootDirectory)
+// A dockerfile_path that is set but missing on disk is a warning, not an abort:
+// the server resolves it (relative to the app directory) and is the authority
+// on whether the build fails.
+func dockerfileHint(appDir, explicitPath string, flag *bool) []string {
+	relPath := explicitPath
+	if relPath == "" {
+		relPath = "Dockerfile"
 	}
 
-	if explicitPath != "" {
-		absPath := filepath.Join(appDir, explicitPath)
-		if _, err := os.Stat(absPath); err == nil {
-			fmt.Printf("🐳 Using your Dockerfile at %s (from .espacetech.json dockerfile_path)\n", explicitPath)
+	if _, err := os.Stat(filepath.Join(appDir, filepath.FromSlash(relPath))); err != nil {
+		if explicitPath == "" {
+			return nil
 		}
-		// If explicitPath is set but missing on disk, the server's
-		// DetermineBuildStrategy will return a clear error — no need
-		// to pre-empt with a duplicate warning here.
-		return
+		// %s, not %q: a Windows-style path must be shown as written, not
+		// with its separators escaped.
+		return []string{fmt.Sprintf("⚠️  dockerfile_path \"%s\" not found under %s — the path is relative to the app directory; the build will fail if \"Use custom Dockerfile\" is enabled.", explicitPath, appDir)}
 	}
 
-	conventionPath := filepath.Join(appDir, "Dockerfile")
-	if _, err := os.Stat(conventionPath); err == nil {
-		fmt.Println("🐳 Using your Dockerfile (custom Dockerfile feature; must be enabled per-project in the dashboard)")
+	switch {
+	case flag != nil && *flag:
+		if explicitPath != "" {
+			return []string{fmt.Sprintf("🐳 Using your Dockerfile at %s (dockerfile_path).", explicitPath)}
+		}
+		return []string{"🐳 Using your Dockerfile (custom Dockerfile enabled for this project)."}
+	case flag != nil:
+		return []string{fmt.Sprintf("ℹ️  Dockerfile found (%s) but \"Use custom Dockerfile\" is OFF for this project — the platform will generate one. Enable it in the Dashboard → project → Settings → Advanced.", relPath)}
+	default:
+		return []string{fmt.Sprintf("ℹ️  Dockerfile found (%s) — it is used only when \"Use custom Dockerfile\" is enabled for this project (could not verify the setting).", relPath)}
 	}
 }

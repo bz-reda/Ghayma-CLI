@@ -331,6 +331,33 @@ func EligibleBillingAccounts(accounts []BillingAccount) []BillingAccount {
 	return out
 }
 
+// ProjectDetail is the slice of GET /api/v1/projects/:id (id or slug) the CLI
+// reads. CustomDockerfileEnabled is the per-project "Use custom Dockerfile"
+// toggle (Dashboard → project → Settings → Advanced): the server only honors a
+// Dockerfile from the upload when it is on, so deploy needs it to describe the
+// build honestly (2026-08-17).
+type ProjectDetail struct {
+	ID                      string `json:"id"`
+	Name                    string `json:"name"`
+	Slug                    string `json:"slug"`
+	Framework               string `json:"framework"`
+	CustomDockerfileEnabled bool   `json:"custom_dockerfile_enabled"`
+}
+
+func (c *Client) GetProject(idOrSlug string) (*ProjectDetail, error) {
+	resp, err := c.authRequest("GET", "/api/v1/projects/"+idOrSlug, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var project ProjectDetail
+	if err := c.decodeJSON(resp, &project); err != nil {
+		return nil, err
+	}
+	return &project, nil
+}
+
 func (c *Client) ListProjects() ([]Project, error) {
 	resp, err := c.authRequest("GET", "/api/v1/projects", nil)
 	if err != nil {
