@@ -23,10 +23,13 @@ import (
 // — `ghayma link` then claimed the user had no projects (2026-08-16).
 var ErrUnauthorized = errors.New("session expired or revoked — run: ghayma login")
 
-// APIError carries the server's own message for a non-2xx response.
+// APIError carries the server's own message for a non-2xx response. Code is
+// the stable machine code some endpoints send alongside it (e.g. the register
+// gate's "invite_required") — empty when the server didn't include one.
 type APIError struct {
 	Status  int
 	Message string
+	Code    string
 }
 
 func (e *APIError) Error() string {
@@ -86,12 +89,16 @@ type RegisterResponse struct {
 	Message string `json:"message"`
 }
 
-func (c *Client) Register(email, password, name string) (*RegisterResponse, error) {
-	body, _ := json.Marshal(map[string]string{
+func (c *Client) Register(email, password, name, inviteCode string) (*RegisterResponse, error) {
+	payload := map[string]string{
 		"email":    email,
 		"password": password,
 		"name":     name,
-	})
+	}
+	if inviteCode != "" {
+		payload["invite_code"] = inviteCode
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := c.http.Post(c.cfg.APIHost+"/api/v1/auth/register", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -99,9 +106,15 @@ func (c *Client) Register(email, password, name string) (*RegisterResponse, erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
-		var errResp map[string]string
+		var errResp struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
 		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("%s", errResp["error"])
+		if errResp.Error == "" {
+			errResp.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+		return nil, &APIError{Status: resp.StatusCode, Message: errResp.Error, Code: errResp.Code}
 	}
 
 	var result RegisterResponse

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -221,5 +222,61 @@ func TestCreateProject_DecodesAPIError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "failed to create project: {") {
 		t.Errorf("error still dumps the raw JSON body: %q", err.Error())
+	}
+}
+
+// TestRegister_InviteCodeInBody pins the gate contract: the invite code is
+// sent as invite_code only when set, so an un-flagged register on an open
+// server stays byte-identical to the pre-beta payload.
+func TestRegister_InviteCodeInBody(t *testing.T) {
+	var got map[string]string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/auth/register" || r.Method != http.MethodPost {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		got = map[string]string{}
+		json.Unmarshal(raw, &got)
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"user":{"id":"u1","email":"t@t.dz","name":"t"}}`))
+	}))
+	defer ts.Close()
+	c := newTestClient(ts.URL)
+
+	if _, err := c.Register("t@t.dz", "password123", "t", "GYB-AB12CD34"); err != nil {
+		t.Fatalf("register with invite: %v", err)
+	}
+	if got["invite_code"] != "GYB-AB12CD34" {
+		t.Errorf("invite_code = %q; want GYB-AB12CD34", got["invite_code"])
+	}
+
+	if _, err := c.Register("t@t.dz", "password123", "t", ""); err != nil {
+		t.Fatalf("register without invite: %v", err)
+	}
+	if _, present := got["invite_code"]; present {
+		t.Error("empty invite must not add an invite_code key to the payload")
+	}
+}
+
+// TestRegister_SurfacesGateRefusal pins that a beta-gate 403 comes back as an
+// *APIError carrying the server's message AND its machine code, which the
+// register command matches to print the --invite hint.
+func TestRegister_SurfacesGateRefusal(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":"Ghayma is in private beta. A valid invitation code is required to register.","code":"invite_required"}`))
+	}))
+	defer ts.Close()
+
+	_, err := newTestClient(ts.URL).Register("t@t.dz", "password123", "t", "")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != http.StatusForbidden || apiErr.Code != "invite_required" {
+		t.Errorf("got status=%d code=%q; want 403 invite_required", apiErr.Status, apiErr.Code)
+	}
+	if !strings.Contains(apiErr.Message, "private beta") {
+		t.Errorf("message %q lost the server's text", apiErr.Message)
 	}
 }
