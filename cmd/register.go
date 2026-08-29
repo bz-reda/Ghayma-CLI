@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"paas-cli/internal/api"
@@ -10,19 +11,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var registerInvite string
+
 var registerCmd = &cobra.Command{
 	Use:   "register",
 	Short: "Create a new Ghayma account",
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.Load()
+	Long: `Create a new Ghayma account.
 
-		// API Host
-		hostPrompt := promptui.Prompt{
-			Label:   "API Host",
-			Default: cfg.APIHost,
-		}
-		host, _ := hostPrompt.Run()
-		cfg.APIHost = host
+While Ghayma is in private beta, registration requires an invitation code:
+
+  ghayma register --invite GYB-XXXXXXXX`,
+	Run: func(cmd *cobra.Command, args []string) {
+		// The API host comes from config (default api.ghayma.tech), same as
+		// every other command — registration is not the place to change it.
+		cfg := config.Load()
 
 		// Name
 		namePrompt := promptui.Prompt{Label: "Full Name"}
@@ -55,9 +57,13 @@ var registerCmd = &cobra.Command{
 		}
 
 		client := api.NewClient(cfg)
-		resp, err := client.Register(email, password, name)
+		resp, err := client.Register(email, password, name, registerInvite)
 		if err != nil {
 			fmt.Printf("❌ Registration failed: %v\n", err)
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) && apiErr.Code == "invite_required" {
+				fmt.Println("💡 Have a code? Run: ghayma register --invite <code>")
+			}
 			return
 		}
 
@@ -80,5 +86,6 @@ var registerCmd = &cobra.Command{
 }
 
 func init() {
+	registerCmd.Flags().StringVar(&registerInvite, "invite", "", "invitation code (required while Ghayma is in private beta)")
 	rootCmd.AddCommand(registerCmd)
 }
