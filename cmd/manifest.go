@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/manifoldco/promptui"
+
+	"golang.org/x/term"
 )
 
 // Workspace manifest (2026-08-16). A Ghayma project can hold several sites, and
@@ -280,22 +282,18 @@ func defaultUploadMode(root string) string {
 }
 
 // stdinIsTerminal reports whether stdin is a terminal, so the resolver knows if
-// it may ask a question. No new dependency: a pipe or a file is not a character
-// device, so it cannot be a terminal.
+// it may ask a question.
 //
-// /dev/null needs its own answer: it IS a character device, and it is what CI
-// and `ghayma deploy < /dev/null` hand the process. Treating it as a terminal
-// turns the actionable "pass --site <slug>" error into a picker that reads EOF
-// and aborts with "Cancelled" (2026-08-16).
+// x/term asks the OS properly. On Unix that is an isatty ioctl, which answers
+// false for pipes, files AND /dev/null — covering the 2026-08-16 case (CI and
+// `ghayma deploy < /dev/null` must get the actionable "pass --site" error, not
+// a picker that reads EOF and aborts) without the old hand-rolled SameFile
+// check. On Windows it is GetConsoleMode, which stays true inside ConPTY hosts
+// (Windows Terminal, VS Code) — where the previous os.Stdin.Stat() heuristic
+// saw a pipe, refused the site picker, and forced --site on an interactive
+// PowerShell (2026-08-30 taarefni deploy).
 func stdinIsTerminal() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		return false
-	}
-	if devNull, err := os.Stat(os.DevNull); err == nil && os.SameFile(fi, devNull) {
-		return false
-	}
-	return true
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 // resolveSiteContext is the single "which site am I acting on?" resolver, used
