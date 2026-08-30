@@ -361,6 +361,9 @@ func printIgnoreRules(rules *api.IgnoreRules) {
 	for _, p := range rules.Patterns {
 		fmt.Printf("     • %s\n", p)
 	}
+	// The build cannot run without these, so the tarball keeps them even when
+	// a pattern above matches (Docker's own .dockerignore semantics).
+	fmt.Println("   (Dockerfiles, .ghayma.json and ignore files are always uploaded)")
 }
 
 // appDirOf resolves the directory the build actually runs in: the upload root,

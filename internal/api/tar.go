@@ -73,6 +73,32 @@ func parseIgnoreLines(content string) []string {
 	return out
 }
 
+// alwaysUploaded exempts a FILE from user ignore rules. Docker itself exempts
+// the Dockerfile from .dockerignore (the daemon reads it out-of-band, so
+// excluding it from the build context is standard practice) — but on Ghayma
+// the upload IS the transport, so honoring that exclusion strips the very
+// file a custom-Dockerfile build needs (2026-08-30 taarefni incident:
+// `.dockerignore` listing `Dockerfile` made detection fail with "custom
+// dockerfile_path not found"). Project manifests and the ignore files
+// themselves ride along for the same reason. Baseline rules still win:
+// a Dockerfile under node_modules never ships.
+func alwaysUploaded(relPath string, isDir bool) bool {
+	if isDir {
+		return false
+	}
+	base := relPath
+	if i := strings.LastIndex(relPath, "/"); i >= 0 {
+		base = relPath[i+1:]
+	}
+	switch base {
+	case "Dockerfile", ".ghayma.json", ".espacetech.json",
+		".dockerignore", ".ghaymaignore", ".espacetechignore":
+		return true
+	}
+	lower := strings.ToLower(base)
+	return strings.HasPrefix(base, "Dockerfile.") || strings.HasSuffix(lower, ".dockerfile")
+}
+
 // matches returns true when the relative path is excluded by user rules.
 // For directories, the path is also tried with a trailing slash so that
 // gitignore dir-only patterns (e.g. "android/") match.
@@ -130,8 +156,9 @@ func createTarball(sourceDir, tarPath string, rules *IgnoreRules) error {
 			}
 		}
 
-		// User rules: OR'd on top of the baseline.
-		if rules.matches(relPath, info.IsDir()) {
+		// User rules: OR'd on top of the baseline — except the files a
+		// build cannot live without (see alwaysUploaded).
+		if !alwaysUploaded(relPath, info.IsDir()) && rules.matches(relPath, info.IsDir()) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}

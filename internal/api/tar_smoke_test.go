@@ -103,13 +103,13 @@ apps/mobile/ios/
 	names := tarEntryNames(t, tarPath)
 
 	excluded := map[string]string{
-		"apps/mobile/android":            "trailing-slash dir rule",
-		"apps/mobile/android/.gradle":    "descendant of ignored dir",
-		"apps/mobile/ios/Pods/blob.bin":  "descendant of ignored dir",
-		"node_modules/foo/bar.js":        "baseline node_modules",
-		".git/objects/deadbeef":          "baseline .git",
-		"debug.log":                      "**/*.log glob",
-		"apps/web/discard.txt":           "*.txt glob",
+		"apps/mobile/android":           "trailing-slash dir rule",
+		"apps/mobile/android/.gradle":   "descendant of ignored dir",
+		"apps/mobile/ios/Pods/blob.bin": "descendant of ignored dir",
+		"node_modules/foo/bar.js":       "baseline node_modules",
+		".git/objects/deadbeef":         "baseline .git",
+		"debug.log":                     "**/*.log glob",
+		"apps/web/discard.txt":          "*.txt glob",
 	}
 	included := []string{
 		"package.json",
@@ -283,5 +283,58 @@ func TestLoadIgnoreRules_BackCompatEspacetechignore(t *testing.T) {
 	}
 	if len(rules.Patterns) != 1 || rules.Patterns[0] != "legacy-only" {
 		t.Fatalf("expected legacy patterns to load, got %v", rules.Patterns)
+	}
+}
+
+// TestCreateTarball_DockerfileSurvivesDockerignore pins the 2026-08-30
+// taarefni incident: a .dockerignore listing `Dockerfile` (standard Docker
+// practice — the daemon reads it out-of-band) must NOT strip it from the
+// upload, because on Ghayma the upload is how the Dockerfile reaches the
+// build. Manifests and the ignore file itself ride along; ordinary patterns
+// still apply; a Dockerfile under a baseline dir stays excluded.
+func TestCreateTarball_DockerfileSurvivesDockerignore(t *testing.T) {
+	src := t.TempDir()
+	write := func(path, content string) {
+		if err := os.MkdirAll(path[:strings.LastIndex(path, "/")], 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write(src+"/Dockerfile", "FROM scratch\n")
+	write(src+"/prod.Dockerfile", "FROM scratch\n")
+	write(src+"/.ghayma.json", "{}")
+	write(src+"/notes.md", "x")
+	write(src+"/app.js", "x")
+	write(src+"/node_modules/pkg/Dockerfile", "FROM scratch\n")
+	write(src+"/.dockerignore", "Dockerfile\n*.Dockerfile\n.dockerignore\n*.md\n")
+
+	rules := LoadIgnoreRules(src)
+	if rules.Source != ".dockerignore" {
+		t.Fatalf("rules source = %q; want .dockerignore", rules.Source)
+	}
+
+	tarPath := filepath.Join(t.TempDir(), "out.tgz")
+	if err := createTarball(src, tarPath, rules); err != nil {
+		t.Fatal(err)
+	}
+	names := tarEntryNames(t, tarPath)
+	got := make(map[string]bool, len(names))
+	for _, n := range names {
+		got[n] = true
+	}
+
+	for _, must := range []string{"Dockerfile", "prod.Dockerfile", ".ghayma.json", ".dockerignore", "app.js"} {
+		if !got[must] {
+			t.Errorf("%s missing from upload (got %v)", must, names)
+		}
+	}
+	if got["notes.md"] {
+		t.Errorf("*.md pattern must still apply (got %v)", names)
+	}
+	if got["node_modules/pkg/Dockerfile"] {
+		t.Errorf("baseline dirs must still win over the exemption (got %v)", names)
 	}
 }
