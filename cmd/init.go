@@ -82,7 +82,10 @@ var initCmd = &cobra.Command{
 		// If CWD is a monorepo root, nudge the user to init from their app
 		// subdir instead — or ask for the app subdir and write the config
 		// inside it so the deploy flow sends the correct root_directory.
-		appSubdir := detectMonorepoAppSubdir()
+		appSubdir, ok := detectMonorepoAppSubdir()
+		if !ok {
+			return
+		}
 		configDir := "."
 		if appSubdir != "" {
 			if existing, err := findProjectConfig(appSubdir); err == nil {
@@ -255,42 +258,96 @@ var initCmd = &cobra.Command{
 	},
 }
 
-// detectMonorepoAppSubdir checks whether CWD is a monorepo root (turbo.json
-// or pnpm-workspace.yaml). If so, it prompts the user for the app subdir to
-// initialise inside (e.g. "apps/web") and returns it. Returns "" when CWD is
-// not a monorepo root or the user chooses to init at the current directory.
-func detectMonorepoAppSubdir() string {
+// maxAppSubdirAttempts caps the re-prompt loop below.
+const maxAppSubdirAttempts = 3
+
+// promptAppSubdirFn is indirected so tests can drive the re-prompt loop
+// without a terminal.
+var promptAppSubdirFn = promptAppSubdir
+
+// detectMonorepoAppSubdir asks for the app subdirectory to initialise inside
+// when CWD is a workspace root. The bool reports whether the command may carry
+// on: false means the user cancelled or ran out of tries and was told what to
+// do next.
+func detectMonorepoAppSubdir() (string, bool) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return ""
+		return "", true
 	}
-	_, turboErr := os.Stat(filepath.Join(cwd, "turbo.json"))
-	_, pnpmErr := os.Stat(filepath.Join(cwd, "pnpm-workspace.yaml"))
-	if turboErr != nil && pnpmErr != nil {
-		return ""
+	return appSubdirForWorkspace(cwd)
+}
+
+// appSubdirForWorkspace is detectMonorepoAppSubdir with the directory passed
+// in. It returns "" (with true) when cwd is not a workspace root, or when the
+// user wants the config right here.
+//
+// It shares isWorkspaceRoot with the rest of the CLI instead of keeping its own
+// file check: statting pnpm-workspace.yaml made a plain create-next-app project
+// (pnpm 10 writes that file for settings alone) announce a monorepo and demand
+// an app subdirectory that does not exist (2026-09-03).
+func appSubdirForWorkspace(cwd string) (string, bool) {
+	if !isWorkspaceRoot(cwd) {
+		return "", true
 	}
 
-	fmt.Println("📦 Monorepo root detected (turbo.json / pnpm-workspace.yaml).")
+	fmt.Printf("📦 Workspace root detected (%s).\n", workspaceMarker(cwd))
 	fmt.Println("   The app config should live in your app's subdirectory so the deploy")
 	fmt.Println("   uploads the whole workspace and builds the right target.")
 
+	def := defaultAppSubdir(cwd)
+	for attempt := 0; attempt < maxAppSubdirAttempts; attempt++ {
+		answer, err := promptAppSubdirFn(def)
+		if err != nil {
+			fmt.Println("❌ Cancelled.")
+			return "", false
+		}
+		answer = strings.TrimSpace(strings.Trim(answer, "/"))
+		if answer == "" {
+			return "", true // initialise here, at the workspace root
+		}
+		if err := validateAppSubdir(cwd, answer); err != nil {
+			fmt.Printf("⚠️  %v\n", err)
+			continue
+		}
+		return answer, true
+	}
+
+	fmt.Println("❌ No usable app subdirectory given.")
+	fmt.Println("   Run 'ghayma init' from inside the app's own directory, or answer with")
+	fmt.Println("   an empty line to initialise here at the workspace root.")
+	return "", false
+}
+
+// validateAppSubdir checks an answer before anything is written into it: the
+// answer must be a real directory that holds a package.json. The Next.js router
+// folder named "app" is the trap this closes — it was accepted, so the config
+// landed inside the router source instead of an app (2026-09-03).
+func validateAppSubdir(cwd, answer string) error {
+	dir := filepath.Join(cwd, filepath.FromSlash(answer))
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return fmt.Errorf("%s does not exist here", answer)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
+		return fmt.Errorf("%s has no package.json — pick the directory that holds your app's package.json (a Next.js %q router folder is not an app)", answer, "app")
+	}
+	return nil
+}
+
+// defaultAppSubdir suggests an answer the user can just accept: a real app
+// directory of this workspace when there is one, else the usual layout.
+func defaultAppSubdir(cwd string) string {
+	if dirs := workspaceAppDirs(cwd); len(dirs) > 0 {
+		return dirs[0]
+	}
+	return "apps/web"
+}
+
+func promptAppSubdir(def string) (string, error) {
 	prompt := promptui.Prompt{
 		Label:   "App subdirectory (e.g. apps/web; leave empty to init at root)",
-		Default: "apps/web",
+		Default: def,
 	}
-	result, err := prompt.Run()
-	if err != nil {
-		return ""
-	}
-	result = strings.TrimSpace(strings.Trim(result, "/"))
-	if result == "" {
-		return ""
-	}
-	if _, err := os.Stat(filepath.Join(cwd, result)); err != nil {
-		fmt.Printf("⚠️  %s does not exist in this repo — aborting.\n", result)
-		os.Exit(1)
-	}
-	return result
+	return prompt.Run()
 }
 
 // resolveBillingAccount decides which billing account backs the new

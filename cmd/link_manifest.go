@@ -136,7 +136,7 @@ func linkWorkspaceRoot(client *api.Client, projects []api.Project, args []string
 
 	dirs := workspaceAppDirs(root)
 	if len(dirs) == 0 {
-		return true, fmt.Errorf("no app directories found in this workspace (looked for a package.json under the workspace globs)")
+		return true, noAppDirsError(root)
 	}
 
 	existing := existingAppConfigs(root, dirs)
@@ -183,6 +183,15 @@ func linkWorkspaceRoot(client *api.Client, projects []api.Project, args []string
 	}
 	fmt.Println("\nNext: run 'ghayma deploy' here and pick a site, or 'ghayma deploy --site <slug> --prod'")
 	return true, nil
+}
+
+// noAppDirsError explains an empty workspace instead of just declaring one.
+// The globs are the ones actually consulted, and the last line is the way out
+// for the far more likely case: this is not a monorepo at all (2026-09-03).
+func noAppDirsError(root string) error {
+	return fmt.Errorf("no app directories found under the workspace globs (%s) — a directory only counts if it holds a package.json.\n"+
+		"   Not a monorepo? Run 'ghayma link' (or 'ghayma init') from the app's own directory to link it as a single app.",
+		strings.Join(workspaceGlobs(root), ", "))
 }
 
 // existingAppConfigs reads whatever per-app configs the workspace already has,
