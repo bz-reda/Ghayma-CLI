@@ -94,9 +94,18 @@ func TestIsManifest(t *testing.T) {
 	}
 }
 
-// TestFindWorkspaceRoot: a workspace root is turbo.json OR pnpm-workspace.yaml
-// OR a package.json carrying `workspaces` — the pnpm-only repos that today's
-// turbo-only detection cannot see are the whole point.
+// settingsOnlyPnpmWorkspaceYAML is what pnpm 10 writes into a SINGLE-package
+// project when a setting needs a home (`pnpm approve-builds`): no `packages:`
+// key, so the file declares no workspace at all (2026-09-03).
+const settingsOnlyPnpmWorkspaceYAML = `ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver
+`
+
+// TestFindWorkspaceRoot: a workspace root is a DECLARED workspace — turbo.json,
+// a pnpm-workspace.yaml carrying a `packages:` list, or a package.json carrying
+// `workspaces`. The pnpm-only repos that turbo-only detection cannot see are
+// the whole point; a settings-only pnpm file is not one of them.
 func TestFindWorkspaceRoot(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -104,7 +113,13 @@ func TestFindWorkspaceRoot(t *testing.T) {
 		found bool
 	}{
 		{"turbo", map[string]string{"turbo.json": `{}`, "apps/web/package.json": `{}`}, true},
-		{"pnpm", map[string]string{"pnpm-workspace.yaml": realPnpmWorkspaceYAML, "apps/web/package.json": `{}`}, true},
+		{"pnpm packages list", map[string]string{"pnpm-workspace.yaml": realPnpmWorkspaceYAML, "apps/web/package.json": `{}`}, true},
+		{"pnpm flow-style packages", map[string]string{"pnpm-workspace.yaml": "packages: ['apps/*', \"packages/*\"]\n", "apps/web/package.json": `{}`}, true},
+		{"pnpm settings-only file", map[string]string{
+			"pnpm-workspace.yaml": settingsOnlyPnpmWorkspaceYAML,
+			"package.json":        `{"name":"my-app"}`,
+			"app/page.tsx":        "export default function Page() {}\n",
+		}, false},
 		{"npm workspaces array", map[string]string{"package.json": `{"workspaces":["apps/*"]}`, "apps/web/package.json": `{}`}, true},
 		{"npm workspaces object", map[string]string{"package.json": `{"workspaces":{"packages":["apps/*"]}}`, "apps/web/package.json": `{}`}, true},
 		{"plain package.json", map[string]string{"package.json": `{"name":"solo"}`, "apps/web/package.json": `{}`}, false},
@@ -592,5 +607,18 @@ func TestCheckSiteFlag_VerbInAdvice(t *testing.T) {
 	}
 	if err := checkSiteFlag(entry, "web", "list env vars for"); err != nil {
 		t.Errorf("this directory's own site must pass: %v", err)
+	}
+}
+
+// TestParsePnpmPackages_FlowStyle: detection now hinges on the parsed list, so
+// the hand parser must read the inline YAML form too, or a hand-written
+// `packages: ["apps/*"]` silently stops being a workspace (2026-09-03).
+func TestParsePnpmPackages_FlowStyle(t *testing.T) {
+	got := parsePnpmPackages([]byte("packages: ['apps/*', \"packages/*\"] # members\nignoredBuiltDependencies:\n  - sharp\n"))
+	if len(got) != 2 || got[0] != "apps/*" || got[1] != "packages/*" {
+		t.Errorf("flow-style packages parsed as %q; want [apps/* packages/*]", got)
+	}
+	if got := parsePnpmPackages([]byte("packages: []\n")); len(got) != 0 {
+		t.Errorf("empty flow list parsed as %q; want none", got)
 	}
 }

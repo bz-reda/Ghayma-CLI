@@ -22,10 +22,10 @@ init creates a brand-new project, while link connects to one you already own.
 In a monorepo, run it from your app's subdirectory (or from the root and pick
 the subdir) — link can attach to an existing site or create a new one.
 
-At a workspace root (turbo.json, pnpm-workspace.yaml, or a package.json with
-"workspaces") you can instead link the WHOLE project: one manifest written to
-./.ghayma.json listing every site and the directory that builds it, so
-'ghayma deploy' from the root can ask which site to deploy.`,
+At a workspace root — turbo.json, a pnpm-workspace.yaml with a packages: list,
+or a package.json with "workspaces" — you can instead link the WHOLE project:
+one manifest written to ./.ghayma.json listing every site and the directory
+that builds it, so 'ghayma deploy' from the root can ask which site to deploy.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
@@ -70,7 +70,10 @@ At a workspace root (turbo.json, pnpm-workspace.yaml, or a package.json with
 
 		// In a monorepo root, write the config into the chosen app subdir so
 		// deploy uploads the whole workspace and builds the right target.
-		appSubdir := detectMonorepoAppSubdir()
+		appSubdir, ok := detectMonorepoAppSubdir()
+		if !ok {
+			return
+		}
 		configDir := "."
 		if appSubdir != "" {
 			configDir = appSubdir

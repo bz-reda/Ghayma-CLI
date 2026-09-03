@@ -121,8 +121,9 @@ func isManifest(data []byte) bool {
 	return strings.HasPrefix(trimmed, "[")
 }
 
-// findWorkspaceRoot walks up from dir looking for a JS workspace root:
-// turbo.json, pnpm-workspace.yaml, or a package.json declaring `workspaces`.
+// findWorkspaceRoot walks up from dir looking for a JS workspace root: a
+// directory that DECLARES workspace members — turbo.json, a pnpm-workspace.yaml
+// with a `packages:` list, or a package.json declaring `workspaces`.
 //
 // Deliberately distinct from findMonorepoRoot, which stays turbo-only: that one
 // decides the UPLOAD MODE for per-app configs, and widening it would silently
@@ -144,13 +145,32 @@ func findWorkspaceRoot(dir string) string {
 }
 
 func isWorkspaceRoot(dir string) bool {
-	for _, marker := range []string{"turbo.json", "pnpm-workspace.yaml"} {
-		if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
-			return true
+	return workspaceMarker(dir) != ""
+}
+
+// workspaceMarker names the file that DECLARES the workspace, or "" when
+// nothing here does. Callers use the name to say what they detected.
+//
+// The pnpm file only counts when it lists `packages:`. pnpm 10 also writes a
+// pnpm-workspace.yaml into single-package projects to hold plain settings
+// (`ignoredBuiltDependencies` / `onlyBuiltDependencies`, e.g. after
+// `create-next-app`), and taking its mere existence as proof of a workspace
+// made init announce a monorepo, demand an app subdirectory, and let `link`
+// offer a whole-project manifest for a lone Next.js app — whose "app" router
+// folder is not a package (2026-09-03).
+func workspaceMarker(dir string) string {
+	if _, err := os.Stat(filepath.Join(dir, "turbo.json")); err == nil {
+		return "turbo.json"
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "pnpm-workspace.yaml")); err == nil {
+		if len(parsePnpmPackages(data)) > 0 {
+			return "pnpm-workspace.yaml"
 		}
 	}
-	_, declared := packageJSONWorkspaces(dir)
-	return declared
+	if _, declared := packageJSONWorkspaces(dir); declared {
+		return `package.json "workspaces"`
+	}
+	return ""
 }
 
 // packageJSONWorkspaces returns the globs from a root package.json `workspaces`
@@ -212,6 +232,8 @@ func parsePnpmPackages(data []byte) []string {
 		if !inPackages {
 			if line == "packages:" {
 				inPackages = true
+			} else if rest, ok := strings.CutPrefix(line, "packages:"); ok {
+				return flowListScalars(rest) // inline form: packages: ["apps/*", "packages/*"]
 			}
 			continue
 		}
@@ -219,6 +241,23 @@ func parsePnpmPackages(data []byte) []string {
 			break // a sibling key ends the list
 		}
 		if glob := yamlScalar(line[2:]); glob != "" {
+			globs = append(globs, glob)
+		}
+	}
+	return globs
+}
+
+// flowListScalars reads the inline `[a, b]` form of a YAML list. Detection
+// hinges on the parsed members, so a hand-written flow-style `packages:` must
+// count exactly like the block form pnpm itself writes (2026-09-03).
+func flowListScalars(rest string) []string {
+	rest = yamlScalar(rest)
+	if !strings.HasPrefix(rest, "[") || !strings.HasSuffix(rest, "]") {
+		return nil
+	}
+	var globs []string
+	for _, item := range strings.Split(rest[1:len(rest)-1], ",") {
+		if glob := yamlScalar(item); glob != "" {
 			globs = append(globs, glob)
 		}
 	}
