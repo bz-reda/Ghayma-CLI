@@ -105,8 +105,6 @@ Each project has a points budget (or runs pay-as-you-go). Databases, apps, stora
 | `ghayma db list` | List your databases |
 | `ghayma db info [name]` | Show database details |
 | `ghayma db credentials [name]` | Show connection credentials |
-| `ghayma db link [name] --project [slug]` | Link database to a project (injects env vars) |
-| `ghayma db unlink [name]` | Unlink database from its project |
 | `ghayma db expose [name]` | Enable external access |
 | `ghayma db unexpose [name]` | Disable external access |
 | `ghayma db stop [name]` | Stop database (preserves data) |
@@ -123,8 +121,6 @@ Each project has a points budget (or runs pay-as-you-go). Databases, apps, stora
 | `ghayma storage list` | List your storage buckets |
 | `ghayma storage info [name]` | Show bucket details |
 | `ghayma storage credentials [name]` | Show S3 access credentials |
-| `ghayma storage link [name] --project [slug]` | Link bucket to a project (injects S3 env vars) |
-| `ghayma storage unlink [name]` | Unlink bucket from its project |
 | `ghayma storage expose [name]` | Make bucket publicly accessible |
 | `ghayma storage unexpose [name]` | Disable public access |
 | `ghayma storage rotate [name]` | Rotate S3 access credentials |
