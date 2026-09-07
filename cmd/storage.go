@@ -113,18 +113,14 @@ var storageListCmd = &cobra.Command{
 
 		fmt.Printf("📦 Your storage buckets (%d):\n\n", len(buckets))
 		for _, b := range buckets {
-			linked := "unlinked"
-			if b.ProjectID != "" {
-				linked = "linked"
-			}
 			public := ""
 			if b.ExternalAccess {
 				public = " 🌐"
 			}
-			fmt.Printf("   %-15s  %-8s  %s/%s  %s%s\n",
+			fmt.Printf("   %-15s  %-8s  %s/%s%s\n",
 				b.Name, b.Status,
 				formatBytes(b.StorageUsedBytes), formatBytes(b.StorageLimitBytes),
-				linked, public)
+				public)
 		}
 	},
 }
@@ -153,9 +149,9 @@ var storageInfoCmd = &cobra.Command{
 		fmt.Printf("   Storage:    %s / %s\n", formatBytes(bucket.StorageUsedBytes), formatBytes(bucket.StorageLimitBytes))
 		fmt.Printf("   Public:     %v\n", bucket.ExternalAccess)
 		if bucket.ProjectID != "" {
-			fmt.Printf("   Linked to:  %s\n", bucket.ProjectID)
+			fmt.Printf("   Project:    %s\n", bucket.ProjectID)
 		} else {
-			fmt.Printf("   Linked to:  (none)\n")
+			fmt.Printf("   Project:    (none)\n")
 		}
 		fmt.Printf("   Endpoint:   https://s3.ghayma.tech\n")
 		if bucket.ExternalAccess {
@@ -195,95 +191,6 @@ var storageCredentialsCmd = &cobra.Command{
 		fmt.Printf("   Access Key:  %v\n", creds["access_key"])
 		fmt.Printf("   Secret Key:  %v\n", creds["secret_key"])
 		fmt.Println("\n   📋 Use with any S3-compatible SDK (aws-sdk, boto3, etc.)")
-	},
-}
-
-var storageLinkProject string
-
-var storageLinkCmd = &cobra.Command{
-	Use:   "link [bucket-name]",
-	Short: "Link a bucket to a project (injects S3 env vars)",
-	Args:  requireOneArg("bucket-name", "storage list"),
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.Load()
-		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
-			return
-		}
-
-		client := api.NewClient(cfg)
-		bucket, err := findBucketByName(client, args[0])
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
-			return
-		}
-
-		projectID := ""
-		if storageLinkProject != "" {
-			projects, err := client.ListProjects()
-			if err != nil {
-				fmt.Printf("❌ Failed to list projects: %v\n", err)
-				return
-			}
-			for _, p := range projects {
-				if p.Name == storageLinkProject || p.Slug == storageLinkProject {
-					projectID = p.ID
-					break
-				}
-			}
-			if projectID == "" {
-				fmt.Printf("❌ Project '%s' not found\n", storageLinkProject)
-				return
-			}
-		} else {
-			data, err := readProjectConfigUp(".")
-			if err != nil {
-				fmt.Println("❌ No --project flag and no project config found")
-				return
-			}
-			var projectCfg struct {
-				ProjectID string `json:"project_id"`
-			}
-			json.Unmarshal(data, &projectCfg)
-			projectID = projectCfg.ProjectID
-		}
-
-		err = client.LinkBucket(bucket.ID, projectID)
-		if err != nil {
-			fmt.Printf("❌ Failed to link: %v\n", err)
-			return
-		}
-
-		fmt.Printf("✅ Bucket '%s' linked to project\n", args[0])
-		fmt.Println("   Env vars injected: STORAGE_ENDPOINT, STORAGE_ACCESS_KEY, STORAGE_SECRET_KEY, STORAGE_BUCKET, STORAGE_REGION")
-	},
-}
-
-var storageUnlinkCmd = &cobra.Command{
-	Use:   "unlink [bucket-name]",
-	Short: "Unlink a bucket from its project",
-	Args:  requireOneArg("bucket-name", "storage list"),
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.Load()
-		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
-			return
-		}
-
-		client := api.NewClient(cfg)
-		bucket, err := findBucketByName(client, args[0])
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
-			return
-		}
-
-		err = client.UnlinkBucket(bucket.ID)
-		if err != nil {
-			fmt.Printf("❌ Failed to unlink: %v\n", err)
-			return
-		}
-
-		fmt.Printf("✅ Bucket '%s' unlinked. S3 env vars removed from project.\n", args[0])
 	},
 }
 
@@ -447,15 +354,11 @@ func formatBytes(b int64) string {
 
 func init() {
 	storageCreateCmd.Flags().IntVar(&storageCreateQuotaGB, "quota-gb", 0, "Per-bucket storage quota in GB, priced in points (stepped by the catalog's obj_block_gb). Interactive picker when omitted; plan default if no catalog.")
-	// --project has no short form; -p is reserved for --prod on `deploy`.
-	storageLinkCmd.Flags().StringVar(&storageLinkProject, "project", "", "Project name or slug")
 
 	storageCmd.AddCommand(storageCreateCmd)
 	storageCmd.AddCommand(storageListCmd)
 	storageCmd.AddCommand(storageInfoCmd)
 	storageCmd.AddCommand(storageCredentialsCmd)
-	storageCmd.AddCommand(storageLinkCmd)
-	storageCmd.AddCommand(storageUnlinkCmd)
 	storageCmd.AddCommand(storageExposeCmd)
 	storageCmd.AddCommand(storageUnexposeCmd)
 	storageCmd.AddCommand(storageRotateCmd)

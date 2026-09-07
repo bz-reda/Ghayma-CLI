@@ -28,8 +28,8 @@ Tests are Go tests: `cmd/*_test.go` and `internal/api/*_test.go`. Run with `go t
 - `deploy.go` — tarball upload + deployment polling loop; has monorepo detection via `turbo.json`
 - `init.go` — interactive project init, writes `.ghayma.json`
 - `site.go` — `site create|list|use|scale` subcommands (`site add` kept as hidden deprecated alias)
-- `db.go` — `db create|resize|list|info|credentials|link|unlink|expose|unexpose|stop|start|rotate|delete`
-- `storage.go` — `storage create|list|info|credentials|link|unlink|expose|unexpose|rotate|delete`
+- `db.go` — `db create|resize|list|info|credentials|expose|unexpose|stop|start|rotate|delete`
+- `storage.go` — `storage create|list|info|credentials|expose|unexpose|rotate|delete`
 - `auth.go` — `auth create|list|info|config|users|stats|rotate-keys|delete`
 - `points.go` — `points` (project points meter + per-resource breakdown)
 - `domain.go`, `env.go`, `logs.go`, `rollback.go`, `status.go`, `delete.go`, `login.go`, `logout.go`, `register.go`, `whoami.go`, `link.go`, `project.go` (ownership transfer)
