@@ -335,11 +335,7 @@ var dbListCmd = &cobra.Command{
 
 		fmt.Printf("🗄️  Your databases (%d):\n\n", len(databases))
 		for _, db := range databases {
-			linked := "unlinked"
-			if db.ProjectID != "" {
-				linked = "linked"
-			}
-			fmt.Printf("   %-15s  %-10s  %-10s  %s\n", db.Name, db.Type, db.Status, linked)
+			fmt.Printf("   %-15s  %-10s  %s\n", db.Name, db.Type, db.Status)
 		}
 	},
 }
@@ -379,97 +375,6 @@ var dbInfoCmd = &cobra.Command{
 		} else {
 			fmt.Printf("   Linked to:  (none)\n")
 		}
-	},
-}
-
-var dbLinkProject string
-
-var dbLinkCmd = &cobra.Command{
-	Use:   "link [db-name]",
-	Short: "Link a database to a project",
-	Args:  requireOneArg("db-name", "db list"),
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.Load()
-		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
-			return
-		}
-
-		client := api.NewClient(cfg)
-
-		// Find database by name
-		db, err := findDatabaseByName(client, args[0])
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
-			return
-		}
-
-		// Find project by name/slug or from .espacetech.json
-		projectID := ""
-		if dbLinkProject != "" {
-			projects, err := client.ListProjects()
-			if err != nil {
-				fmt.Printf("❌ Failed to list projects: %v\n", err)
-				return
-			}
-			for _, p := range projects {
-				if p.Name == dbLinkProject || p.Slug == dbLinkProject {
-					projectID = p.ID
-					break
-				}
-			}
-			if projectID == "" {
-				fmt.Printf("❌ Project '%s' not found\n", dbLinkProject)
-				return
-			}
-		} else {
-			data, err := readProjectConfigUp(".")
-			if err != nil {
-				fmt.Println("❌ No --project flag and no project config found")
-				return
-			}
-			var projectCfg struct {
-				ProjectID string `json:"project_id"`
-			}
-			json.Unmarshal(data, &projectCfg)
-			projectID = projectCfg.ProjectID
-		}
-
-		err = client.LinkDatabase(db.ID, projectID)
-		if err != nil {
-			fmt.Printf("❌ Failed to link: %v\n", err)
-			return
-		}
-
-		fmt.Printf("✅ Database '%s' linked to project. Connection string injected as env var.\n", args[0])
-	},
-}
-
-var dbUnlinkCmd = &cobra.Command{
-	Use:   "unlink [db-name]",
-	Short: "Unlink a database from its project",
-	Args:  requireOneArg("db-name", "db list"),
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.Load()
-		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
-			return
-		}
-
-		client := api.NewClient(cfg)
-		db, err := findDatabaseByName(client, args[0])
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
-			return
-		}
-
-		err = client.UnlinkDatabase(db.ID)
-		if err != nil {
-			fmt.Printf("❌ Failed to unlink: %v\n", err)
-			return
-		}
-
-		fmt.Printf("✅ Database '%s' unlinked. Env var removed from project.\n", args[0])
 	},
 }
 
@@ -734,8 +639,6 @@ func init() {
 	dbCreateCmd.Flags().StringVar(&dbCreateTier, "tier", "", "Database tier (e.g. xs, s, m, l, xl). MongoDB needs s or larger. Interactive picker when omitted; server default if no catalog.")
 	dbCreateCmd.Flags().IntVar(&dbCreateDiskGB, "disk-gb", 0, "Persistent disk in GB, priced in points. Server default (from size) when omitted.")
 	dbCreateCmd.Flags().StringVar(&dbCreateBackup, "backup", "", "Backup schedule: weekly, daily, sixhourly. Interactive picker when omitted; weekly default if no catalog.")
-	// --project has no short form; -p is reserved for --prod on `deploy`.
-	dbLinkCmd.Flags().StringVar(&dbLinkProject, "project", "", "Project name or slug (defaults to current directory's project)")
 
 	dbResizeCmd.Flags().StringVar(&dbResizeTier, "tier", "", "New database tier (e.g. xs, s, m, l)")
 	dbResizeCmd.Flags().IntVar(&dbResizeDiskGB, "disk-gb", 0, "New disk size in GB (grow-only — cannot shrink)")
@@ -744,8 +647,6 @@ func init() {
 	dbCmd.AddCommand(dbCreateCmd)
 	dbCmd.AddCommand(dbListCmd)
 	dbCmd.AddCommand(dbInfoCmd)
-	dbCmd.AddCommand(dbLinkCmd)
-	dbCmd.AddCommand(dbUnlinkCmd)
 	dbCmd.AddCommand(dbDeleteCmd)
 	rootCmd.AddCommand(dbCmd)
 	dbCmd.AddCommand(dbExposeCmd)

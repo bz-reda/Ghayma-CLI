@@ -84,11 +84,14 @@ func runDBSites(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// An unlinked database has no reachable sites (the server returns an empty
-	// list). Neither viewing nor changing access is meaningful until it's linked.
+	// The server answers with every site of the database's OWNING project, so an
+	// empty list means that project has no sites yet (a project's main site is
+	// created lazily, on its first deploy). Databases predating the
+	// one-project-for-life rule may also carry no project at all; either way
+	// there is no access to show or change here.
 	if len(current) == 0 {
-		fmt.Printf("🗄️  '%s' is not linked to a project — no site can reach it.\n", args[0])
-		fmt.Printf("   Link it to a project first: ghayma db link %s\n", args[0])
+		fmt.Printf("🗄️  No site can reach '%s' yet.\n", args[0])
+		fmt.Println("   Its project has no sites — deploy one to create the main site: ghayma deploy")
 		return
 	}
 
