@@ -371,9 +371,9 @@ var dbInfoCmd = &cobra.Command{
 		fmt.Printf("   CPU:        %s\n", db.CPULimit)
 		fmt.Printf("   Memory:     %s\n", db.MemoryLimit)
 		if db.ProjectID != "" {
-			fmt.Printf("   Linked to:  %s\n", db.ProjectID)
+			fmt.Printf("   Project:    %s\n", db.ProjectID)
 		} else {
-			fmt.Printf("   Linked to:  (none)\n")
+			fmt.Printf("   Project:    (none)\n")
 		}
 	},
 }

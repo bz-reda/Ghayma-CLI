@@ -149,9 +149,9 @@ var storageInfoCmd = &cobra.Command{
 		fmt.Printf("   Storage:    %s / %s\n", formatBytes(bucket.StorageUsedBytes), formatBytes(bucket.StorageLimitBytes))
 		fmt.Printf("   Public:     %v\n", bucket.ExternalAccess)
 		if bucket.ProjectID != "" {
-			fmt.Printf("   Linked to:  %s\n", bucket.ProjectID)
+			fmt.Printf("   Project:    %s\n", bucket.ProjectID)
 		} else {
-			fmt.Printf("   Linked to:  (none)\n")
+			fmt.Printf("   Project:    (none)\n")
 		}
 		fmt.Printf("   Endpoint:   https://s3.ghayma.tech\n")
 		if bucket.ExternalAccess {
