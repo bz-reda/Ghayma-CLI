@@ -1059,37 +1059,6 @@ func (c *Client) DeleteDatabase(id string) error {
 	return nil
 }
 
-func (c *Client) LinkDatabase(dbID, projectID string) error {
-	body, _ := json.Marshal(map[string]string{"project_id": projectID})
-	resp, err := c.authRequest("POST", "/api/v1/databases/"+dbID+"/link", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return fmt.Errorf("%s", errResp["error"])
-	}
-	return nil
-}
-
-func (c *Client) UnlinkDatabase(dbID string) error {
-	resp, err := c.authRequest("POST", "/api/v1/databases/"+dbID+"/unlink", nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return fmt.Errorf("%s", errResp["error"])
-	}
-	return nil
-}
-
 // Helpers
 
 func (c *Client) authRequest(method, path string, body io.Reader) (*http.Response, error) {
@@ -1353,37 +1322,6 @@ func (c *Client) RotateBucketCredentials(id string) (map[string]interface{}, err
 		return nil, fmt.Errorf("failed to rotate credentials")
 	}
 	return result.Credentials, nil
-}
-
-func (c *Client) LinkBucket(bucketID, projectID string) error {
-	body, _ := json.Marshal(map[string]string{"project_id": projectID})
-	resp, err := c.authRequest("POST", "/api/v1/storage/"+bucketID+"/link", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return fmt.Errorf("%s", errResp["error"])
-	}
-	return nil
-}
-
-func (c *Client) UnlinkBucket(bucketID string) error {
-	resp, err := c.authRequest("POST", "/api/v1/storage/"+bucketID+"/unlink", nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return fmt.Errorf("%s", errResp["error"])
-	}
-	return nil
 }
 
 func (c *Client) ExposeBucket(id string) (map[string]interface{}, error) {
