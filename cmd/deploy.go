@@ -272,10 +272,12 @@ not interactive.`,
 		fmt.Printf("📦 Build queued (deployment: %s)\n", resp.DeploymentID)
 		fmt.Println("⏳ Waiting for build...")
 
-		// The platform runs three builds at a time and allows a build twenty minutes, so a
-		// deploy can legitimately wait behind other builds and then build for a while;
-		// give it the same budget the server does before giving up on the wait.
+		// The platform builds a bounded number of deployments at a time and allows a
+		// build twenty minutes, so a deploy can legitimately wait behind other builds
+		// and then build for a while; give it the same budget the server does before
+		// giving up on the wait.
 		lastStatus := ""
+		var queue queueTracker
 		for i := 0; i < deployWaitPolls; i++ {
 			time.Sleep(deployWaitInterval)
 
@@ -284,10 +286,15 @@ not interactive.`,
 				continue
 			}
 
+			// The queued line carries the rank, so it is reprinted when the rank
+			// moves rather than when the status changes — a long wait stays one
+			// line plus dots instead of repeating an identical line every poll.
+			if line := queue.next(deployment.Status, deployment.QueuePosition, deployment.QueueSize); line != "" {
+				fmt.Print("\n" + line)
+			}
+
 			if deployment.Status != lastStatus {
 				switch deployment.Status {
-				case "queued":
-					fmt.Print("\n⏸️  Queued — waiting for a build slot")
 				case "building":
 					fmt.Print("\n🔨 Building")
 				case "deploying":
@@ -351,6 +358,38 @@ func deployHeadline(ctx *SiteContext) string {
 		site = fmt.Sprintf(" [site: %s]", ctx.Site.SiteName)
 	}
 	return fmt.Sprintf("🚀 Deploying %s%s...", ctx.ProjectName, site)
+}
+
+// queuedLine is the line shown while a deployment waits for a build slot.
+// position is its 1-based rank in its queue and size how many are waiting;
+// the platform reports 0/0 when it has no rank to give — including on a server
+// older than the fields — so that case keeps the original generic wording
+// rather than claiming "position 0 of 0".
+func queuedLine(position, size int) string {
+	if position <= 0 || size <= 0 {
+		return "⏸️  Queued — waiting for a build slot"
+	}
+	return fmt.Sprintf("⏸️  Queued, position %d of %d", position, size)
+}
+
+// queueTracker turns the deploy's stream of polls into the queue lines it
+// prints, so the "one line per change of position" rule is a pure seam rather
+// than state tangled into the polling loop.
+type queueTracker struct{ last string }
+
+// next returns the line to print for one poll, or "" for nothing to print —
+// either the deployment is no longer queued, or the same line already stands.
+func (q *queueTracker) next(status string, position, size int) string {
+	if status != "queued" {
+		q.last = ""
+		return ""
+	}
+	line := queuedLine(position, size)
+	if line == q.last {
+		return ""
+	}
+	q.last = line
+	return line
 }
 
 // uploadDescription describes a manifest deploy's upload mode: a root_directory
