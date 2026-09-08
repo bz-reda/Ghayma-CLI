@@ -617,6 +617,13 @@ type Deployment struct {
 	Status   string   `json:"status"`
 	ImageTag string   `json:"image_tag"`
 	Domains  []string `json:"domains"`
+	// QueuePosition is the 1-based rank of this deployment among the
+	// deployments queued in the same queue; QueueSize is how many are
+	// waiting there. Both are 0 when the deployment is not queued — and
+	// also when the server is older than the fields, which is why the
+	// CLI treats 0/0 as "no position to report" rather than "position 0".
+	QueuePosition int `json:"queue_position"`
+	QueueSize     int `json:"queue_size"`
 }
 
 func (c *Client) GetDeployment(id string) (*Deployment, error) {
