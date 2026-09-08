@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -518,7 +517,16 @@ type DeployBuildConfig struct {
 // string to fall back to the platform convention (literal `Dockerfile` at
 // appDir, only honored when projects.custom_dockerfile_enabled is TRUE).
 func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isProduction bool, rootDirectory, dockerfilePath string, bc DeployBuildConfig, rules *IgnoreRules) (*DeployResponse, error) {
-	tarPath := filepath.Join(os.TempDir(), "paas-source.tar.gz")
+	// One archive per process: a fixed name in the shared temp directory let
+	// concurrent deploys from the same machine overwrite each other's upload
+	// (2026-09-08: 11 of 20 parallel deploys failed with "no such file" or a
+	// corrupted archive on the server).
+	tmp, err := os.CreateTemp(os.TempDir(), "ghayma-source-*.tar.gz")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tarPath := tmp.Name()
+	tmp.Close()
 	defer os.Remove(tarPath)
 
 	if err := createTarball(sourceDir, tarPath, rules); err != nil {
