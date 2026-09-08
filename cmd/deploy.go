@@ -149,6 +149,12 @@ func monorepoRelDir(monorepoRoot, appDir string) string {
 	return filepath.ToSlash(rel)
 }
 
+// deployWaitPolls × deployWaitInterval = 25 minutes: the server's queue plus its 20-minute build deadline.
+const (
+	deployWaitPolls    = 500
+	deployWaitInterval = 3 * time.Second
+)
+
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
 	Short: "Deploy the current project",
@@ -266,12 +272,28 @@ not interactive.`,
 		fmt.Printf("📦 Build queued (deployment: %s)\n", resp.DeploymentID)
 		fmt.Println("⏳ Waiting for build...")
 
-		for i := 0; i < 120; i++ {
-			time.Sleep(3 * time.Second)
+		// The platform runs three builds at a time and allows a build twenty minutes, so a
+		// deploy can legitimately wait behind other builds and then build for a while;
+		// give it the same budget the server does before giving up on the wait.
+		lastStatus := ""
+		for i := 0; i < deployWaitPolls; i++ {
+			time.Sleep(deployWaitInterval)
 
 			deployment, err := client.GetDeployment(resp.DeploymentID)
 			if err != nil {
 				continue
+			}
+
+			if deployment.Status != lastStatus {
+				switch deployment.Status {
+				case "queued":
+					fmt.Print("\n⏸️  Queued — waiting for a build slot")
+				case "building":
+					fmt.Print("\n🔨 Building")
+				case "deploying":
+					fmt.Print("\n🚀 Deploying")
+				}
+				lastStatus = deployment.Status
 			}
 
 			switch deployment.Status {
@@ -294,14 +316,12 @@ not interactive.`,
 					fmt.Println(logs)
 				}
 				return
-			case "building":
+			case "queued", "building", "deploying":
 				fmt.Print(".")
-			case "deploying":
-				fmt.Print("🔄")
 			}
 		}
 
-		fmt.Println("\n⚠️  Deploy timed out. Check status with: ghayma status")
+		fmt.Println("\n⚠️  Still not finished after 25 minutes; the build keeps running on the platform. Check with: ghayma status")
 	},
 }
 
