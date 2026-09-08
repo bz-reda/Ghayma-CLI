@@ -613,11 +613,10 @@ func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isPr
 // Deployment Status
 
 type Deployment struct {
-	ID       string `json:"id"`
-	Status   string `json:"status"`
-	ImageTag string `json:"image_tag"`
+	ID       string   `json:"id"`
+	Status   string   `json:"status"`
+	ImageTag string   `json:"image_tag"`
 	Domains  []string `json:"domains"`
-
 }
 
 func (c *Client) GetDeployment(id string) (*Deployment, error) {
@@ -1195,7 +1194,6 @@ func (c *Client) RotatePassword(id string) (map[string]interface{}, error) {
 	return result, nil
 }
 
-
 // Storage
 
 type BucketInfo struct {
@@ -1353,7 +1351,6 @@ func (c *Client) UnexposeBucket(id string) error {
 	}
 	return nil
 }
-
 
 // Auth Apps
 
@@ -1573,6 +1570,7 @@ func (c *Client) DeleteAuthUser(appID, userID string) error {
 	}
 	return nil
 }
+
 // ==================== Project Transfer ====================
 
 type TransferInitiateResponse struct {
@@ -1668,7 +1666,9 @@ func (c *Client) AcceptProjectTransfer(rawToken string) (*TransferAcceptResponse
 // with the server's message. Falls back to the raw body on parse failure.
 func decodeAPIError(resp *http.Response) error {
 	raw, _ := io.ReadAll(resp.Body)
-	var errResp struct{ Error string `json:"error"` }
+	var errResp struct {
+		Error string `json:"error"`
+	}
 	if json.Unmarshal(raw, &errResp) == nil && errResp.Error != "" {
 		return fmt.Errorf("%s", errResp.Error)
 	}
