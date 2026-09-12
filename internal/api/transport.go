@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -210,3 +211,67 @@ func (e *ReachabilityError) Error() string {
 }
 
 func (e *ReachabilityError) Unwrap() error { return e.Last }
+
+// apiDialer is process-wide: the address that worked for the first request is
+// reused by every client the command builds afterwards.
+var apiDialer = newFallbackDialer()
+
+// retryBackoff is the pause before each retry, and its length sets how many
+// retries an idempotent request gets.
+var retryBackoff = []time.Duration{500 * time.Millisecond, 1500 * time.Millisecond}
+
+// newHTTPClient builds the client every API call goes through. It deliberately
+// carries no Client.Timeout and no ResponseHeaderTimeout: source uploads and
+// log streaming have to stay unbounded.
+func newHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyFromEnvironment
+	transport.DialContext = apiDialer.DialContext
+	transport.TLSHandshakeTimeout = 10 * time.Second
+	return &http.Client{Transport: transport}
+}
+
+// do sends a request and retries it when the transport itself failed — a
+// timeout, an unreachable address, a reset or refused connection. Only
+// body-less GET and HEAD are retried, since replaying anything else could
+// duplicate a write. An HTTP status is never retried: what a 5xx means is the
+// caller's business.
+func (c *Client) do(req *http.Request) (*http.Response, error) {
+	attempts := 1
+	if req.Body == nil && (req.Method == http.MethodGet || req.Method == http.MethodHead) {
+		attempts = len(retryBackoff) + 1
+	}
+
+	var err error
+	for attempt := range attempts {
+		if attempt > 0 {
+			select {
+			case <-time.After(retryBackoff[attempt-1]):
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+		}
+
+		var resp *http.Response
+		resp, err = c.http.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		if !isRetryableTransportError(err) {
+			return nil, err
+		}
+	}
+	return nil, err
+}
+
+func isRetryableTransportError(err error) bool {
+	var unreachable *ReachabilityError
+	if errors.As(err, &unreachable) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED)
+}

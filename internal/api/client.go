@@ -44,7 +44,7 @@ type Client struct {
 }
 
 func NewClient(cfg *config.Config) *Client {
-	return &Client{cfg: cfg, http: &http.Client{}}
+	return &Client{cfg: cfg, http: newHTTPClient()}
 }
 
 // Auth
@@ -61,7 +61,13 @@ type AuthResponse struct {
 
 func (c *Client) Login(email, password string) (*AuthResponse, error) {
 	body, _ := json.Marshal(map[string]string{"email": email, "password": password})
-	resp, err := c.http.Post(c.cfg.APIHost+"/api/v1/auth/login", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", c.cfg.APIHost+"/api/v1/auth/login", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +104,13 @@ func (c *Client) Register(email, password, name, inviteCode string) (*RegisterRe
 		payload["invite_code"] = inviteCode
 	}
 	body, _ := json.Marshal(payload)
-	resp, err := c.http.Post(c.cfg.APIHost+"/api/v1/auth/register", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", c.cfg.APIHost+"/api/v1/auth/register", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1086,7 +1098,7 @@ func (c *Client) authRequest(method, path string, body io.Reader) (*http.Respons
 	req.Header.Set("Authorization", "Bearer "+c.cfg.Bearer())
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, err
 	}
