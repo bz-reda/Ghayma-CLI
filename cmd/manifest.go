@@ -93,6 +93,11 @@ type SiteContext struct {
 	// existing "(from config)" headline.
 	RootFromConfig bool
 	WorkspaceRoot  string
+	// NoSite records a site-less project: the config names no site at all, and
+	// the backend has none to act on yet. Not an error — deploy still works
+	// (the platform creates main lazily) while every other site-scoped command
+	// says so and stops. See cmd/nosite.go.
+	NoSite bool
 }
 
 // errNoProjectConfig means nothing here or above describes a site — the signal
@@ -420,6 +425,7 @@ func perAppSiteContext(cwd, configPath string, data []byte, siteFlag, verb strin
 		Site:        cfg.SiteEntry,
 		SourceDir:   cwd,
 		ConfigPath:  configPath,
+		NoSite:      !hasSite(cfg.SiteEntry),
 	}
 	if cfg.RootDirectory != "" {
 		ctx.RootDirectory = filepath.ToSlash(cfg.RootDirectory)
@@ -443,6 +449,7 @@ func manifestSiteContext(root, configPath string, manifest *ProjectManifest, ent
 		ConfigPath:    configPath,
 		FromManifest:  true,
 		WorkspaceRoot: root,
+		NoSite:        !hasSite(entry),
 	}
 
 	mode := entry.Upload
@@ -576,8 +583,12 @@ func matchSiteEntry(sites []SiteEntry, want string) *SiteEntry {
 // different site must never silently act on this one. The verb keeps the advice
 // true for every caller — this used to say "deploy another site" to someone
 // running `ghayma env list`.
+//
+// An entry naming no site pins nothing, so there is nothing to guard: the
+// caller gets NoSite and says so in its own words, rather than this guard
+// claiming the directory is linked to a site called "(unnamed)" (2026-09-12).
 func checkSiteFlag(entry SiteEntry, siteFlag, verb string) error {
-	if siteFlag == "" || matchSiteEntry([]SiteEntry{entry}, siteFlag) != nil {
+	if siteFlag == "" || !hasSite(entry) || matchSiteEntry([]SiteEntry{entry}, siteFlag) != nil {
 		return nil
 	}
 	return fmt.Errorf("this directory is linked to site %q; run from the workspace root (or without --site) to %s another site", siteLabel(entry), verb)

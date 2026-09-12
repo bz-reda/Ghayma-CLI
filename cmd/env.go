@@ -78,6 +78,12 @@ func envSiteContext(verb string) (projectID, siteID, name string, err error) {
 	case err != nil:
 		return "", "", "", err
 	}
+	// A site-less project has no site-scoped env store, and the project-wide
+	// endpoint is not a stand-in for one — it is the legacy shape a main-site
+	// project still uses.
+	if ctx.NoSite {
+		return "", "", "", errNoSite
+	}
 	return ctx.ProjectID, ctx.Site.SiteID, ctx.ProjectName, nil
 }
 
@@ -136,7 +142,7 @@ pass --force to override.`,
 
 		projectID, siteID, _, err := envSiteContext("set env vars on")
 		if err != nil {
-			fmt.Printf("❌ %v\n", err)
+			reportSiteError(err)
 			return
 		}
 
@@ -206,7 +212,7 @@ var envListCmd = &cobra.Command{
 
 		projectID, siteID, name, err := envSiteContext("list env vars for")
 		if err != nil {
-			fmt.Printf("❌ %v\n", err)
+			reportSiteError(err)
 			return
 		}
 
@@ -242,7 +248,7 @@ func runEnvDelete(cmd *cobra.Command, args []string) {
 
 	projectID, siteID, _, err := envSiteContext("delete env vars from")
 	if err != nil {
-		fmt.Printf("❌ %v\n", err)
+		reportSiteError(err)
 		return
 	}
 
@@ -358,7 +364,7 @@ By default, existing vars are overwritten with a printed diff. Use
 
 		projectID, siteID, name, err := envSiteContext("import env vars into")
 		if err != nil {
-			fmt.Printf("❌ %v\n", err)
+			reportSiteError(err)
 			return
 		}
 

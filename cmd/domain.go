@@ -40,6 +40,12 @@ func runDomainCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	// A domain is served by a site; there is nothing to attach it to yet.
+	if ctx.NoSite {
+		failNoSite()
+		return
+	}
+
 	client := api.NewClient(cfg)
 	domain := args[0]
 

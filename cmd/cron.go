@@ -55,6 +55,13 @@ func runCronList(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	// Cron jobs are declared per site and synced on deploy, so a site-less
+	// project can never have one.
+	if localConfigIsSiteLess() {
+		failNoSite()
+		return
+	}
+
 	projectID, configSiteID, name, err := localConfig()
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
@@ -93,7 +100,7 @@ func runCronRuns(cmd *cobra.Command, args []string) {
 
 	client, projectID, job, err := resolveCronJob(cfg, args[0])
 	if err != nil {
-		fmt.Printf("❌ %v\n", err)
+		reportSiteError(err)
 		return
 	}
 
@@ -121,7 +128,7 @@ func runCronTrigger(cmd *cobra.Command, args []string) {
 
 	client, projectID, job, err := resolveCronJob(cfg, args[0])
 	if err != nil {
-		fmt.Printf("❌ %v\n", err)
+		reportSiteError(err)
 		return
 	}
 
@@ -138,6 +145,10 @@ func runCronTrigger(cmd *cobra.Command, args []string) {
 // project-wide lookup can find the same name on multiple sites; that's the only
 // ambiguous case and it asks for --site. Shared by `runs` and `trigger`.
 func resolveCronJob(cfg *config.Config, name string) (*api.Client, string, *api.CronJob, error) {
+	if localConfigIsSiteLess() {
+		return nil, "", nil, errNoSite
+	}
+
 	projectID, configSiteID, _, err := localConfig()
 	if err != nil {
 		return nil, "", nil, err

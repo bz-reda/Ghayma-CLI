@@ -35,6 +35,18 @@ func isCancel(err error) bool {
 // "➕ Create a new …" option (offered first). It maps onto no slice element.
 const createNewIdx = -1
 
+// noSiteIdx is the site picker's second fixed item: link the directory to the
+// project alone, with no site fields in the config (2026-09-12). A distinct
+// sentinel, so "create a new site" and "no site at all" can never be confused.
+const noSiteIdx = -2
+
+// noSiteChoiceLabel is that item's line in the picker.
+const noSiteChoiceLabel = "— No site (databases, storage and auth only)"
+
+// errNoSiteChosen marks the "— No site" answer (or link --no-site): not a
+// failure, the other legitimate outcome of resolving a site.
+var errNoSiteChosen = errors.New("no site chosen")
+
 // promptProjectChoiceFn / promptSiteChoiceFn / promptNewSiteNameFn are
 // indirected so tests can drive the interactive control flow without a TTY.
 var (
@@ -54,11 +66,11 @@ func projectChoiceLabels(projects []api.Project) []string {
 	return labels
 }
 
-// siteChoiceLabels renders the site picker: "create new" first, then one line
-// per existing site. Pure.
+// siteChoiceLabels renders the site picker: "create new" first, then "no site",
+// then one line per existing site. Pure.
 func siteChoiceLabels(sites []api.Site) []string {
-	labels := make([]string, 0, len(sites)+1)
-	labels = append(labels, "➕ Create a new site")
+	labels := make([]string, 0, len(sites)+2)
+	labels = append(labels, "➕ Create a new site", noSiteChoiceLabel)
 	for _, s := range sites {
 		labels = append(labels, fmt.Sprintf("%s  (slug: %s, status: %s)", s.Name, s.Slug, s.Status))
 	}
@@ -82,7 +94,8 @@ func promptProjectChoice(projects []api.Project) (int, error) {
 }
 
 // promptSiteChoice shows the site picker and returns the index into sites, or
-// createNewIdx for "create a new site". A cancel surfaces the promptui error.
+// createNewIdx / noSiteIdx for the two fixed items. A cancel surfaces the
+// promptui error.
 func promptSiteChoice(sites []api.Site) (int, error) {
 	sel := promptui.Select{
 		Label: "Select a site (or create a new one)",
@@ -93,7 +106,20 @@ func promptSiteChoice(sites []api.Site) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return idx - 1, nil
+	return siteChoiceIndex(idx), nil
+}
+
+// siteChoiceIndex maps a picker row onto an index into sites, or onto one of
+// the two fixed sentinels. Pure: an off-by-one here silently links the wrong
+// site.
+func siteChoiceIndex(row int) int {
+	switch row {
+	case 0:
+		return createNewIdx
+	case 1:
+		return noSiteIdx
+	}
+	return row - 2 // the two fixed items precede the sites
 }
 
 // promptNewSiteName asks for a new site's name. A cancel surfaces the error.
@@ -103,10 +129,18 @@ func promptNewSiteName() (string, error) {
 }
 
 // resolveOrCreateSite lists the project's sites and lets the user pick an
-// existing one or create a new one (the missing capability that blocked adding
-// a second monorepo app as its own site under an existing project). A cancel at
-// any picker aborts with errAttachCancelled.
-func resolveOrCreateSite(client *api.Client, projectID string) (*api.Site, error) {
+// existing one, create a new one (the missing capability that blocked adding a
+// second monorepo app as its own site under an existing project), or take no
+// site at all. A cancel at any picker aborts with errAttachCancelled; the
+// no-site answer returns errNoSiteChosen.
+//
+// noSite short-circuits the whole thing for --no-site: nothing is asked and no
+// site listing goes out.
+func resolveOrCreateSite(client *api.Client, projectID string, noSite bool) (*api.Site, error) {
+	if noSite {
+		return nil, errNoSiteChosen
+	}
+
 	sites, err := client.ListSites(projectID)
 	if err != nil {
 		return nil, err
@@ -117,7 +151,8 @@ func resolveOrCreateSite(client *api.Client, projectID string) (*api.Site, error
 		return nil, errAttachCancelled
 	}
 
-	if idx == createNewIdx {
+	switch idx {
+	case createNewIdx:
 		name, err := promptNewSiteNameFn()
 		if err != nil {
 			return nil, errAttachCancelled
@@ -127,6 +162,8 @@ func resolveOrCreateSite(client *api.Client, projectID string) (*api.Site, error
 			return nil, fmt.Errorf("site name cannot be empty")
 		}
 		return client.CreateSite(projectID, name)
+	case noSiteIdx:
+		return nil, errNoSiteChosen
 	}
 
 	if idx < 0 || idx >= len(sites) {
@@ -139,9 +176,15 @@ func resolveOrCreateSite(client *api.Client, projectID string) (*api.Site, error
 // .ghayma.json into configDir pointing at it, and prints next steps. Shared by
 // init and link. root_directory is left unset: deploy derives it from the
 // filesystem when the config sits in a monorepo subdir.
-func attachToExistingProject(client *api.Client, project *api.Project, configDir string) error {
-	site, err := resolveOrCreateSite(client, project.ID)
-	if err != nil {
+//
+// A nil site — the "— No site" answer, or --no-site — writes the project fields
+// alone: no site_id / site_name / site_slug keys at all.
+func attachToExistingProject(client *api.Client, project *api.Project, configDir string, noSite bool) error {
+	site, err := resolveOrCreateSite(client, project.ID, noSite)
+	switch {
+	case errors.Is(err, errNoSiteChosen):
+		site = nil
+	case err != nil:
 		return err
 	}
 
@@ -150,9 +193,11 @@ func attachToExistingProject(client *api.Client, project *api.Project, configDir
 		Name:      project.Name,
 		Slug:      project.Slug,
 		Framework: project.Framework,
-		SiteID:    site.ID,
-		SiteName:  site.Name,
-		SiteSlug:  site.Slug,
+	}
+	if site != nil {
+		cfg.SiteID = site.ID
+		cfg.SiteName = site.Name
+		cfg.SiteSlug = site.Slug
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -161,6 +206,13 @@ func attachToExistingProject(client *api.Client, project *api.Project, configDir
 	path := projectConfigWritePath(configDir)
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return err
+	}
+
+	if site == nil {
+		fmt.Printf("✅ Linked to project '%s' (slug: %s) — no site\n", project.Name, project.Slug)
+		fmt.Printf("📁 Config saved to %s\n", path)
+		printNoSiteNextSteps()
+		return nil
 	}
 
 	fmt.Printf("✅ Linked to project '%s' (slug: %s)\n", project.Name, project.Slug)

@@ -37,7 +37,20 @@ func cliHome(t *testing.T, apiHost string) {
 func resetCommandFlags() {
 	deploySite, deployProd = "", false
 	envSite, domainSite = "", ""
+	cronSiteFlag = ""
+	siteScaleSite, siteScaleTier, siteScaleReplicas = "", "", 0
+	initNoSite, initSite, initDomain = false, "", ""
+	linkNoSite = false
+	// init's billing/plan flags are read off the flag set rather than bound to
+	// vars, so clear their stored values too.
+	_ = initCmd.Flags().Set("billing-account", "")
+	_ = initCmd.Flags().Set("plan", "")
 }
+
+// lastExitCode is what the command run by runCLI passed to exitFn, or 0 when it
+// never exited. runCLI always intercepts the exit: a command that reached the
+// real os.Exit would kill the test binary mid-run.
+var lastExitCode int
 
 // runCLI executes `ghayma <args...>` in dir and returns everything it printed.
 // Commands report failures on stdout rather than returning errors, so the
@@ -45,6 +58,11 @@ func resetCommandFlags() {
 func runCLI(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	t.Chdir(dir)
+
+	lastExitCode = 0
+	origExit := exitFn
+	exitFn = func(code int) { lastExitCode = code }
+	defer func() { exitFn = origExit }()
 
 	orig := os.Stdout
 	r, w, err := os.Pipe()

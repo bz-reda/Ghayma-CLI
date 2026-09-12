@@ -25,7 +25,11 @@ the subdir) — link can attach to an existing site or create a new one.
 At a workspace root — turbo.json, a pnpm-workspace.yaml with a packages: list,
 or a package.json with "workspaces" — you can instead link the WHOLE project:
 one manifest written to ./.ghayma.json listing every site and the directory
-that builds it, so 'ghayma deploy' from the root can ask which site to deploy.`,
+that builds it, so 'ghayma deploy' from the root can ask which site to deploy.
+
+A project that deploys nothing — databases, storage and auth only — links with
+--no-site (or the "— No site" item in the site chooser): the config records the
+project and no site.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
@@ -51,9 +55,10 @@ that builds it, so 'ghayma deploy' from the root can ask which site to deploy.`,
 		// At a workspace root the user can link the WHOLE project — every
 		// site in one manifest — instead of walking the app subdirectories one
 		// run at a time. Choosing the per-app subdirectory continues below,
-		// unchanged (2026-08-16).
+		// unchanged (2026-08-16). --no-site skips the offer: a manifest maps
+		// sites to directories, and this project is not to have one.
 		cwd, _ := os.Getwd()
-		if findWorkspaceRoot(cwd) == cwd {
+		if !linkNoSite && findWorkspaceRoot(cwd) == cwd {
 			handled, err := linkWorkspaceRoot(client, projects, args, cwd)
 			if err != nil {
 				if errors.Is(err, errAttachCancelled) {
@@ -96,7 +101,7 @@ that builds it, so 'ghayma deploy' from the root can ask which site to deploy.`,
 
 		// Resolve or create the site under the chosen project, then write the
 		// config into configDir. Shared with init's use-existing branch.
-		if err := attachToExistingProject(client, project, configDir); err != nil {
+		if err := attachToExistingProject(client, project, configDir, linkNoSite); err != nil {
 			if errors.Is(err, errAttachCancelled) {
 				fmt.Println("❌ Cancelled")
 			} else {
@@ -136,6 +141,10 @@ func selectLinkProject(projects []api.Project, args []string) (*api.Project, err
 	return &projects[idx], nil
 }
 
+// linkNoSite selects the site chooser's "— No site" item without asking.
+var linkNoSite bool
+
 func init() {
+	linkCmd.Flags().BoolVar(&linkNoSite, "no-site", false, "Link to the project without a site — databases, storage and auth only")
 	rootCmd.AddCommand(linkCmd)
 }
