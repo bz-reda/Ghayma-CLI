@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -22,15 +24,20 @@ import (
 // while another edge of the same zone answered in 30 ms). Every system address
 // is dialed at once with a short timeout; if all of them fail the host is
 // re-resolved over DNS-over-HTTPS and each provider's addresses are dialed the
-// same way. The address that worked is remembered for the rest of the process.
+// same way. The address that worked is remembered in memory and, since every
+// command is a fresh process, cached on disk for a day.
 type fallbackDialer struct {
 	dialTimeout time.Duration
 	lookup      func(ctx context.Context, host string) ([]net.IP, error)
 	dohURLs     []string
 	dohClient   *http.Client
+	// cachePath is the file the remembered addresses survive in. Empty
+	// disables the cache entirely, which is what tests want.
+	cachePath string
 
-	mu    sync.Mutex
-	known map[string]string
+	mu     sync.Mutex
+	known  map[string]string
+	loaded bool
 }
 
 func newFallbackDialer() *fallbackDialer {
@@ -45,6 +52,7 @@ func newFallbackDialer() *fallbackDialer {
 		},
 		// Plain client on purpose: resolving DoH through this dialer would recurse.
 		dohClient: &http.Client{Timeout: 5 * time.Second},
+		cachePath: netCachePath(),
 		known:     map[string]string{},
 	}
 }
@@ -199,6 +207,7 @@ func (d *fallbackDialer) resolveDoH(ctx context.Context, dohURL, host string) []
 func (d *fallbackDialer) recall(host string) string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.loadCacheLocked()
 	return d.known[host]
 }
 
@@ -206,12 +215,90 @@ func (d *fallbackDialer) remember(host, ip string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.known[host] = ip
+	d.writeCacheLocked(host, &netCacheEntry{IP: ip, Until: time.Now().Add(netCacheTTL)})
 }
 
 func (d *fallbackDialer) forget(host string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.known, host)
+	d.writeCacheLocked(host, nil)
+}
+
+// netCacheEntry is one host's remembered address on disk.
+type netCacheEntry struct {
+	IP    string    `json:"ip"`
+	Until time.Time `json:"until"`
+}
+
+// netCacheTTL is how long a working address is trusted. Cloudflare moves an
+// edge out from under us far more slowly than that, and a stale entry costs
+// only one dial timeout before the fallback re-resolves.
+const netCacheTTL = 24 * time.Hour
+
+// netCachePath locates the cache next to the CLI's config, the same way
+// internal/config does. An unknown home disables the cache.
+func netCachePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".paas-cli.net-cache.json")
+}
+
+// loadCacheLocked seeds known from the cache file, once per process — each
+// ghayma command is its own process, so without this the first request of
+// every command re-runs the whole fallback.
+func (d *fallbackDialer) loadCacheLocked() {
+	if d.loaded || d.cachePath == "" {
+		return
+	}
+	d.loaded = true
+
+	now := time.Now()
+	for host, entry := range readNetCache(d.cachePath) {
+		if entry.IP != "" && now.Before(entry.Until) {
+			d.known[host] = entry.IP
+		}
+	}
+}
+
+// writeCacheLocked stores or removes one host's entry. Every file error is
+// ignored on purpose: a missing cache, a read-only home or junk content must
+// never keep a command from running.
+func (d *fallbackDialer) writeCacheLocked(host string, entry *netCacheEntry) {
+	if d.cachePath == "" {
+		return
+	}
+
+	entries := readNetCache(d.cachePath)
+	if entries == nil {
+		entries = map[string]netCacheEntry{}
+	}
+	if entry == nil {
+		if _, ok := entries[host]; !ok {
+			return
+		}
+		delete(entries, host)
+	} else {
+		entries[host] = *entry
+	}
+
+	if data, err := json.Marshal(entries); err == nil {
+		os.WriteFile(d.cachePath, data, 0600)
+	}
+}
+
+func readNetCache(path string) map[string]netCacheEntry {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var entries map[string]netCacheEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil
+	}
+	return entries
 }
 
 // ReachabilityError reports that every address known for a host refused or
@@ -251,7 +338,8 @@ func (e *ReachabilityError) Error() string {
 func (e *ReachabilityError) Unwrap() error { return e.Last }
 
 // apiDialer is process-wide: the address that worked for the first request is
-// reused by every client the command builds afterwards.
+// reused by every client the command builds afterwards, and by the commands
+// that follow it through the on-disk cache.
 var apiDialer = newFallbackDialer()
 
 // retryBackoff is the pause before each retry, and its length sets how many

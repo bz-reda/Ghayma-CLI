@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -28,6 +31,9 @@ func newTestDialer() *fallbackDialer {
 	d.dialTimeout = 150 * time.Millisecond
 	d.dohURLs = nil
 	d.dohClient = &http.Client{Timeout: 2 * time.Second}
+	// No cache path: a test must never read or write the user's home. Tests
+	// that exercise the cache point this at a temp file.
+	d.cachePath = ""
 	return d
 }
 
@@ -204,9 +210,16 @@ func TestFallbackDialer_TriedKeepsTheOfferedOrder(t *testing.T) {
 	}
 }
 
-func TestNewFallbackDialer_DialTimeoutDefault(t *testing.T) {
-	if got := newFallbackDialer().dialTimeout; got != 4*time.Second {
-		t.Errorf("dialTimeout = %v; want 4s", got)
+func TestNewFallbackDialer_Defaults(t *testing.T) {
+	d := newFallbackDialer()
+	if d.dialTimeout != 4*time.Second {
+		t.Errorf("dialTimeout = %v; want 4s", d.dialTimeout)
+	}
+	if d.cachePath == "" {
+		t.Error("cachePath is empty; the real dialer must remember addresses across commands")
+	}
+	if got := newTestDialer().cachePath; got != "" {
+		t.Errorf("newTestDialer cachePath = %q; want empty so tests never touch the user's home", got)
 	}
 }
 
@@ -268,6 +281,168 @@ func TestFallbackDialer_IPLiteralBypassesLookup(t *testing.T) {
 	}
 	if len(d.known) != 0 {
 		t.Errorf("known = %v; want empty for an IP literal", d.known)
+	}
+}
+
+// diskCache mirrors the documented shape of ~/.paas-cli.net-cache.json
+// independently of the production type, so renaming either key fails here.
+type diskCache map[string]struct {
+	IP    string `json:"ip"`
+	Until string `json:"until"`
+}
+
+// tempCachePath returns a throwaway path for the remembered-address file.
+func tempCachePath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "net-cache.json")
+}
+
+func readDiskCache(t *testing.T, path string) diskCache {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	var entries diskCache
+	if err := json.Unmarshal(data, &entries); err != nil {
+		t.Fatalf("cache %s is not JSON: %v", data, err)
+	}
+	return entries
+}
+
+func seedCache(t *testing.T, path string, entries map[string]netCacheEntry) {
+	t.Helper()
+	data, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatalf("marshal cache: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+}
+
+// TestFallbackDialer_RemembersAcrossProcesses covers why the cache exists at
+// all: every ghayma command is a new process, so the address that worked has
+// to survive on disk or the next command repeats the whole fallback.
+func TestFallbackDialer_RemembersAcrossProcesses(t *testing.T) {
+	port := localListener(t)
+	path := tempCachePath(t)
+
+	first := newTestDialer()
+	first.cachePath = path
+	first.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+	conn, err := first.DialContext(context.Background(), "tcp", "api.test:"+port)
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	conn.Close()
+
+	entry, ok := readDiskCache(t, path)["api.test"]
+	if !ok {
+		t.Fatal("nothing cached for api.test")
+	}
+	if entry.IP != "127.0.0.1" {
+		t.Errorf("cached ip = %q; want 127.0.0.1", entry.IP)
+	}
+	until, err := time.Parse(time.RFC3339, entry.Until)
+	if err != nil {
+		t.Fatalf("until %q is not RFC3339: %v", entry.Until, err)
+	}
+	if drift := time.Until(until) - 24*time.Hour; drift > 0 || drift < -time.Minute {
+		t.Errorf("until = %v, %v away from a 24h TTL", until, drift)
+	}
+
+	// A second process: same cache file, a resolver that must not be consulted.
+	var lookups atomic.Int32
+	second := newTestDialer()
+	second.cachePath = path
+	second.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+		lookups.Add(1)
+		return nil, errors.New("the cached address should have answered")
+	}
+	conn2, err := second.DialContext(context.Background(), "tcp", "api.test:"+port)
+	if err != nil {
+		t.Fatalf("second process DialContext: %v", err)
+	}
+	conn2.Close()
+	if got := lookups.Load(); got != 0 {
+		t.Errorf("lookups = %d; want 0 (the cached address is dialed first)", got)
+	}
+}
+
+func TestFallbackDialer_IgnoresAnExpiredCacheEntry(t *testing.T) {
+	port := localListener(t)
+	path := tempCachePath(t)
+	seedCache(t, path, map[string]netCacheEntry{
+		"api.test": {IP: blackholeIP, Until: time.Now().Add(-time.Minute)},
+	})
+
+	var lookups atomic.Int32
+	d := newTestDialer()
+	d.cachePath = path
+	d.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+		lookups.Add(1)
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+
+	start := time.Now()
+	conn, err := d.DialContext(context.Background(), "tcp", "api.test:"+port)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	conn.Close()
+
+	if got := lookups.Load(); got != 1 {
+		t.Errorf("lookups = %d; want 1 (an expired entry is not a remembered address)", got)
+	}
+	if elapsed >= d.dialTimeout {
+		t.Errorf("dial took %v; the expired address was dialed anyway", elapsed)
+	}
+}
+
+func TestFallbackDialer_ForgetRemovesTheCacheEntry(t *testing.T) {
+	path := tempCachePath(t)
+	seedCache(t, path, map[string]netCacheEntry{
+		"api.test":   {IP: blackholeIP, Until: time.Now().Add(time.Hour)},
+		"other.test": {IP: "127.0.0.1", Until: time.Now().Add(time.Hour)},
+	})
+
+	d := newTestDialer()
+	d.cachePath = path
+	d.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+		return nil, errors.New("no such host")
+	}
+	if _, err := d.DialContext(context.Background(), "tcp", "api.test:443"); err == nil {
+		t.Fatal("DialContext succeeded; want the cached blackhole address to fail")
+	}
+
+	entries := readDiskCache(t, path)
+	if _, ok := entries["api.test"]; ok {
+		t.Error("the dead address is still cached; every later command would dial it first")
+	}
+	if got := entries["other.test"].IP; got != "127.0.0.1" {
+		t.Errorf("other.test ip = %q; want 127.0.0.1 left alone", got)
+	}
+}
+
+func TestFallbackDialer_UnusableCachePathIsHarmless(t *testing.T) {
+	port := localListener(t)
+	d := newTestDialer()
+	d.cachePath = t.TempDir() // a directory: every read and write of it fails
+	d.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+
+	conn, err := d.DialContext(context.Background(), "tcp", "api.test:"+port)
+	if err != nil {
+		t.Fatalf("DialContext: %v — an unusable cache must never break a command", err)
+	}
+	conn.Close()
+	if got := d.known["api.test"]; got != "127.0.0.1" {
+		t.Errorf("known[api.test] = %q; want the in-process memory to work regardless", got)
 	}
 }
 
