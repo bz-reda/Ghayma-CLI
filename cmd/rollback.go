@@ -65,6 +65,12 @@ var rollbackCmd = &cobra.Command{
 			return
 		}
 
+		// Rollback restores a previous deployment of a site; there are none.
+		if localConfigIsSiteLess() {
+			failNoSite()
+			return
+		}
+
 		var projectCfg struct {
 			ProjectID string `json:"project_id"`
 			Name      string `json:"name"`

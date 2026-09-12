@@ -191,6 +191,13 @@ var siteUseCmd = &cobra.Command{
 			return
 		}
 
+		// Nothing to switch to yet — say that, rather than "site not found",
+		// which reads as a typo.
+		if len(sites) == 0 {
+			failNoSite()
+			return
+		}
+
 		var matched *api.Site
 		for i, s := range sites {
 			if s.Slug == slug || s.Name == slug {
@@ -258,6 +265,12 @@ Examples:
 		sites, err := client.ListSites(projectID)
 		if err != nil {
 			fmt.Printf("❌ Failed to list sites: %v\n", err)
+			return
+		}
+
+		// There is no app to scale on a site-less project.
+		if len(sites) == 0 {
+			failNoSite()
 			return
 		}
 

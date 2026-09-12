@@ -52,21 +52,24 @@ func TestProjectChoiceLabels(t *testing.T) {
 	}
 }
 
-// TestSiteChoiceLabels: the site picker offers "create new" FIRST, then one
-// line per existing site.
+// TestSiteChoiceLabels: the site picker offers "create new" FIRST, then the
+// no-site item, then one line per existing site.
 func TestSiteChoiceLabels(t *testing.T) {
 	sites := []api.Site{
 		{ID: "s1", Name: "main", Slug: "forge", Status: "running"},
 	}
 	labels := siteChoiceLabels(sites)
-	if len(labels) != 2 {
-		t.Fatalf("got %d labels; want 2 (create-new + 1 site)", len(labels))
+	if len(labels) != 3 {
+		t.Fatalf("got %d labels; want 3 (create-new + no-site + 1 site)", len(labels))
 	}
 	if !strings.Contains(labels[0], "Create a new site") {
 		t.Errorf("labels[0] = %q; want the create-new option first", labels[0])
 	}
-	if !strings.Contains(labels[1], "main") {
-		t.Errorf("labels[1] = %q; want it to name the site", labels[1])
+	if labels[1] != noSiteChoiceLabel {
+		t.Errorf("labels[1] = %q; want the no-site item %q", labels[1], noSiteChoiceLabel)
+	}
+	if !strings.Contains(labels[2], "main") {
+		t.Errorf("labels[2] = %q; want it to name the site", labels[2])
 	}
 }
 
@@ -88,7 +91,7 @@ func TestResolveOrCreateSite_PickExisting(t *testing.T) {
 	defer func() { promptSiteChoiceFn = orig }()
 	promptSiteChoiceFn = func(sites []api.Site) (int, error) { return 1, nil } // pick "admin"
 
-	site, err := resolveOrCreateSite(attachTestClient(ts.URL), "p1")
+	site, err := resolveOrCreateSite(attachTestClient(ts.URL), "p1", false)
 	if err != nil {
 		t.Fatalf("resolveOrCreateSite: %v", err)
 	}
@@ -119,7 +122,7 @@ func TestResolveOrCreateSite_CreateNew(t *testing.T) {
 	promptSiteChoiceFn = func(sites []api.Site) (int, error) { return createNewIdx, nil }
 	promptNewSiteNameFn = func() (string, error) { return "admin", nil }
 
-	site, err := resolveOrCreateSite(attachTestClient(ts.URL), "p1")
+	site, err := resolveOrCreateSite(attachTestClient(ts.URL), "p1", false)
 	if err != nil {
 		t.Fatalf("resolveOrCreateSite(create): %v", err)
 	}
@@ -140,7 +143,7 @@ func TestResolveOrCreateSite_Cancel(t *testing.T) {
 	defer func() { promptSiteChoiceFn = orig }()
 	promptSiteChoiceFn = func(sites []api.Site) (int, error) { return 0, promptui.ErrInterrupt }
 
-	_, err := resolveOrCreateSite(attachTestClient(ts.URL), "p1")
+	_, err := resolveOrCreateSite(attachTestClient(ts.URL), "p1", false)
 	if !errors.Is(err, errAttachCancelled) {
 		t.Fatalf("err = %v; want errAttachCancelled", err)
 	}
@@ -160,7 +163,7 @@ func TestAttachToExistingProject_WritesConfig(t *testing.T) {
 
 	dir := t.TempDir()
 	project := &api.Project{ID: "p1", Name: "forge", Slug: "forge", Framework: "nextjs"}
-	if err := attachToExistingProject(attachTestClient(ts.URL), project, dir); err != nil {
+	if err := attachToExistingProject(attachTestClient(ts.URL), project, dir, false); err != nil {
 		t.Fatalf("attachToExistingProject: %v", err)
 	}
 

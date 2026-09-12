@@ -29,6 +29,12 @@ var logsCmd = &cobra.Command{
 			return
 		}
 
+		// Logs come from a running app, which lives on a site.
+		if localConfigIsSiteLess() {
+			failNoSite()
+			return
+		}
+
 		var projectCfg struct {
 			ProjectID string `json:"project_id"`
 			Slug      string `json:"slug"`

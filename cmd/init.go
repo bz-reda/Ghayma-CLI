@@ -66,10 +66,29 @@ func detectFramework(dir string) string {
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize a new project in the current directory",
+	Long: `Initialize a new project in the current directory.
+
+init asks how the project will be used: deploy an app or site from this
+directory, or no site at all — databases, storage and auth only, which is what
+a mobile app or an external backend needs. A site can always be added later
+with 'ghayma site create <name>'.
+
+For scripts and CI: --no-site answers "no site" without asking, --site <name>
+answers "deploy a site" with that name, and --domain <host> skips the domain
+question.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
+			return
+		}
+
+		// Flag sanity first: a contradictory combination must be refused
+		// before anything reaches the API — and with a non-zero exit, since
+		// these flags exist for scripts and CI.
+		if err := validateInitSiteFlags(initNoSite, initSite, initDomain); err != nil {
+			fmt.Printf("❌ %v\n", err)
+			exitFn(1)
 			return
 		}
 
@@ -108,7 +127,7 @@ var initCmd = &cobra.Command{
 				return
 			}
 			if idx != createNewIdx {
-				if err := attachToExistingProject(client, &projects[idx], configDir); err != nil {
+				if err := attachToExistingProject(client, &projects[idx], configDir, initNoSite); err != nil {
 					if errors.Is(err, errAttachCancelled) {
 						fmt.Println("❌ Cancelled.")
 					} else {
@@ -122,17 +141,17 @@ var initCmd = &cobra.Command{
 		// --- create a NEW project ---
 
 		// Project name
-		namePrompt := promptui.Prompt{Label: "Project name"}
-		name, err := namePrompt.Run()
+		name, err := promptProjectNameFn()
 		if err != nil {
 			fmt.Println("❌ Cancelled.")
 			return
 		}
 
 		// Framework — auto-detected from the project files (no longer a
-		// hardcoded nextjs picker). "auto" defers to the platform.
+		// hardcoded nextjs picker). "auto" defers to the platform. Only a site
+		// build uses it, so the detection is reported (and sent) below, once
+		// the project is known to deploy something.
 		framework := detectFramework(".")
-		fmt.Printf("🔎 Detected framework: %s\n", framework)
 
 		// Resolve the billing account for the new project. The API
 		// requires billing_account_id for billable plans (init creates
@@ -164,21 +183,45 @@ var initCmd = &cobra.Command{
 			return
 		}
 
+		// One explicit question, asked once, before any site prompt: a
+		// database/storage/auth-only project never deploys from this directory,
+		// so it gets no site, no domain and nothing to build.
+		mode, err := resolveInitSiteMode(initNoSite, initSite)
+		if err != nil {
+			fmt.Println("❌ Cancelled.")
+			return
+		}
+		if mode == siteModeNoSite {
+			framework = "auto"
+		} else {
+			fmt.Printf("🔎 Detected framework: %s\n", framework)
+		}
+
 		project, err := client.CreateProject(name, framework, billingAccountID, plan)
 		if err != nil {
 			fmt.Printf("❌ Failed to create project: %v\n", err)
 			return
 		}
 
-		// Site name — default "main" for single-site projects
-		sitePrompt := promptui.Prompt{
-			Label:   "Site name (e.g. frontend, admin — leave empty for 'main')",
-			Default: "",
-		}
-		siteName, err := sitePrompt.Run()
-		if err != nil {
-			fmt.Println("❌ Cancelled.")
+		if mode == siteModeNoSite {
+			finishSiteLessInit(project, framework, configDir)
 			return
+		}
+
+		// Site name — default "main" for single-site projects. --site answers
+		// it for scripts and CI ("main" allowed).
+		siteName := strings.TrimSpace(initSite)
+		if siteName == "" {
+			sitePrompt := promptui.Prompt{
+				Label:   "Site name (e.g. frontend, admin — leave empty for 'main')",
+				Default: "",
+			}
+			siteName, err = sitePrompt.Run()
+			if err != nil {
+				fmt.Println("❌ Cancelled.")
+				return
+			}
+			siteName = strings.TrimSpace(siteName)
 		}
 		if siteName == "" {
 			siteName = "main"
@@ -213,15 +256,20 @@ var initCmd = &cobra.Command{
 			}
 		}
 
-		// Domain
-		domainPrompt := promptui.Prompt{
-			Label:   "Domain (e.g., mysite.com, leave empty to skip)",
-			Default: "",
-		}
-		domain, err := domainPrompt.Run()
-		if err != nil {
-			fmt.Println("❌ Cancelled.")
-			return
+		// Domain. --domain answers it; so does a non-interactive shell, where
+		// there is nobody to ask and no safe default but "skip".
+		domain := strings.TrimSpace(initDomain)
+		if domain == "" && stdinIsTerminalFn() {
+			domainPrompt := promptui.Prompt{
+				Label:   "Domain (e.g., mysite.com, leave empty to skip)",
+				Default: "",
+			}
+			domain, err = domainPrompt.Run()
+			if err != nil {
+				fmt.Println("❌ Cancelled.")
+				return
+			}
+			domain = strings.TrimSpace(domain)
 		}
 
 		if domain != "" {
@@ -233,7 +281,7 @@ var initCmd = &cobra.Command{
 		}
 
 		// Save project config — in the app subdir for monorepos, in CWD otherwise.
-		projectCfg := ProjectConfig{
+		configPath, err := writeInitConfig(configDir, ProjectConfig{
 			ProjectID: project.ID,
 			Name:      project.Name,
 			Slug:      project.Slug,
@@ -241,10 +289,8 @@ var initCmd = &cobra.Command{
 			SiteID:    siteID,
 			SiteName:  siteName,
 			SiteSlug:  siteSlug,
-		}
-		configPath := projectConfigWritePath(configDir)
-		data, _ := json.MarshalIndent(projectCfg, "", "  ")
-		if err := os.WriteFile(configPath, data, 0644); err != nil {
+		})
+		if err != nil {
 			fmt.Printf("❌ Failed to write config: %v\n", err)
 			return
 		}
@@ -258,12 +304,132 @@ var initCmd = &cobra.Command{
 	},
 }
 
+// init's site flags. Bound to package vars (rather than read back off the
+// cobra flag set) so the tests that drive the real command tree can reset them
+// between runs like every other command's flags.
+var (
+	initNoSite bool
+	initSite   string
+	initDomain string
+)
+
+// initSiteMode is what a new project is for: an app or site this directory
+// deploys, or backend resources only (databases, storage, auth).
+type initSiteMode int
+
+const (
+	siteModeDeploy initSiteMode = iota
+	siteModeNoSite
+)
+
+// siteModeLabels are the two answers to "How will you use this project?", in
+// the order the picker offers them.
+var siteModeLabels = []string{
+	"Deploy an app or site from this directory",
+	"No site — only databases, storage and auth (mobile app, external backend)",
+}
+
+// promptSiteModeFn is indirected so tests can drive the question without a TTY.
+var promptSiteModeFn = promptSiteMode
+
+// promptSiteMode asks the one question that decides the rest of init. A cancel
+// surfaces the promptui error so init aborts instead of assuming a site.
+func promptSiteMode() (initSiteMode, error) {
+	sel := promptui.Select{
+		Label: "How will you use this project?",
+		Items: siteModeLabels,
+	}
+	idx, _, err := sel.Run()
+	if err != nil {
+		return siteModeDeploy, err
+	}
+	if idx == 1 {
+		return siteModeNoSite, nil
+	}
+	return siteModeDeploy, nil
+}
+
+// resolveInitSiteMode decides whether the new project deploys a site. The flags
+// answer for scripts and CI; otherwise the question is asked once, before any
+// site prompt. Neither flag on a non-interactive shell keeps today's behaviour:
+// the prompt fails and init aborts rather than guessing.
+func resolveInitSiteMode(noSite bool, siteFlag string) (initSiteMode, error) {
+	if noSite {
+		return siteModeNoSite, nil
+	}
+	if strings.TrimSpace(siteFlag) != "" {
+		return siteModeDeploy, nil
+	}
+	return promptSiteModeFn()
+}
+
+// validateInitSiteFlags rejects the contradictory combination before anything
+// is created: --no-site means this directory deploys nothing, so a site name or
+// a domain to attach to it cannot also be meant.
+func validateInitSiteFlags(noSite bool, siteFlag, domainFlag string) error {
+	if !noSite {
+		return nil
+	}
+	var conflicting []string
+	if strings.TrimSpace(siteFlag) != "" {
+		conflicting = append(conflicting, "--site")
+	}
+	if strings.TrimSpace(domainFlag) != "" {
+		conflicting = append(conflicting, "--domain")
+	}
+	if len(conflicting) == 0 {
+		return nil
+	}
+	return fmt.Errorf("--no-site cannot be combined with %s", strings.Join(conflicting, " or "))
+}
+
+// finishSiteLessInit writes the site-less config and says what such a project
+// is for. No site prompt, no domain prompt, no CreateSite/AddDomain call: the
+// config carries project fields only, and `ghayma site create` adds a site if
+// the project ever grows one.
+func finishSiteLessInit(project *api.Project, framework, configDir string) {
+	configPath, err := writeInitConfig(configDir, ProjectConfig{
+		ProjectID: project.ID,
+		Name:      project.Name,
+		Slug:      project.Slug,
+		Framework: framework,
+	})
+	if err != nil {
+		fmt.Printf("❌ Failed to write config: %v\n", err)
+		return
+	}
+	fmt.Printf("✅ Project '%s' created (slug: %s) — no site\n", project.Name, project.Slug)
+	fmt.Printf("📁 Config saved to %s\n", configPath)
+	printNoSiteNextSteps()
+}
+
+// writeInitConfig writes a brand-new project config into configDir and returns
+// the path it landed on.
+func writeInitConfig(configDir string, cfg ProjectConfig) (string, error) {
+	path := projectConfigWritePath(configDir)
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return path, os.WriteFile(path, data, 0644)
+}
+
 // maxAppSubdirAttempts caps the re-prompt loop below.
 const maxAppSubdirAttempts = 3
 
-// promptAppSubdirFn is indirected so tests can drive the re-prompt loop
-// without a terminal.
-var promptAppSubdirFn = promptAppSubdir
+// promptAppSubdirFn / promptProjectNameFn are indirected so tests can drive
+// the create-new path without a terminal.
+var (
+	promptAppSubdirFn   = promptAppSubdir
+	promptProjectNameFn = promptProjectName
+)
+
+// promptProjectName asks for the new project's name. A cancel surfaces the
+// error so init aborts before anything is created.
+func promptProjectName() (string, error) {
+	prompt := promptui.Prompt{Label: "Project name"}
+	return prompt.Run()
+}
 
 // detectMonorepoAppSubdir asks for the app subdirectory to initialise inside
 // when CWD is a workspace root. The bool reports whether the command may carry
@@ -533,5 +699,8 @@ func promptPlanSelect(plans []api.FixedPlan) (string, error) {
 func init() {
 	initCmd.Flags().String("billing-account", "", "Billing account ID for the new project (skips the interactive picker; for non-interactive/CI use)")
 	initCmd.Flags().String("plan", "", "Plan slug for the new project (e.g. hobby, pro). Interactive picker when omitted; server default if plans can't be fetched.")
+	initCmd.Flags().BoolVar(&initNoSite, "no-site", false, "Create the project without a site — databases, storage and auth only (skips the site and domain questions)")
+	initCmd.Flags().StringVar(&initSite, "site", "", "Name of the site to create ('main' allowed); skips the site question")
+	initCmd.Flags().StringVar(&initDomain, "domain", "", "Custom domain to attach to the new site; skips the domain question")
 	rootCmd.AddCommand(initCmd)
 }
