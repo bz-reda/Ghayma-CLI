@@ -828,6 +828,10 @@ type DeploymentInfo struct {
 	ImageTag      string `json:"image_tag"`
 	CommitMessage string `json:"commit_message"`
 	CreatedAt     string `json:"created_at"`
+	// RollbackAvailable is false when the API says the version can no longer be
+	// restored (outside the rollback window, or its image is gone). A pointer so
+	// an older API that omits the field leaves every row listable.
+	RollbackAvailable *bool `json:"rollback_available"`
 }
 
 type RollbackResponse struct {
@@ -857,13 +861,12 @@ func (c *Client) Rollback(deploymentID string) (*RollbackResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed: %s", string(respBody))
-	}
-
+	// decodeJSON keeps the server's own message as *APIError: a 409 here is a
+	// customer-readable reason the version can't be restored, not a raw body.
 	var result RollbackResponse
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return nil, err
+	}
 	return &result, nil
 }
 
