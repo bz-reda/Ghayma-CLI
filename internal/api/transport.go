@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,9 +20,9 @@ import (
 // network cannot reach (2026-09-12: an ISP whose DNS answered 188.114.96.5 /
 // 188.114.97.5 for api.ghayma.tech, a Cloudflare prefix it could not route,
 // while another edge of the same zone answered in 30 ms). Every system address
-// is dialed with a short timeout; if all of them fail the host is re-resolved
-// over DNS-over-HTTPS and those addresses are dialed too. The address that
-// worked is remembered for the rest of the process.
+// is dialed at once with a short timeout; if all of them fail the host is
+// re-resolved over DNS-over-HTTPS and each provider's addresses are dialed the
+// same way. The address that worked is remembered for the rest of the process.
 type fallbackDialer struct {
 	dialTimeout time.Duration
 	lookup      func(ctx context.Context, host string) ([]net.IP, error)
@@ -34,7 +35,7 @@ type fallbackDialer struct {
 
 func newFallbackDialer() *fallbackDialer {
 	return &fallbackDialer{
-		dialTimeout: 6 * time.Second,
+		dialTimeout: 4 * time.Second,
 		lookup: func(ctx context.Context, host string) ([]net.IP, error) {
 			return net.DefaultResolver.LookupIP(ctx, "ip", host)
 		},
@@ -73,47 +74,84 @@ func (d *fallbackDialer) DialContext(ctx context.Context, network, addr string) 
 	if err != nil {
 		last = err
 	}
+	system := make([]string, 0, len(ips))
 	for _, ip := range ips {
-		conn, err := d.tryAddress(ctx, network, host, ip.String(), port, &tried)
-		if conn != nil {
-			return conn, nil
-		}
-		if err != nil {
-			last = err
-		}
+		system = append(system, ip.String())
+	}
+	conn, groupErr := d.dialGroup(ctx, network, host, system, port, &tried)
+	if conn != nil {
+		return conn, nil
+	}
+	if groupErr != nil {
+		last = groupErr
 	}
 
 	for _, dohURL := range d.dohURLs {
-		for _, ip := range d.resolveDoH(ctx, dohURL, host) {
-			conn, err := d.tryAddress(ctx, network, host, ip, port, &tried)
-			if conn != nil {
-				return conn, nil
-			}
-			if err != nil {
-				last = err
-			}
+		conn, groupErr := d.dialGroup(ctx, network, host, d.resolveDoH(ctx, dohURL, host), port, &tried)
+		if conn != nil {
+			return conn, nil
+		}
+		if groupErr != nil {
+			last = groupErr
 		}
 	}
 
 	return nil, &ReachabilityError{Host: host, Tried: tried, Last: last}
 }
 
-// tryAddress dials ip unless it was already tried, recording the attempt. A
-// successful connection is remembered as the host's working address.
-func (d *fallbackDialer) tryAddress(ctx context.Context, network, host, ip, port string, tried *[]string) (net.Conn, error) {
-	for _, seen := range *tried {
-		if seen == ip {
-			return nil, nil
+// dialGroup dials every address of one group at once and keeps the first
+// connection that comes up, cancelling the rest — a group of dead addresses
+// costs one dial timeout instead of one per address. Addresses already tried
+// are skipped, and the rest are recorded in the order they were offered so the
+// error message stays deterministic.
+func (d *fallbackDialer) dialGroup(ctx context.Context, network, host string, ips []string, port string, tried *[]string) (net.Conn, error) {
+	fresh := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		if !slices.Contains(*tried, ip) && !slices.Contains(fresh, ip) {
+			fresh = append(fresh, ip)
 		}
 	}
-	*tried = append(*tried, ip)
-
-	conn, err := d.dial(ctx, network, ip, port)
-	if err != nil {
-		return nil, err
+	*tried = append(*tried, fresh...)
+	if len(fresh) == 0 {
+		return nil, nil
 	}
-	d.remember(host, ip)
-	return conn, nil
+
+	group, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type attempt struct {
+		ip   string
+		conn net.Conn
+		err  error
+	}
+	results := make(chan attempt, len(fresh))
+	for _, ip := range fresh {
+		go func() {
+			conn, err := d.dial(group, network, ip, port)
+			results <- attempt{ip, conn, err}
+		}()
+	}
+
+	// Every dial is drained: cancelled ones fail immediately, and a connection
+	// that lands after the winner has to be closed rather than leaked.
+	var winner net.Conn
+	var last error
+	for range fresh {
+		switch a := <-results; {
+		case a.err != nil:
+			last = a.err
+		case winner != nil:
+			a.conn.Close()
+		default:
+			winner = a.conn
+			d.remember(host, a.ip)
+			cancel()
+		}
+	}
+	if winner != nil {
+		return winner, nil
+	}
+	return nil, last
 }
 
 func (d *fallbackDialer) dial(ctx context.Context, network, ip, port string) (net.Conn, error) {

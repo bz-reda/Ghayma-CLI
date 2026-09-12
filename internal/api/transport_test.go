@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -142,6 +143,70 @@ func TestFallbackDialer_SecondDoHProvider(t *testing.T) {
 	conn.Close()
 	if got := firstHits.Load(); got != 1 {
 		t.Errorf("first DoH provider hit %d times; want 1", got)
+	}
+}
+
+// TestFallbackDialer_DialsAGroupInParallel pins the reason a command on the
+// affected network no longer waits out one timeout per dead address: the whole
+// group goes out at once, so the group costs one dial timeout, not their sum.
+func TestFallbackDialer_DialsAGroupInParallel(t *testing.T) {
+	port := localListener(t)
+	d := newTestDialer()
+	d.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{
+			net.ParseIP(blackholeIP),
+			net.ParseIP("10.255.255.2"),
+			net.ParseIP("127.0.0.1"),
+		}, nil
+	}
+
+	start := time.Now()
+	conn, err := d.DialContext(context.Background(), "tcp", "api.test:"+port)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	remote, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+	conn.Close()
+
+	if remote != "127.0.0.1" {
+		t.Errorf("connected to %s; want the reachable 127.0.0.1", remote)
+	}
+	if elapsed >= 2*d.dialTimeout {
+		t.Errorf("dial took %v; want under %v — the two dead addresses were dialed one after another", elapsed, 2*d.dialTimeout)
+	}
+	if got := d.known["api.test"]; got != "127.0.0.1" {
+		t.Errorf("known[api.test] = %q; want 127.0.0.1", got)
+	}
+}
+
+// TestFallbackDialer_TriedKeepsTheOfferedOrder guards the error message against
+// the parallel dial: addresses finish in whatever order the network decides,
+// but they must be reported in the order the resolver offered them.
+func TestFallbackDialer_TriedKeepsTheOfferedOrder(t *testing.T) {
+	want := []string{blackholeIP, "10.255.255.2", "10.255.255.3"}
+	d := newTestDialer()
+	d.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+		ips := make([]net.IP, 0, len(want))
+		for _, ip := range want {
+			ips = append(ips, net.ParseIP(ip))
+		}
+		return ips, nil
+	}
+
+	_, err := d.DialContext(context.Background(), "tcp", "api.test:443")
+	var re *ReachabilityError
+	if !errors.As(err, &re) {
+		t.Fatalf("DialContext error = %#v; want *ReachabilityError", err)
+	}
+	if !slices.Equal(re.Tried, want) {
+		t.Errorf("Tried = %v; want %v", re.Tried, want)
+	}
+}
+
+func TestNewFallbackDialer_DialTimeoutDefault(t *testing.T) {
+	if got := newFallbackDialer().dialTimeout; got != 4*time.Second {
+		t.Errorf("dialTimeout = %v; want 4s", got)
 	}
 }
 
