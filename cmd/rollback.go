@@ -110,7 +110,7 @@ var rollbackCmd = &cobra.Command{
 		result, err := client.Rollback(target.ID)
 		if err != nil {
 			fmt.Printf("❌ %s\n", rollbackErrorText(err))
-			return
+			os.Exit(1)
 		}
 
 		fmt.Println("✅ Rollback successful!")
