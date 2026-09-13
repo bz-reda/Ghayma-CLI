@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,4 +57,108 @@ func TestResolveSiteLess(t *testing.T) {
 	if _, err := resolveSiteLess(liveClient(t, one), "p-missing", ""); err == nil || !strings.Contains(err.Error(), "failed to list sites") {
 		t.Errorf("a failed listing must say so, got %v", err)
 	}
+}
+
+// legacyJSON is what init wrote before 2026-07-23: a project and nothing about
+// a site. It must resolve to the project's live site, never to "no site yet".
+const legacyJSON = `{"project_id":"p1","name":"taarefni","slug":"taarefni","framework":"nextjs"}`
+
+// legacyStub serves the live site list plus whatever else a command needs,
+// recording every request it answered. A recorded line carries the body's
+// site_id when there is one: AddDomain names the site in the body, not in the
+// path. A matched POST answers 201, the only status those creates accept.
+func legacyStub(t *testing.T, routes map[string]string) (*httptest.Server, *[]string) {
+	t.Helper()
+	var paths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		route := r.Method + " " + r.URL.Path
+		paths = append(paths, route+bodySiteID(r))
+
+		if r.URL.Path == "/api/v1/projects/p1/sites" {
+			io.WriteString(w, `[{"id":"s1","name":"main","slug":"main"}]`)
+			return
+		}
+		if body, ok := routes[route]; ok {
+			if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusCreated)
+			}
+			io.WriteString(w, body)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"error":"unexpected `+route+`"}`)
+	}))
+	t.Cleanup(ts.Close)
+	return ts, &paths
+}
+
+// bodySiteID reports the request body's site_id as " site_id=<id>", or "".
+func bodySiteID(r *http.Request) string {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	var body struct {
+		SiteID string `json:"site_id"`
+	}
+	if json.Unmarshal(raw, &body) != nil || body.SiteID == "" {
+		return ""
+	}
+	return " site_id=" + body.SiteID
+}
+
+func legacyDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{projectConfigName: legacyJSON})
+	return dir
+}
+
+func TestEnvList_LegacyConfigResolvesTheLiveSite(t *testing.T) {
+	ts, paths := legacyStub(t, map[string]string{
+		"GET /api/v1/projects/p1/sites/s1/env": `{"env_vars":{"API_URL":"https://example.test"},"build_time_keys":[]}`,
+	})
+	cliHome(t, ts.URL)
+	forceStdin(t, false)
+	noPrompt(t)
+
+	out := runCLI(t, legacyDir(t), "env", "list")
+	if strings.Contains(out, noSiteMessage) {
+		t.Fatalf("a legacy config on a project with a site must not be called site-less:\n%s", out)
+	}
+	if !strings.Contains(out, "API_URL=https://example.test") {
+		t.Errorf("output %q; want the site's variables", out)
+	}
+	if lastExitCode != 0 {
+		t.Errorf("exit code = %d; want 0", lastExitCode)
+	}
+	if !contains(*paths, "GET /api/v1/projects/p1/sites/s1/env") {
+		t.Errorf("served %v; want the live site's env read", *paths)
+	}
+}
+
+func TestDomainCreate_LegacyConfigResolvesTheLiveSite(t *testing.T) {
+	ts, paths := legacyStub(t, map[string]string{
+		"POST /api/v1/domains": `{"id":"d1"}`,
+	})
+	cliHome(t, ts.URL)
+	forceStdin(t, false)
+	noPrompt(t)
+
+	out := runCLI(t, legacyDir(t), "domain", "create", "example.com")
+	if strings.Contains(out, noSiteMessage) {
+		t.Fatalf("legacy config must not be site-less:\n%s", out)
+	}
+	if !contains(*paths, "POST /api/v1/domains site_id=s1") {
+		t.Errorf("served %v; want the domain attached to the live site", *paths)
+	}
+}
+
+func contains(paths []string, want string) bool {
+	for _, p := range paths {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }

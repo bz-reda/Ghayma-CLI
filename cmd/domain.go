@@ -40,16 +40,23 @@ func runDomainCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// A domain is served by a site; there is nothing to attach it to yet.
-	if ctx.NoSite {
-		failNoSite()
-		return
-	}
-
 	client := api.NewClient(cfg)
 	domain := args[0]
 
-	if err := client.AddDomain(ctx.ProjectID, ctx.Site.SiteID, domain); err != nil {
+	// A domain is served by a site. A config naming none is either a site-less
+	// project (nothing to attach to yet) or a config written before site keys
+	// existed; the live list decides.
+	siteID := ctx.Site.SiteID
+	if ctx.NoSite {
+		site, err := resolveSiteLess(client, ctx.ProjectID, domainSite)
+		if err != nil {
+			reportSiteError(err)
+			return
+		}
+		siteID = site.ID
+	}
+
+	if err := client.AddDomain(ctx.ProjectID, siteID, domain); err != nil {
 		fmt.Printf("❌ Failed to add domain: %v\n", err)
 		return
 	}
