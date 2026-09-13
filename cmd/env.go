@@ -522,10 +522,14 @@ func init() {
 	envImportCmd.Flags().BoolVar(&envImportSkipExisting, "skip-existing", false, "do not overwrite vars that are already set")
 	envImportCmd.Flags().BoolVar(&envImportForce, "force", false, "bypass secret-pattern rejection for --build-time keys")
 
+	envPullCmd.Flags().StringVar(&envPullOut, "out", "", "File to write (default: .env.local next to the app)")
+	envPullCmd.Flags().BoolVar(&envPullForce, "force", false, "Write even if the file is not git-ignored (a tracked file is always refused)")
+
 	envCmd.AddCommand(envSetCmd)
 	envCmd.AddCommand(envListCmd)
 	envCmd.AddCommand(envDeleteCmd)
 	envCmd.AddCommand(envRemoveCmd) // hidden deprecated alias
 	envCmd.AddCommand(envImportCmd)
+	envCmd.AddCommand(envPullCmd)
 	rootCmd.AddCommand(envCmd)
 }
