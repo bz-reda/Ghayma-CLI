@@ -152,8 +152,14 @@ func runEnvPull(cmd *cobra.Command, args []string) {
 
 	env, err := client.GetEffectiveSiteEnv(target.ProjectID, target.Site.ID)
 	if err != nil {
-		if strings.Contains(err.Error(), "insufficient role") {
+		switch {
+		case strings.Contains(err.Error(), "insufficient role"):
 			failf("The project admin role is needed to pull effective variables (they include service credentials) — ask the project owner")
+			return
+		case strings.Contains(err.Error(), "404 page not found"):
+			// A bare 404 is the route itself missing: a CLI released ahead of the
+			// platform update, not a site or project that is not there.
+			failf("This platform does not serve effective variables yet — the update that adds them is not deployed. Until then: ghayma env list")
 			return
 		}
 		failf("Failed to pull env vars: %v", err)

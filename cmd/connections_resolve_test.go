@@ -177,3 +177,24 @@ func TestRenderConnectionsTable_OrderAndColumns(t *testing.T) {
 		}
 	}
 }
+
+// A config with no site keys at all predates site keys (init before
+// 2026-07-23) or was written by init --no-site; only the live list can tell
+// the two apart, and --site must still apply.
+func TestLiveSiteFor(t *testing.T) {
+	if _, err := liveSiteFor(nil, ""); err != errNoSite {
+		t.Errorf("no live sites = %v; want errNoSite", err)
+	}
+	if s, err := liveSiteFor(liveSites()[:1], ""); err != nil || s.Slug != "main" {
+		t.Errorf("lone site: %v, %v", s, err)
+	}
+	if s, err := liveSiteFor(liveSites(), "Admin Console"); err != nil || s.Slug != "admin" {
+		t.Errorf("--site by name: %v, %v", s, err)
+	}
+	if _, err := liveSiteFor(liveSites(), "nope"); err == nil || !strings.Contains(err.Error(), "main, admin") {
+		t.Errorf("unknown --site must list the choices, got %v", err)
+	}
+	if _, err := liveSiteFor(liveSites(), ""); err == nil || !strings.Contains(err.Error(), "--site") {
+		t.Errorf("several sites without --site must ask for it, got %v", err)
+	}
+}
