@@ -137,13 +137,7 @@ func runEnvPull(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	out := envPullOut
-	if out == "" {
-		out = filepath.Join(target.AppDir, ".env.local")
-	} else if !filepath.IsAbs(out) {
-		cwd, _ := os.Getwd()
-		out = filepath.Join(cwd, out)
-	}
+	out := localEnvPath(envPullOut, target.AppDir)
 	tracked, ignored, inRepo := gitFileState(out)
 	if err := envPullRefusal(tracked, ignored, inRepo, envPullForce, filepath.Base(out)); err != nil {
 		failf("%v", err)
@@ -172,13 +166,7 @@ func runEnvPull(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	shown := out
-	if cwd, err := os.Getwd(); err == nil {
-		if rel, err := filepath.Rel(cwd, out); err == nil && !strings.HasPrefix(rel, "..") {
-			shown = rel
-		}
-	}
-	fmt.Printf("✅ Wrote %d variables for '%s' to %s\n", len(env), target.Site.Slug, shown)
+	fmt.Printf("✅ Wrote %d variables for '%s' to %s\n", len(env), target.Site.Slug, displayPath(out))
 	for _, k := range sortedKeys(env) {
 		fmt.Printf("   %s\n", k)
 	}
