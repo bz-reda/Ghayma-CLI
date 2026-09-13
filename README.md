@@ -91,6 +91,18 @@ Each project has a points budget (or runs pay-as-you-go). Databases, apps, stora
 | `ghayma env set --file .env.production` | Set from file |
 | `ghayma env list` | List environment variables |
 | `ghayma env delete KEY` | Remove an environment variable |
+| `ghayma env import <file>` | Import variables from a dotenv file |
+| `ghayma env pull` | Write the site's effective variables (connection-derived ones included) to a git-ignored `.env.local` |
+
+### Connections
+
+A connection lets one site (app) use one of the project's services — a database, a bucket or an auth app — at a level. It is what hands the app its variables, opens the network path to a database and shapes the app's managed platform key.
+
+| Command | Description |
+|---|---|
+| `ghayma connections [--site <slug>] [--json]` | List which apps may use which services |
+| `ghayma connect <database\|bucket\|auth> <name> [--site <slug>] [--level <level>]` | Connect a service to an app (levels: database `connect`, bucket `read-write`, auth `client` or `admin`) |
+| `ghayma disconnect <database\|bucket\|auth> <name> [--site <slug>] [--yes]` | Disconnect a service from an app |
 
 ### Databases
 
