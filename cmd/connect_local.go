@@ -120,7 +120,7 @@ func reportTunnelSessionError(err error) {
 	case strings.Contains(err.Error(), "insufficient role"):
 		failf("The project admin role is needed to tunnel into an app (the tunnel carries the app's database credentials) — ask the project owner")
 	case strings.Contains(err.Error(), "404 page not found"):
-		failf("This platform does not serve tunnel sessions yet — the update that adds them is not deployed. Until then: ghayma db expose <name>")
+		failf("This platform does not serve tunnel sessions yet — the update that adds them is not deployed. Until then: ghayma env pull writes the cluster addresses, which answer only from a deployed app")
 	default:
 		failf("%v", err)
 	}
