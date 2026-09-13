@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 
 	"paas-cli/internal/api"
@@ -51,9 +50,9 @@ func runConnectLocal(cmd *cobra.Command, args []string) {
 	tunnelSite(client, target)
 }
 
-// tunnelSite is the command once the site is known: open a session, bind a
-// listener per database, write the rewritten environment, then serve until the
-// user stops it or the session dies.
+// tunnelSite is the command once the site is known: open a session, serve it,
+// and give it back whichever way the run ends. The session is closed here
+// rather than in a defer because failf exits the process, which would skip it.
 func tunnelSite(client *api.Client, target *connectionTarget) {
 	session, err := openSessionFn(client, target.ProjectID, target.Site.ID)
 	if err != nil {
@@ -61,38 +60,38 @@ func tunnelSite(client *api.Client, target *connectionTarget) {
 		return
 	}
 
-	// Every way out of here gives the session back rather than leaving it open
-	// until it expires.
-	var closeOnce sync.Once
-	closeSession := func() {
-		closeOnce.Do(func() { client.CloseTunnelSession(target.ProjectID, target.Site.ID, session.Token) })
-	}
-	defer closeSession()
-
-	if len(session.Targets) == 0 {
-		failf("'%s' has no database connection to tunnel — connect one with: ghayma connect database <name>", target.Site.Slug)
+	err = serveTunnel(client, target, session)
+	client.CloseTunnelSession(target.ProjectID, target.Site.ID, session.Token)
+	if err != nil {
+		failf("%v", err)
 		return
+	}
+	fmt.Println("✅ Tunnel closed.")
+}
+
+// serveTunnel binds a listener per database, writes the rewritten environment
+// and serves until the user stops the command or the session dies.
+func serveTunnel(client *api.Client, target *connectionTarget, session *api.TunnelSession) error {
+	if len(session.Targets) == 0 {
+		return fmt.Errorf("'%s' has no database connection to tunnel — connect one with: ghayma connect database <name>", target.Site.Slug)
 	}
 
 	listeners := planListeners(session.Targets, portFree)
 	bound, err := bindListeners(listeners)
 	if err != nil {
-		failf("%v", err)
-		return
+		return err
 	}
 	defer closeListeners(bound)
 
 	env, err := pullEnvFn(client, target.ProjectID, target.Site.ID)
 	if err != nil {
-		failf("Failed to read the app's variables: %v", err)
-		return
+		return fmt.Errorf("Failed to read the app's variables: %v", err)
 	}
 	local, changed := rewriteEnvForLocal(env, listeners)
 
 	out := localEnvPath(connectLocalOut, target.AppDir)
 	if err := writeLocalEnv(out, target.ProjectName, target.Site.Slug, local, listeners, connectLocalForce); err != nil {
-		failf("%v", err)
-		return
+		return err
 	}
 
 	fatal := make(chan error, 1)
@@ -110,14 +109,7 @@ func tunnelSite(client *api.Client, target *connectionTarget) {
 	}
 	fmt.Println("   Leave this running; Ctrl-C closes the tunnel.")
 
-	stopErr := waitForStopFn(fatal)
-	closeListeners(bound)
-	closeSession()
-	if stopErr != nil {
-		failf("%v", stopErr)
-		return
-	}
-	fmt.Println("✅ Tunnel closed.")
+	return waitForStopFn(fatal)
 }
 
 // reportTunnelSessionError maps the ways a session is refused onto what the

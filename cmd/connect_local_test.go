@@ -314,6 +314,44 @@ func TestTunnelSite_ServesTheDatabasesLocallyAndClosesTheSession(t *testing.T) {
 	}
 }
 
+func TestTunnelSite_GivesTheSessionBackWhenTheRunFails(t *testing.T) {
+	code := stubExit(t)
+
+	closed := make(chan string, 1)
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		closed <- body["token"]
+		io.WriteString(w, `{"closed":true}`)
+	}))
+	defer apiServer.Close()
+
+	// A session the platform opened with nothing to reach: the run stops, and
+	// the session must not be left dangling until it expires.
+	stubTunnelSeams(t,
+		func() (*api.TunnelSession, error) {
+			return &api.TunnelSession{Token: "tk-secret", GatewayURL: "wss://tunnel.example"}, nil
+		},
+		nil,
+		func(<-chan error) error { return nil })
+
+	client := api.NewClient(&config.Config{APIHost: apiServer.URL, Token: "test-token"})
+	target := &connectionTarget{ProjectID: "p1", ProjectName: "shop", Site: api.Site{ID: "s1", Slug: "main"}, AppDir: t.TempDir()}
+
+	output := captureStdout(t, func() { tunnelSite(client, target) })
+	if !strings.Contains(output, "no database connection to tunnel") || *code != 1 {
+		t.Errorf("output = %q, exit = %d; want the refusal and exit 1", output, *code)
+	}
+	select {
+	case token := <-closed:
+		if token != "tk-secret" {
+			t.Errorf("closed token = %q; want the session's", token)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("a failed run must still close the session")
+	}
+}
+
 func TestTunnelSite_ReportsAPlatformWithoutTunnels(t *testing.T) {
 	code := stubExit(t)
 	stubTunnelSeams(t,
