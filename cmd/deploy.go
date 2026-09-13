@@ -235,16 +235,20 @@ not interactive.`,
 			}
 		}
 
+		client := api.NewClient(cfg)
+
 		// A site-less project still deploys — the platform materializes `main`
 		// on the first one — but say so, because nothing in the config or the
-		// init flow ever mentioned a site.
+		// init flow ever mentioned a site. A config naming no site on a
+		// project that already has one gets no such notice; when the list
+		// cannot be read the notice still prints, as before.
 		if ctx.NoSite {
-			fmt.Println("ℹ️  This project has no site yet; deploying creates the site 'main'.")
+			if none, err := projectHasNoSites(client, ctx.ProjectID); err != nil || none {
+				fmt.Println("ℹ️  This project has no site yet; deploying creates the site 'main'.")
+			}
 		}
 
 		fmt.Println(deployHeadline(ctx))
-
-		client := api.NewClient(cfg)
 
 		rules := api.LoadIgnoreRules(ctx.SourceDir)
 		printIgnoreRules(rules)

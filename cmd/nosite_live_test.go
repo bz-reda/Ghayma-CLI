@@ -162,3 +162,41 @@ func contains(paths []string, want string) bool {
 	}
 	return false
 }
+
+func TestLogs_LegacyConfigIsNotSiteLess(t *testing.T) {
+	ts, _ := legacyStub(t, map[string]string{
+		"GET /api/v1/projects/p1/logs": `{"entries":[{"ts":"2026-09-13T10:00:00Z","msg":"hello","pod":"web-1"}]}`,
+	})
+	cliHome(t, ts.URL)
+
+	out := runCLI(t, legacyDir(t), "logs")
+	if strings.Contains(out, noSiteMessage) {
+		t.Fatalf("legacy config must not be site-less:\n%s", out)
+	}
+	if !strings.Contains(out, "hello") {
+		t.Errorf("output %q; want the logs", out)
+	}
+}
+
+func TestCronList_LegacyConfigIsNotSiteLess(t *testing.T) {
+	ts, _ := legacyStub(t, map[string]string{
+		"GET /api/v1/projects/p1/crons": `{"crons":[]}`,
+	})
+	cliHome(t, ts.URL)
+
+	out := runCLI(t, legacyDir(t), "cron", "list")
+	if strings.Contains(out, noSiteMessage) {
+		t.Fatalf("legacy config must not be site-less:\n%s", out)
+	}
+}
+
+func TestDeploy_LegacyConfigGetsNoCreatesMainNotice(t *testing.T) {
+	ts, _ := legacyStub(t, nil) // deploy itself 404s; only the notice matters
+	cliHome(t, ts.URL)
+	noPrompt(t)
+
+	out := runCLI(t, legacyDir(t), "deploy")
+	if strings.Contains(out, "deploying creates the site 'main'") {
+		t.Errorf("a project that already has a site must not be told deploying creates one:\n%s", out)
+	}
+}
