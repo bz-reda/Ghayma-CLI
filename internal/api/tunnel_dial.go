@@ -21,7 +21,9 @@ import (
 
 // tunnelPingInterval is how often an idle stream is pinged. Cloudflare cuts a
 // WebSocket that says nothing for 100 seconds, and a psql session left open
-// over lunch says nothing at all. A var so tests can shorten it.
+// over lunch says nothing at all. A var so tests can shorten it; each stream
+// takes its value when it is dialed, so a test changing it never races a
+// running one.
 var tunnelPingInterval = 30 * time.Second
 
 // tunnelHandshakeTimeout bounds the upgrade itself; the stream that follows is
@@ -90,15 +92,16 @@ func tunnelDialError(resp *http.Response, err error) error {
 // partial reads served from the message being read, and a ping loop keeping an
 // idle stream alive.
 type tunnelConn struct {
-	ws      *websocket.Conn
-	reader  io.Reader // the message currently being read, if any
-	writeMu sync.Mutex
-	closed  chan struct{}
-	once    sync.Once
+	ws       *websocket.Conn
+	reader   io.Reader // the message currently being read, if any
+	pingEach time.Duration
+	writeMu  sync.Mutex
+	closed   chan struct{}
+	once     sync.Once
 }
 
 func newTunnelConn(ws *websocket.Conn) *tunnelConn {
-	c := &tunnelConn{ws: ws, closed: make(chan struct{})}
+	c := &tunnelConn{ws: ws, pingEach: tunnelPingInterval, closed: make(chan struct{})}
 	ws.SetPongHandler(func(string) error { return nil })
 	go c.keepalive()
 	return c
@@ -171,7 +174,7 @@ func (c *tunnelConn) SetWriteDeadline(t time.Time) error { return c.ws.SetWriteD
 // keepalive pings while the stream is open. WriteControl is the one write that
 // may race with Write, so no lock is taken here.
 func (c *tunnelConn) keepalive() {
-	ticker := time.NewTicker(tunnelPingInterval)
+	ticker := time.NewTicker(c.pingEach)
 	defer ticker.Stop()
 	for {
 		select {
