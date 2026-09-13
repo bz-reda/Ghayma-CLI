@@ -29,12 +29,6 @@ var logsCmd = &cobra.Command{
 			return
 		}
 
-		// Logs come from a running app, which lives on a site.
-		if localConfigIsSiteLess() {
-			failNoSite()
-			return
-		}
-
 		var projectCfg struct {
 			ProjectID string `json:"project_id"`
 			Slug      string `json:"slug"`
@@ -43,6 +37,15 @@ var logsCmd = &cobra.Command{
 		json.Unmarshal(data, &projectCfg)
 
 		client := api.NewClient(cfg)
+
+		// Logs come from a running app, which lives on a site. A config naming
+		// none is only site-less when the project really has no site.
+		if localConfigIsSiteLess() {
+			if none, err := projectHasNoSites(client, projectCfg.ProjectID); err == nil && none {
+				failNoSite()
+				return
+			}
+		}
 
 		fmt.Printf("📋 Logs for %s (last %d lines):\n\n", projectCfg.Name, logLines)
 

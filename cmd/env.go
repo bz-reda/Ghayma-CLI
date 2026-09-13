@@ -58,12 +58,13 @@ func localConfig() (projectID, siteID, name string, err error) {
 // project-wide endpoint would write one app's variables onto another's site.
 //
 // verb lands in the picker label ("Which site do you want to <verb>?"), so it
-// must read as an action.
+// must read as an action. client is a parameter because a config naming no
+// site is only answered by the project's live site list.
 //
 // The two sentinel errors are translated here rather than at the four call
 // sites, which all just print the error: a cancel prints "❌ Cancelled" and a
 // missing config keeps the wording env has always used.
-func envSiteContext(verb string) (projectID, siteID, name string, err error) {
+func envSiteContext(client *api.Client, verb string) (projectID, siteID, name string, err error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", "", "", err
@@ -78,11 +79,15 @@ func envSiteContext(verb string) (projectID, siteID, name string, err error) {
 	case err != nil:
 		return "", "", "", err
 	}
-	// A site-less project has no site-scoped env store, and the project-wide
-	// endpoint is not a stand-in for one — it is the legacy shape a main-site
-	// project still uses.
+	// A config naming no site is either a site-less project or one written
+	// before configs carried site keys; the live list decides, and --site
+	// applies here because the offline resolver had nothing to match it to.
 	if ctx.NoSite {
-		return "", "", "", errNoSite
+		site, err := resolveSiteLess(client, ctx.ProjectID, envSite)
+		if err != nil {
+			return "", "", "", err
+		}
+		return ctx.ProjectID, site.ID, ctx.ProjectName, nil
 	}
 	return ctx.ProjectID, ctx.Site.SiteID, ctx.ProjectName, nil
 }
@@ -140,13 +145,12 @@ pass --force to override.`,
 			return
 		}
 
-		projectID, siteID, _, err := envSiteContext("set env vars on")
+		client := api.NewClient(cfg)
+		projectID, siteID, _, err := envSiteContext(client, "set env vars on")
 		if err != nil {
 			reportSiteError(err)
 			return
 		}
-
-		client := api.NewClient(cfg)
 
 		snap, err := getEnvVarsSnapshot(client, projectID, siteID)
 		if err != nil {
@@ -210,13 +214,13 @@ var envListCmd = &cobra.Command{
 			return
 		}
 
-		projectID, siteID, name, err := envSiteContext("list env vars for")
+		client := api.NewClient(cfg)
+		projectID, siteID, name, err := envSiteContext(client, "list env vars for")
 		if err != nil {
 			reportSiteError(err)
 			return
 		}
 
-		client := api.NewClient(cfg)
 		snap, err := getEnvVarsSnapshot(client, projectID, siteID)
 		if err != nil {
 			fmt.Printf("❌ Failed to get env vars: %v\n", err)
@@ -246,13 +250,13 @@ func runEnvDelete(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	projectID, siteID, _, err := envSiteContext("delete env vars from")
+	client := api.NewClient(cfg)
+	projectID, siteID, _, err := envSiteContext(client, "delete env vars from")
 	if err != nil {
 		reportSiteError(err)
 		return
 	}
 
-	client := api.NewClient(cfg)
 	snap, err := getEnvVarsSnapshot(client, projectID, siteID)
 	if err != nil {
 		fmt.Printf("❌ Failed to get env vars: %v\n", err)
@@ -362,13 +366,13 @@ By default, existing vars are overwritten with a printed diff. Use
 			return
 		}
 
-		projectID, siteID, name, err := envSiteContext("import env vars into")
+		client := api.NewClient(cfg)
+		projectID, siteID, name, err := envSiteContext(client, "import env vars into")
 		if err != nil {
 			reportSiteError(err)
 			return
 		}
 
-		client := api.NewClient(cfg)
 		snap, err := getEnvVarsSnapshot(client, projectID, siteID)
 		if err != nil {
 			snap = &api.EnvVarsSnapshot{Values: make(map[string]string)}

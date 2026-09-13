@@ -55,13 +55,6 @@ func runCronList(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Cron jobs are declared per site and synced on deploy, so a site-less
-	// project can never have one.
-	if localConfigIsSiteLess() {
-		failNoSite()
-		return
-	}
-
 	projectID, configSiteID, name, err := localConfig()
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
@@ -69,6 +62,17 @@ func runCronList(cmd *cobra.Command, args []string) {
 	}
 
 	client := api.NewClient(cfg)
+
+	// Cron jobs are declared per site, so a site-less project can never have
+	// one — but a config naming no site is only site-less when the project
+	// really has no site.
+	if localConfigIsSiteLess() {
+		if none, err := projectHasNoSites(client, projectID); err == nil && none {
+			failNoSite()
+			return
+		}
+	}
+
 	scopeID, err := resolveCronSiteScope(client, projectID, cronSiteFlag, configSiteID)
 	if err != nil {
 		fmt.Printf("❌ %v\n", err)
@@ -145,16 +149,18 @@ func runCronTrigger(cmd *cobra.Command, args []string) {
 // project-wide lookup can find the same name on multiple sites; that's the only
 // ambiguous case and it asks for --site. Shared by `runs` and `trigger`.
 func resolveCronJob(cfg *config.Config, name string) (*api.Client, string, *api.CronJob, error) {
-	if localConfigIsSiteLess() {
-		return nil, "", nil, errNoSite
-	}
-
 	projectID, configSiteID, _, err := localConfig()
 	if err != nil {
 		return nil, "", nil, err
 	}
 
 	client := api.NewClient(cfg)
+	if localConfigIsSiteLess() {
+		if none, err := projectHasNoSites(client, projectID); err == nil && none {
+			return nil, "", nil, errNoSite
+		}
+	}
+
 	scopeID, err := resolveCronSiteScope(client, projectID, cronSiteFlag, configSiteID)
 	if err != nil {
 		return nil, "", nil, err

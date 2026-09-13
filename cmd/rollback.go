@@ -65,12 +65,6 @@ var rollbackCmd = &cobra.Command{
 			return
 		}
 
-		// Rollback restores a previous deployment of a site; there are none.
-		if localConfigIsSiteLess() {
-			failNoSite()
-			return
-		}
-
 		var projectCfg struct {
 			ProjectID string `json:"project_id"`
 			Name      string `json:"name"`
@@ -78,6 +72,15 @@ var rollbackCmd = &cobra.Command{
 		json.Unmarshal(data, &projectCfg)
 
 		client := api.NewClient(cfg)
+
+		// Rollback restores a previous deployment of a site. A config naming
+		// none is only site-less when the project really has no site.
+		if localConfigIsSiteLess() {
+			if none, err := projectHasNoSites(client, projectCfg.ProjectID); err == nil && none {
+				failNoSite()
+				return
+			}
+		}
 
 		// List recent deployments
 		deployments, err := client.ListDeployments(projectCfg.ProjectID)

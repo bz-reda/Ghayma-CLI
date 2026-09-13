@@ -462,8 +462,9 @@ func TestLocalConfigIsSiteLess(t *testing.T) {
 // --- site-scoped commands on a site-less project ----------------------------
 
 // TestSiteScopedCommands_OnSiteLessConfig is the D4 sweep: every command that
-// needs a site answers with the same single line and a non-zero exit, and none
-// of them reaches for the API to find that out.
+// needs a site answers with the same single line and a non-zero exit, and each
+// of them reaches for the API exactly once, for the site list, to find that
+// out.
 func TestSiteScopedCommands_OnSiteLessConfig(t *testing.T) {
 	cases := []struct {
 		name string
@@ -485,7 +486,8 @@ func TestSiteScopedCommands_OnSiteLessConfig(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cliHome(t, noRequestsStub(t).URL)
+			ts, paths := sitesStub(t, `[]`)
+			cliHome(t, ts.URL)
 			forceStdin(t, false)
 			noPrompt(t)
 
@@ -499,6 +501,9 @@ func TestSiteScopedCommands_OnSiteLessConfig(t *testing.T) {
 			}
 			if lastExitCode != 1 {
 				t.Errorf("exit code = %d; want 1", lastExitCode)
+			}
+			if len(*paths) != 1 {
+				t.Errorf("served %v; want exactly the one site listing", *paths)
 			}
 		})
 	}
