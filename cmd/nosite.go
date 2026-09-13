@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"paas-cli/internal/api"
 )
 
 // Projects without a site (2026-09-12). A Ghayma project is born site-less and
@@ -59,9 +61,11 @@ func printNoSiteNextSteps() {
 }
 
 // localConfigIsSiteLess reports whether the nearest project config is a per-app
-// config naming no site — a project created without one. A workspace manifest
-// answers false: it pins no single site by design, and the commands reading it
-// that way are legitimately project-wide.
+// config naming no site. That is NOT proof of a site-less project: configs
+// written before 2026-07-23 carry no site keys either, so a command must
+// confirm with projectHasNoSites / resolveSiteLess before telling the user.
+// A workspace manifest answers false: it pins no single site by design, and
+// the commands reading it that way are legitimately project-wide.
 func localConfigIsSiteLess() bool {
 	data, err := readProjectConfigUp(".")
 	if err != nil || isManifest(data) {
@@ -72,4 +76,27 @@ func localConfigIsSiteLess() bool {
 		return false
 	}
 	return !hasSite(cfg.SiteEntry)
+}
+
+// projectHasNoSites is the live half of the site-less check. A config naming
+// no site is either a project created without one or a config written before
+// configs carried site keys (init before 2026-07-23), and only the project's
+// site list tells them apart: no sites at all is the site-less project.
+func projectHasNoSites(client *api.Client, projectID string) (bool, error) {
+	sites, err := client.ListSites(projectID)
+	if err != nil {
+		return false, err
+	}
+	return len(sites) == 0, nil
+}
+
+// resolveSiteLess resolves a config that names no site through the live list:
+// errNoSite when the project has none, else --site, the only site, or an
+// error asking for --site.
+func resolveSiteLess(client *api.Client, projectID, siteFlag string) (*api.Site, error) {
+	sites, err := client.ListSites(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sites: %v", err)
+	}
+	return liveSiteFor(sites, siteFlag)
 }
