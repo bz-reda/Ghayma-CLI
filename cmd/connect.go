@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,10 +12,13 @@ import (
 )
 
 var (
-	connectSite    string
-	connectLevel   string
-	disconnectSite string
-	disconnectYes  bool
+	connectSite       string
+	connectLevel      string
+	connectLocal      bool
+	connectLocalOut   string
+	connectLocalForce bool
+	disconnectSite    string
+	disconnectYes     bool
 )
 
 var connectCmd = &cobra.Command{
@@ -31,12 +35,32 @@ one the kind accepts (database: connect, bucket: read-write, auth: client);
 'auth ... --level admin' additionally lets the app manage all of that auth
 app's users. Running it again with another --level changes the level.
 
+--local connects the other way round: it tunnels the app's databases to this
+machine and writes .env.local (or --out) with the effective variables, their
+hosts pointing at the tunnel. Leave it running while you develop; Ctrl-C
+closes it. It takes no arguments — pick the app with --site.
+
 Examples:
   ghayma connect database my-postgres
   ghayma connect bucket uploads --site admin
-  ghayma connect auth shop --level admin`,
-	Args: argChecker("argument", "connections", 2, 2),
+  ghayma connect auth shop --level admin
+  ghayma connect --local`,
+	Args: connectArgs,
 	Run:  runConnect,
+}
+
+// connectArgs enforces the two shapes of the command: --local acts on the site
+// as a whole and takes nothing, while the connecting form still needs its kind
+// and name.
+func connectArgs(cmd *cobra.Command, args []string) error {
+	if connectLocal {
+		if len(args) != 0 {
+			cmd.SilenceUsage, cmd.SilenceErrors = true, true
+			return errors.New("ghayma connect --local takes no arguments; use --site <slug> to choose the app")
+		}
+		return nil
+	}
+	return argChecker("argument", "connections", 2, 2)(cmd, args)
 }
 
 var disconnectCmd = &cobra.Command{
@@ -112,6 +136,10 @@ func connectedLine(row, held *api.Connection) string {
 }
 
 func runConnect(cmd *cobra.Command, args []string) {
+	if connectLocal {
+		runConnectLocal(cmd, args)
+		return
+	}
 	cfg := config.Load()
 	if !cfg.LoggedIn() {
 		failf("Please login first: ghayma login")
@@ -230,6 +258,9 @@ func runDisconnect(cmd *cobra.Command, args []string) {
 func init() {
 	connectCmd.Flags().StringVar(&connectSite, "site", "", "Site (app) to connect, by name or slug")
 	connectCmd.Flags().StringVar(&connectLevel, "level", "", "Access level (database: connect; bucket: read-write; auth: client|admin)")
+	connectCmd.Flags().BoolVar(&connectLocal, "local", false, "Tunnel the app's databases to this machine and write a dotenv file pointing at them")
+	connectCmd.Flags().StringVar(&connectLocalOut, "out", "", "Where --local writes the dotenv file (default: .env.local next to the app)")
+	connectCmd.Flags().BoolVar(&connectLocalForce, "force", false, "Let --local write the dotenv file even when git does not ignore it")
 	disconnectCmd.Flags().StringVar(&disconnectSite, "site", "", "Site (app) to disconnect, by name or slug")
 	disconnectCmd.Flags().BoolVar(&disconnectYes, "yes", false, "Skip the confirmation")
 	rootCmd.AddCommand(connectCmd)
