@@ -42,7 +42,10 @@ Examples:
   ghayma db sites mydb --add admin         # also let the 'admin' site reach it
   ghayma db sites mydb --add admin,api     # grant two sites at once
   ghayma db sites mydb --remove admin      # stop the 'admin' site reaching it
-  ghayma db sites mydb --set main,admin    # exactly main + admin, nothing else`,
+  ghayma db sites mydb --set main,admin    # exactly main + admin, nothing else
+
+See also: ghayma connections, and ghayma connect database <name> --site <slug>
+(the same record, with buckets and auth apps too).`,
 	Args: requireOneArg("db-name", "db list"),
 	Run:  runDBSites,
 }
