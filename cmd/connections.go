@@ -28,14 +28,17 @@ the ESPACETECH_AUTH_* set, GHAYMA_API_KEY), opens the network path to a
 database, and shapes the app's managed platform key. Change one with
 'ghayma connect' and 'ghayma disconnect' — 'ghayma connect' prints the exact
 names it injects, and 'ghayma connections --json' carries them as 'env_names'.
+'ghayma connections rotate' replaces one app's credential for a database or
+bucket, leaving every other app's alone.
 
 Without --site every site of the linked project is listed. --json prints the
 rows exactly as the API returns them.
 
 Examples:
-  ghayma connections                 # every site of this project
-  ghayma connections --site admin    # one site
-  ghayma connections --json`,
+  ghayma connections                          # every site of this project
+  ghayma connections --site admin             # one site
+  ghayma connections --json
+  ghayma connections rotate database my-postgres`,
 	Args: cobra.NoArgs,
 	Run:  runConnections,
 }

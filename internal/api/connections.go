@@ -139,6 +139,22 @@ func (c *Client) RemoveSiteConnection(projectID, siteID, kind, resourceID string
 	return out.Removed, nil
 }
 
+// RotateSiteConnection replaces the credential this site holds for one service
+// (POST …/connections/:kind/:resourceId/rotate → 204, no body). The server
+// answers 404 when nothing is connected, 409 when the connection is served by
+// the service's shared credential and has nothing of its own to rotate, and
+// 503 while the engine is unreachable or the rotation did not complete. Each
+// comes back as *APIError carrying the status and the server's message, so the
+// command renders its own sentence per case.
+func (c *Client) RotateSiteConnection(projectID, siteID, kind, resourceID string) error {
+	resp, err := c.authRequest("POST", "/api/v1/projects/"+projectID+"/sites/"+siteID+"/connections/"+kind+"/"+resourceID+"/rotate", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return c.decodeJSON(resp, nil)
+}
+
 // GetEffectiveSiteEnv returns the exact environment a pod of the site receives:
 // the stored variables plus every connection-derived value (GET …/env/effective
 // → {"env":{…}}). Project admin role; the server audits every read. Never nil
