@@ -101,7 +101,7 @@ A connection lets one site (app) use one of the project's services — a databas
 | Command | Description |
 |---|---|
 | `ghayma connections [--site <slug>] [--json]` | List which apps may use which services |
-| `ghayma connect <database\|bucket\|auth> <name> [--site <slug>] [--level <level>]` | Connect a service to an app (levels: database `connect`, bucket `read-write`, auth `client` or `admin`) |
+| `ghayma connect <database\|bucket\|auth> <name> [--site <slug>] [--level <level>]` | Connect a service to an app (levels: database `connect` or `read-only`, bucket `read-write` or `read`, auth `client` or `admin`) |
 | `ghayma disconnect <database\|bucket\|auth> <name> [--site <slug>] [--yes]` | Disconnect a service from an app |
 | `ghayma connect --local [--site <slug>] [--out <file>]` | Tunnel the app's databases to localhost and write `.env.local` pointing at them |
 

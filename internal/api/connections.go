@@ -46,7 +46,7 @@ type SiteConnections struct {
 }
 
 // ConnectionItem is the request shape for connecting one resource. An empty
-// Level is omitted so the server applies the kind's weakest level.
+// Level is omitted so the server applies the kind's default level.
 type ConnectionItem struct {
 	Kind       string `json:"kind"`
 	ResourceID string `json:"resource_id"`

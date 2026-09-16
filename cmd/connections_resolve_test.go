@@ -29,7 +29,18 @@ func TestKindLabelsAndDefaults(t *testing.T) {
 		t.Error("kindLabel must render the human words")
 	}
 	if defaultLevel("database") != "connect" || defaultLevel("bucket") != "read-write" || defaultLevel("auth_app") != "client" {
-		t.Error("defaultLevel must be the weakest level of each kind")
+		t.Error("defaultLevel must be each kind's full level, not the weakest it accepts")
+	}
+	// The mirror of the server's grammar, weakest first.
+	wantLevels := map[string]string{
+		"database": "read-only, connect",
+		"bucket":   "read, read-write",
+		"auth_app": "client, admin",
+	}
+	for kind, want := range wantLevels {
+		if got := strings.Join(kindLevels[kind], ", "); got != want {
+			t.Errorf("kindLevels[%s] = %q; want %q", kind, got, want)
+		}
 	}
 	for _, kind := range []string{"database", "bucket", "auth_app"} {
 		if !strings.HasPrefix(createHint(kind), "ghayma ") {
@@ -89,8 +100,8 @@ func siteView() *api.SiteConnections {
 			{Kind: "auth_app", ResourceID: "a1", ResourceName: "shop", Level: "client"},
 		},
 		Available: []api.AvailableConnection{
-			{Kind: "database", ResourceID: "d2", ResourceName: "pg-analytics", Levels: []string{"connect"}},
-			{Kind: "bucket", ResourceID: "b1", ResourceName: "uploads", Levels: []string{"read-write"}},
+			{Kind: "database", ResourceID: "d2", ResourceName: "pg-analytics", Levels: []string{"read-only", "connect"}},
+			{Kind: "bucket", ResourceID: "b1", ResourceName: "uploads", Levels: []string{"read", "read-write"}},
 		},
 	}
 }
