@@ -52,14 +52,22 @@ func TestPrintConnections_EmptyAndJSON(t *testing.T) {
 		t.Errorf("empty listing must say so and hint at connect, got %q", out)
 	}
 
-	rows := []api.Connection{{SiteID: "s1", SiteSlug: "main", Kind: "database", ResourceID: "d1", ResourceName: "pg", Level: "connect", CreatedAt: "2026-09-13T00:00:00Z"}}
+	rows := []api.Connection{{SiteID: "s1", SiteSlug: "main", Kind: "database", ResourceID: "d1", ResourceName: "pg", Level: "connect", CreatedAt: "2026-09-13T00:00:00Z", EnvNames: []string{"DATABASE_URL", "DATABASE_URL_PG"}}}
 	out = captureStdout(t, func() { printConnections("shop", rows, true) })
-	var decoded []map[string]string
+	var decoded []struct {
+		SiteSlug     string   `json:"site_slug"`
+		ResourceName string   `json:"resource_name"`
+		CreatedAt    string   `json:"created_at"`
+		EnvNames     []string `json:"env_names"`
+	}
 	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
 		t.Fatalf("--json must print a JSON array, got %q: %v", out, err)
 	}
-	if decoded[0]["site_slug"] != "main" || decoded[0]["resource_name"] != "pg" || decoded[0]["created_at"] == "" {
+	if decoded[0].SiteSlug != "main" || decoded[0].ResourceName != "pg" || decoded[0].CreatedAt == "" {
 		t.Errorf("--json must mirror the API rows, got %v", decoded)
+	}
+	if len(decoded[0].EnvNames) != 2 || decoded[0].EnvNames[0] != "DATABASE_URL" {
+		t.Errorf("--json must carry env_names, got %v", decoded[0].EnvNames)
 	}
 
 	out = captureStdout(t, func() { printConnections("shop", nil, true) })

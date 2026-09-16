@@ -26,7 +26,8 @@ bucket or auth app, and at what level.
 A connection is what hands an app its variables (DATABASE_URL, STORAGE_*,
 the ESPACETECH_AUTH_* set, GHAYMA_API_KEY), opens the network path to a
 database, and shapes the app's managed platform key. Change one with
-'ghayma connect' and 'ghayma disconnect'.
+'ghayma connect' and 'ghayma disconnect' — 'ghayma connect' prints the exact
+names it injects, and 'ghayma connections --json' carries them as 'env_names'.
 
 Without --site every site of the linked project is listed. --json prints the
 rows exactly as the API returns them.

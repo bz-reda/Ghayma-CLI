@@ -135,6 +135,16 @@ func connectedLine(row, held *api.Connection) string {
 	return fmt.Sprintf("✅ Connected %s '%s' to '%s' (%s)", kindLabel(row.Kind), row.ResourceName, row.SiteSlug, row.Level)
 }
 
+// injectsLine names the variables the new connection puts into the app, or
+// says they are still on their way when the server listed none (a service that
+// is still provisioning, or a backend that does not send env_names).
+func injectsLine(siteSlug string, names []string) string {
+	if len(names) == 0 {
+		return "   No variables yet — the platform injects them once the service is ready."
+	}
+	return fmt.Sprintf("   The platform now injects into '%s': %s", siteSlug, strings.Join(names, ", "))
+}
+
 func runConnect(cmd *cobra.Command, args []string) {
 	if connectLocal {
 		runConnectLocal(cmd, args)
@@ -185,16 +195,29 @@ func runConnect(cmd *cobra.Command, args []string) {
 		row.SiteSlug = target.Site.Slug
 	}
 	fmt.Println(connectedLine(row, plan.Held))
+	if plan.Held == nil {
+		fmt.Println(injectsLine(row.SiteSlug, row.EnvNames))
+	}
 	fmt.Println("   Variables are live on the running app; pull them locally with: ghayma env pull")
 }
 
-// confirmDisconnect is the two-step confirm, skipped by --yes. ask reads one
-// token from the terminal; tests inject it.
-func confirmDisconnect(kind, name, siteSlug string, yes bool, ask func() string) bool {
+// confirmDisconnect is the two-step confirm, skipped by --yes. It names the
+// variables that leave when the server listed them, and falls back to the
+// generic sentence when it did not. ask reads one token from the terminal;
+// tests inject it.
+func confirmDisconnect(kind, name, siteSlug string, envNames []string, yes bool, ask func() string) bool {
 	if yes {
 		return true
 	}
-	fmt.Printf("⚠️  This stops '%s' using %s '%s': its variables leave the app and, for a database, the network path closes. Continue? [y/N] ", siteSlug, kindLabel(kind), name)
+	if len(envNames) > 0 {
+		network := ""
+		if kind == "database" {
+			network = ", and the network path closes"
+		}
+		fmt.Printf("⚠️  This stops '%s' using %s '%s': %s leave the app%s. Continue? [y/N] ", siteSlug, kindLabel(kind), name, strings.Join(envNames, ", "), network)
+	} else {
+		fmt.Printf("⚠️  This stops '%s' using %s '%s': its variables leave the app and, for a database, the network path closes. Continue? [y/N] ", siteSlug, kindLabel(kind), name)
+	}
 	answer := strings.TrimSpace(ask())
 	return answer == "y" || answer == "Y"
 }
@@ -238,7 +261,7 @@ func runDisconnect(cmd *cobra.Command, args []string) {
 		fmt.Printf("ℹ️  %s '%s' is not connected to '%s' — no change.\n", kindLabel(kind), args[1], target.Site.Slug)
 		return
 	}
-	if !confirmDisconnect(kind, held.ResourceName, target.Site.Slug, disconnectYes, readAnswer) {
+	if !confirmDisconnect(kind, held.ResourceName, target.Site.Slug, held.EnvNames, disconnectYes, readAnswer) {
 		fmt.Println("❌ Cancelled.")
 		return
 	}
