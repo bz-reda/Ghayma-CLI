@@ -50,7 +50,7 @@ func TestGetSiteConnections_DecodesBothHalves(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/projects/p1/sites/s1/connections" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		io.WriteString(w, `{"connections":[{"site_id":"s1","site_slug":"main","kind":"auth_app","resource_id":"a1","resource_name":"my-app","level":"client"}],"available":[{"kind":"bucket","resource_id":"b1","resource_name":"uploads","levels":["read-write"]}]}`)
+		io.WriteString(w, `{"connections":[{"site_id":"s1","site_slug":"main","kind":"auth_app","resource_id":"a1","resource_name":"my-app","level":"client","env_names":["GHAYMA_AUTH_URL","GHAYMA_AUTH_APP_ID"]}],"available":[{"kind":"bucket","resource_id":"b1","resource_name":"uploads","levels":["read-write"],"env_names":["STORAGE_BUCKET"]}]}`)
 	}))
 	defer ts.Close()
 
@@ -63,6 +63,27 @@ func TestGetSiteConnections_DecodesBothHalves(t *testing.T) {
 	}
 	if len(view.Available) != 1 || view.Available[0].ResourceName != "uploads" || len(view.Available[0].Levels) != 1 {
 		t.Errorf("available = %+v", view.Available)
+	}
+	if got := view.Connections[0].EnvNames; len(got) != 2 || got[0] != "GHAYMA_AUTH_URL" || got[1] != "GHAYMA_AUTH_APP_ID" {
+		t.Errorf("env_names = %v; want both names in the server's order", got)
+	}
+	if got := view.Available[0].EnvNames; len(got) != 1 || got[0] != "STORAGE_BUCKET" {
+		t.Errorf("available env_names = %v", got)
+	}
+}
+
+func TestGetSiteConnections_MissingEnvNamesIsEmpty(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"connections":[{"kind":"database","resource_id":"d1","resource_name":"pg","level":"connect"}],"available":[{"kind":"bucket","resource_id":"b1","resource_name":"uploads","levels":["read-write"]}]}`)
+	}))
+	defer ts.Close()
+
+	view, err := newTestClient(ts.URL).GetSiteConnections("p1", "s1")
+	if err != nil {
+		t.Fatalf("GetSiteConnections: %v", err)
+	}
+	if len(view.Connections[0].EnvNames) != 0 || len(view.Available[0].EnvNames) != 0 {
+		t.Errorf("an older backend without env_names must read as empty, got %+v", view)
 	}
 }
 
@@ -77,7 +98,7 @@ func TestAddSiteConnection_PostsItemAndAccepts201(t *testing.T) {
 			t.Errorf("body = %v", body)
 		}
 		w.WriteHeader(http.StatusCreated)
-		io.WriteString(w, `{"site_id":"s1","site_slug":"main","kind":"auth_app","resource_id":"a1","resource_name":"my-app","level":"admin"}`)
+		io.WriteString(w, `{"site_id":"s1","site_slug":"main","kind":"auth_app","resource_id":"a1","resource_name":"my-app","level":"admin","env_names":["GHAYMA_AUTH_URL"]}`)
 	}))
 	defer ts.Close()
 
@@ -87,6 +108,9 @@ func TestAddSiteConnection_PostsItemAndAccepts201(t *testing.T) {
 	}
 	if row.Level != "admin" || row.SiteSlug != "main" {
 		t.Errorf("row = %+v", row)
+	}
+	if len(row.EnvNames) != 1 || row.EnvNames[0] != "GHAYMA_AUTH_URL" {
+		t.Errorf("row env_names = %v; want the names the connection injects", row.EnvNames)
 	}
 }
 

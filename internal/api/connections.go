@@ -13,24 +13,30 @@ import (
 // slug); reads need the project `read` role, mutations `write`.
 
 // Connection is one row of every connections response. ResourceName is a
-// database's or bucket's name and an auth app's app_id.
+// database's or bucket's name and an auth app's app_id. EnvNames are the
+// variables the connection puts into the app, in the server's order; it is
+// empty while the service is still provisioning and on backends older than
+// 2026-09-16, which omit the field.
 type Connection struct {
-	SiteID       string `json:"site_id"`
-	SiteSlug     string `json:"site_slug"`
-	Kind         string `json:"kind"`
-	ResourceID   string `json:"resource_id"`
-	ResourceName string `json:"resource_name"`
-	Level        string `json:"level"`
-	CreatedAt    string `json:"created_at"`
+	SiteID       string   `json:"site_id"`
+	SiteSlug     string   `json:"site_slug"`
+	Kind         string   `json:"kind"`
+	ResourceID   string   `json:"resource_id"`
+	ResourceName string   `json:"resource_name"`
+	Level        string   `json:"level"`
+	CreatedAt    string   `json:"created_at"`
+	EnvNames     []string `json:"env_names"`
 }
 
 // AvailableConnection is a project resource the site is NOT connected to, with
-// the levels it accepts — the "connect something" half of a site's view.
+// the levels it accepts and the variables connecting it would inject — the
+// "connect something" half of a site's view.
 type AvailableConnection struct {
 	Kind         string   `json:"kind"`
 	ResourceID   string   `json:"resource_id"`
 	ResourceName string   `json:"resource_name"`
 	Levels       []string `json:"levels"`
+	EnvNames     []string `json:"env_names"`
 }
 
 // SiteConnections is one site's view: what it holds and what it could add.

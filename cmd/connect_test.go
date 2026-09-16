@@ -59,14 +59,37 @@ func TestPlanConnect_UnknownName(t *testing.T) {
 }
 
 func TestDisconnectPrompt_YesSkipsAndAnswersGate(t *testing.T) {
-	if !confirmDisconnect("database", "pg", "main", true, func() string { t.Fatal("must not prompt with --yes"); return "" }) {
+	if !confirmDisconnect("database", "pg", "main", nil, true, func() string { t.Fatal("must not prompt with --yes"); return "" }) {
 		t.Error("--yes must confirm")
 	}
-	if confirmDisconnect("database", "pg", "main", false, func() string { return "n" }) {
-		t.Error("'n' must cancel")
+	captureStdout(t, func() {
+		if confirmDisconnect("database", "pg", "main", nil, false, func() string { return "n" }) {
+			t.Error("'n' must cancel")
+		}
+		if !confirmDisconnect("database", "pg", "main", nil, false, func() string { return "Y" }) {
+			t.Error("'Y' must confirm")
+		}
+	})
+}
+
+func TestDisconnectPrompt_NamesTheVariablesThatLeave(t *testing.T) {
+	out := captureStdout(t, func() {
+		confirmDisconnect("database", "pg", "main", []string{"DATABASE_URL", "DATABASE_URL_PG"}, false, func() string { return "n" })
+	})
+	if !strings.Contains(out, "DATABASE_URL, DATABASE_URL_PG leave the app") || !strings.Contains(out, "network path closes") {
+		t.Errorf("prompt = %q; want the names and the database network path", out)
 	}
-	if !confirmDisconnect("database", "pg", "main", false, func() string { return "Y" }) {
-		t.Error("'Y' must confirm")
+	out = captureStdout(t, func() {
+		confirmDisconnect("bucket", "uploads", "main", []string{"STORAGE_BUCKET"}, false, func() string { return "n" })
+	})
+	if !strings.Contains(out, "STORAGE_BUCKET leave the app.") || strings.Contains(out, "network path") {
+		t.Errorf("a bucket prompt must not mention the network path, got %q", out)
+	}
+	out = captureStdout(t, func() {
+		confirmDisconnect("database", "pg", "main", nil, false, func() string { return "n" })
+	})
+	if !strings.Contains(out, "its variables leave the app") {
+		t.Errorf("without names today's sentence stays, got %q", out)
 	}
 }
 
@@ -79,5 +102,15 @@ func TestConnectOutcomeLines(t *testing.T) {
 	row = &api.Connection{Kind: "auth_app", ResourceName: "shop", Level: "admin", SiteSlug: "main"}
 	if got := connectedLine(row, held); !strings.Contains(got, "client → admin") {
 		t.Errorf("level change line = %q", got)
+	}
+}
+
+func TestInjectsLine(t *testing.T) {
+	got := injectsLine("main", []string{"DATABASE_URL", "DATABASE_URL_PG"})
+	if !strings.Contains(got, "The platform now injects into 'main': DATABASE_URL, DATABASE_URL_PG") {
+		t.Errorf("injects line = %q", got)
+	}
+	if got := injectsLine("main", nil); !strings.Contains(got, "No variables yet") {
+		t.Errorf("a connection with no names yet = %q", got)
 	}
 }
