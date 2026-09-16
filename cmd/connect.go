@@ -30,10 +30,12 @@ the app's managed platform key gains what the connection implies — on the
 running deployment and at every deploy.
 
 Names: a database's or bucket's name, an auth app's app id. The site is the
-one this directory is linked to, or --site. The default level is the weakest
-one the kind accepts (database: connect, bucket: read-write, auth: client);
-'auth ... --level admin' additionally lets the app manage all of that auth
-app's users. Running it again with another --level changes the level.
+one this directory is linked to, or --site. The default level is the kind's
+full level (database: connect, bucket: read-write, auth: client);
+'database ... --level read-only' and 'bucket ... --level read' narrow the app
+to reading, and 'auth ... --level admin' additionally lets the app manage all
+of that auth app's users. Running it again with another --level changes the
+level.
 
 --local connects the other way round: it tunnels the app's databases to this
 machine and writes .env.local (or --out) with the effective variables, their
@@ -42,6 +44,7 @@ closes it. It takes no arguments — pick the app with --site.
 
 Examples:
   ghayma connect database my-postgres
+  ghayma connect database my-postgres --level read-only
   ghayma connect bucket uploads --site admin
   ghayma connect auth shop --level admin
   ghayma connect --local`,
@@ -280,7 +283,7 @@ func runDisconnect(cmd *cobra.Command, args []string) {
 
 func init() {
 	connectCmd.Flags().StringVar(&connectSite, "site", "", "Site (app) to connect, by name or slug")
-	connectCmd.Flags().StringVar(&connectLevel, "level", "", "Access level (database: connect; bucket: read-write; auth: client|admin)")
+	connectCmd.Flags().StringVar(&connectLevel, "level", "", "Access level (database: connect|read-only; bucket: read-write|read; auth: client|admin)")
 	connectCmd.Flags().BoolVar(&connectLocal, "local", false, "Tunnel the app's databases to this machine and write a dotenv file pointing at them")
 	connectCmd.Flags().StringVar(&connectLocalOut, "out", "", "Where --local writes the dotenv file (default: .env.local next to the app)")
 	connectCmd.Flags().BoolVar(&connectLocalForce, "force", false, "Let --local write the dotenv file even when git does not ignore it")

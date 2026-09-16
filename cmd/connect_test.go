@@ -44,6 +44,33 @@ func TestPlanConnect_LevelChangeCarriesTheAdminNote(t *testing.T) {
 	}
 }
 
+func TestPlanConnect_ReadingLevelsNarrowTheApp(t *testing.T) {
+	plan, err := planConnect(siteView(), "database", "pg-analytics", "read-only")
+	if err != nil || plan.NoChange || plan.Item.ResourceID != "d2" || plan.Item.Level != "read-only" {
+		t.Errorf("database --level read-only = %+v, %v", plan, err)
+	}
+	plan, err = planConnect(siteView(), "bucket", "uploads", "read")
+	if err != nil || plan.NoChange || plan.Item.ResourceID != "b1" || plan.Item.Level != "read" {
+		t.Errorf("bucket --level read = %+v, %v", plan, err)
+	}
+	// An already-connected resource lists no levels; the kindLevels mirror decides.
+	plan, err = planConnect(siteView(), "database", "pg-main", "READ-ONLY")
+	if err != nil || plan.NoChange || plan.Held == nil || plan.Item.Level != "read-only" {
+		t.Errorf("level change to read-only = %+v, %v", plan, err)
+	}
+}
+
+func TestPlanConnect_ReadingLevelsDoNotCrossKinds(t *testing.T) {
+	_, err := planConnect(siteView(), "bucket", "uploads", "read-only")
+	if err == nil || !strings.Contains(err.Error(), "read, read-write") {
+		t.Errorf("read-only is not a bucket level, got %v", err)
+	}
+	_, err = planConnect(siteView(), "database", "pg-analytics", "read")
+	if err == nil || !strings.Contains(err.Error(), "read-only, connect") {
+		t.Errorf("read is not a database level, got %v", err)
+	}
+}
+
 func TestPlanConnect_RejectsBadLevelBeforeTheRequest(t *testing.T) {
 	_, err := planConnect(siteView(), "bucket", "uploads", "admin")
 	if err == nil || !strings.Contains(err.Error(), "read-write") {

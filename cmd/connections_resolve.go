@@ -28,9 +28,18 @@ var kindOrder = []string{"database", "bucket", "auth_app"}
 // server stays the authority; this only makes a wrong --level fail before
 // the request.
 var kindLevels = map[string][]string{
-	"database": {"connect"},
-	"bucket":   {"read-write"},
+	"database": {"read-only", "connect"},
+	"bucket":   {"read", "read-write"},
 	"auth_app": {"client", "admin"},
+}
+
+// kindDefaultLevels mirrors the level the server applies when a connection
+// carries none — the kind's full level, which is not the weakest one the kind
+// accepts.
+var kindDefaultLevels = map[string]string{
+	"database": "connect",
+	"bucket":   "read-write",
+	"auth_app": "client",
 }
 
 // adminNote is printed whenever a connection is made at the admin level —
@@ -52,10 +61,7 @@ func kindLabel(kind string) string {
 }
 
 func defaultLevel(kind string) string {
-	if levels := kindLevels[kind]; len(levels) > 0 {
-		return levels[0]
-	}
-	return ""
+	return kindDefaultLevels[kind]
 }
 
 // createHint names the command that creates a resource of the kind, for the
@@ -163,7 +169,7 @@ func connectableNames(view *api.SiteConnections, kind string) []string {
 }
 
 // resolveLevel picks the level to send: "" when no flag was given (the server
-// applies the kind's weakest), else the flag, normalised and checked against
+// applies the kind's default), else the flag, normalised and checked against
 // the levels the server listed for the resource — or, for an already-connected
 // resource (the server lists levels only for unconnected ones), the kind's
 // known set.
