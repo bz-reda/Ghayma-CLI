@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -198,5 +199,45 @@ func TestGetEffectiveSiteEnv_EmptyEnvIsNonNil(t *testing.T) {
 	env, err := newTestClient(ts.URL).GetEffectiveSiteEnv("p1", "s1")
 	if err != nil || env == nil {
 		t.Errorf("env, err = %v, %v; want an empty non-nil map", env, err)
+	}
+}
+
+func TestRotateSiteConnection_PostsRotateRouteAndAccepts204(t *testing.T) {
+	var got string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Method + " " + r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	if err := newTestClient(ts.URL).RotateSiteConnection("p1", "s1", "database", "d1"); err != nil {
+		t.Fatalf("RotateSiteConnection: %v", err)
+	}
+	if got != "POST /api/v1/projects/p1/sites/s1/connections/database/d1/rotate" {
+		t.Errorf("request = %q; want the rotate route", got)
+	}
+}
+
+// TestRotateSiteConnection_CarriesStatusAndMessage: the command renders a
+// different sentence per status, so both have to survive the client.
+func TestRotateSiteConnection_CarriesStatusAndMessage(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{http.StatusConflict, `{"error":"served by the service credential"}`, "served by the service credential"},
+		{http.StatusServiceUnavailable, `{"error":"engine unreachable; retry converges"}`, "engine unreachable; retry converges"},
+		{http.StatusNotFound, `{"error":"not connected"}`, "not connected"},
+	} {
+		ts := jsonStatusServer(t, tc.status, tc.body)
+		err := newTestClient(ts.URL).RotateSiteConnection("p1", "s1", "bucket", "b1")
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("%d: err = %v (%T); want *APIError", tc.status, err, err)
+		}
+		if apiErr.Status != tc.status || apiErr.Message != tc.want {
+			t.Errorf("%d: APIError = %+v; want status %d and %q", tc.status, apiErr, tc.status, tc.want)
+		}
 	}
 }
