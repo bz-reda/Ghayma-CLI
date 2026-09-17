@@ -123,6 +123,46 @@ func gitFileState(path string) (tracked, ignored, inRepo bool) {
 	return tracked, code == 0, true
 }
 
+// sourceBadge annotates one pulled key with where its value came from. What is
+// written to the file does not change — `env pull` has always written the
+// EFFECTIVE environment — but a dev site that inherits and derives now has
+// three kinds of row in it, and "which of these is production's?" is the
+// question the file otherwise cannot answer. Unknown or absent (an older
+// platform sends no provenance) prints nothing.
+func sourceBadge(source string) string {
+	switch source {
+	case api.SourceInherited:
+		return "  (inherited)"
+	case api.SourceDerived:
+		return "  (derived)"
+	case api.SourceOwn:
+		return "  (own)"
+	}
+	return ""
+}
+
+// provenanceSummary is the one-line count per source, or "" when the platform
+// sent no provenance at all.
+func provenanceSummary(env, sources map[string]string) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	counts := map[string]int{}
+	for k := range env {
+		counts[sources[k]]++
+	}
+	var parts []string
+	for _, source := range []string{api.SourceOwn, api.SourceInherited, api.SourceDerived} {
+		if counts[source] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[source], source))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "   " + strings.Join(parts, " · ") + " — derived values (database URLs, bucket keys, the managed key) are this site's own; inherited ones come from the default site."
+}
+
 func runEnvPull(cmd *cobra.Command, args []string) {
 	cfg := config.Load()
 	if !cfg.LoggedIn() {
@@ -144,7 +184,7 @@ func runEnvPull(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	env, err := client.GetEffectiveSiteEnv(target.ProjectID, target.Site.ID)
+	effective, err := client.EffectiveSiteEnv(target.ProjectID, target.Site.ID)
 	if err != nil {
 		switch {
 		case strings.Contains(err.Error(), "insufficient role"):
@@ -160,6 +200,7 @@ func runEnvPull(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	env, sources := effective.Env, effective.Sources
 	data := renderDotenv(pullHeader(target.ProjectName, target.Site.Slug), env)
 	if err := os.WriteFile(out, []byte(data), 0o600); err != nil {
 		failf("Failed to write %s: %v", out, err)
@@ -168,7 +209,10 @@ func runEnvPull(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("✅ Wrote %d variables for '%s' to %s\n", len(env), target.Site.Slug, displayPath(out))
 	for _, k := range sortedKeys(env) {
-		fmt.Printf("   %s\n", k)
+		fmt.Printf("   %s%s\n", k, sourceBadge(sources[k]))
+	}
+	if line := provenanceSummary(env, sources); line != "" {
+		fmt.Println("\n" + line)
 	}
 	fmt.Println("\n   Contains secrets — keep it out of git. Values are never printed here; open the file.")
 }

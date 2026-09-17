@@ -406,6 +406,19 @@ type Site struct {
 	Name      string `json:"name"`
 	Slug      string `json:"slug"`
 	Status    string `json:"status"`
+	// IsDefault marks the site served at the project's bare slug. It is also
+	// the production environment by definition (Environments design D2) and the
+	// base of the env var ladder, so it is what `promote` targets when no
+	// --site names another one.
+	IsDefault bool `json:"is_default"`
+	// Environment is the site's kind: production | staging | development
+	// (Environments design §1). Empty on a server older than the field —
+	// rendered as "unknown" rather than guessed, so the CLI never claims a
+	// kind the platform does not carry yet.
+	Environment string `json:"environment"`
+	// InheritEnv says the site resolves its environment as the default site's
+	// variables overridden by its own (design §3).
+	InheritEnv bool `json:"inherit_env"`
 	// Points-allowance marketplace: every app carries its compute tier slug +
 	// replica count so `site scale` can show the current size before changing it
 	// and price the change as AppCost(tier.PointsCost, replicas).
@@ -413,8 +426,16 @@ type Site struct {
 	Replicas    int    `json:"replicas"`
 }
 
-func (c *Client) CreateSite(projectID, name string) (*Site, error) {
-	body, _ := json.Marshal(map[string]string{"name": name})
+// CreateSite creates a site. environment is the kind the new site is born as
+// ("" lets the server apply its own default — `development` for a secondary
+// site); the field is optional on the wire so an older backend that predates
+// Environments ignores it rather than refusing the create.
+func (c *Client) CreateSite(projectID, name, environment string) (*Site, error) {
+	payload := map[string]string{"name": name}
+	if environment != "" {
+		payload["environment"] = environment
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/projects/"+projectID+"/sites", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -711,9 +732,17 @@ func (c *Client) RemoveDomain(projectID, domain string) error {
 
 // EnvVarsSnapshot captures both the key→value map and the set of keys that
 // are marked build-time (forwarded to the Docker build as --build-arg).
+//
+// Values/BuildTimeKeys are the site's OWN rows — exactly what the replace-all
+// PUT takes, which is why they stay the write path's mirror now that a site can
+// inherit. Vars is the RESOLVED ladder (own + inherited), empty on a server
+// that predates env inheritance; see envvars_inherit.go.
 type EnvVarsSnapshot struct {
 	Values        map[string]string
 	BuildTimeKeys []string
+	Vars          []ResolvedEnvVar
+	InheritEnv    bool
+	InheritedFrom *EnvBaseSite
 }
 
 // IsBuildTime reports whether `key` is marked as a build-time var.
@@ -790,6 +819,9 @@ func (c *Client) GetEnvVarsSnapshotBySite(projectID, siteID string) (*EnvVarsSna
 	var result struct {
 		EnvVars       map[string]string `json:"env_vars"`
 		BuildTimeKeys []string          `json:"build_time_keys"`
+		Vars          []ResolvedEnvVar  `json:"vars"`
+		InheritEnv    bool              `json:"inherit_env"`
+		InheritedFrom *EnvBaseSite      `json:"inherited_from"`
 	}
 	if err := c.decodeJSON(resp, &result); err != nil {
 		return nil, err
@@ -797,7 +829,13 @@ func (c *Client) GetEnvVarsSnapshotBySite(projectID, siteID string) (*EnvVarsSna
 	if result.EnvVars == nil {
 		result.EnvVars = make(map[string]string)
 	}
-	return &EnvVarsSnapshot{Values: result.EnvVars, BuildTimeKeys: result.BuildTimeKeys}, nil
+	return &EnvVarsSnapshot{
+		Values:        result.EnvVars,
+		BuildTimeKeys: result.BuildTimeKeys,
+		Vars:          result.Vars,
+		InheritEnv:    result.InheritEnv,
+		InheritedFrom: result.InheritedFrom,
+	}, nil
 }
 
 // SetEnvVarsBySite replaces all env vars for a specific site (runtime-only).
@@ -1117,11 +1155,15 @@ func (c *Client) authRequest(method, path string, body io.Reader) (*http.Respons
 func (c *Client) decodeJSON(resp *http.Response, out any) error {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		raw, _ := io.ReadAll(resp.Body)
+		// `code` rides along so a caller can branch on the stable machine code
+		// rather than on the prose (the environment and env-inheritance
+		// refusals are told apart that way).
 		var errResp struct {
 			Error string `json:"error"`
+			Code  string `json:"code"`
 		}
 		json.Unmarshal(raw, &errResp)
-		return &APIError{Status: resp.StatusCode, Message: errResp.Error}
+		return &APIError{Status: resp.StatusCode, Message: errResp.Error, Code: errResp.Code}
 	}
 	if out == nil {
 		return nil

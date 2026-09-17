@@ -200,7 +200,7 @@ pass --force to override.`,
 			fmt.Println("\n⚠️  Build-time variables are embedded in image layers and visible")
 			fmt.Println("   to anyone with registry pull access. Do not use for secrets.")
 		}
-		fmt.Println("\n🔄 Redeploy to apply: ghayma deploy --prod")
+		fmt.Println("\n🔄 Redeploy to apply: ghayma deploy")
 	},
 }
 
@@ -227,20 +227,81 @@ var envListCmd = &cobra.Command{
 			return
 		}
 
-		if len(snap.Values) == 0 {
-			fmt.Println("No environment variables set.")
-			return
-		}
-
-		fmt.Printf("🔧 Environment variables for %s:\n\n", name)
-		for _, k := range sortedKeys(snap.Values) {
-			badge := ""
-			if snap.IsBuildTime(k) {
-				badge = "  [build-time]"
-			}
-			fmt.Printf("   %s=%s%s\n", k, snap.Values[k], badge)
+		for _, line := range envListLines(name, snap) {
+			fmt.Println(line)
 		}
 	},
+}
+
+// envListLines renders `env list`.
+//
+// Two shapes, because the listing gained the resolved ladder (Environments §3)
+// while keeping its old fields: `vars` is what the site RESOLVES to — its own
+// rows plus the ones it inherits from the default site — and the old
+// `env_vars` map is what it OWNS. A platform that predates inheritance sends no
+// `vars` at all, and the old rendering is then still the whole truth, so it is
+// kept rather than emulated.
+func envListLines(name string, snap *api.EnvVarsSnapshot) []string {
+	if len(snap.Vars) > 0 {
+		return resolvedEnvLines(name, snap)
+	}
+	if len(snap.Values) == 0 {
+		return []string{"No environment variables set."}
+	}
+	out := []string{fmt.Sprintf("🔧 Environment variables for %s:\n", name)}
+	for _, k := range sortedKeys(snap.Values) {
+		badge := ""
+		if snap.IsBuildTime(k) {
+			badge = "  [build-time]"
+		}
+		out = append(out, fmt.Sprintf("   %s=%s%s", k, snap.Values[k], badge))
+	}
+	return out
+}
+
+// resolvedEnvLines renders the ladder: every row the site resolves to, with the
+// inherited ones marked. The mark matters more than it looks — an inherited row
+// is not editable here (the value lives on the base site) and is not what the
+// replace-all write path carries, so a listing that showed it like any other
+// row would invite exactly the edit that does nothing.
+func resolvedEnvLines(name string, snap *api.EnvVarsSnapshot) []string {
+	base := ""
+	if snap.InheritedFrom != nil {
+		base = snap.InheritedFrom.Slug
+	}
+
+	out := []string{fmt.Sprintf("🔧 Environment variables for %s:\n", name)}
+	inherited := 0
+	for _, v := range snap.Vars {
+		badge := ""
+		if v.BuildTime {
+			badge = "  [build-time]"
+		}
+		if v.Source == api.SourceInherited {
+			inherited++
+			badge += inheritedBadge(base)
+		}
+		out = append(out, fmt.Sprintf("   %s=%s%s", v.Key, v.Value, badge))
+	}
+	if inherited > 0 {
+		out = append(out, "", fmt.Sprintf("   %d of %d variable(s) are inherited%s. Set the same key here to override one; credentials are never inherited.",
+			inherited, len(snap.Vars), fromClause(base)))
+	}
+	return out
+}
+
+func inheritedBadge(base string) string {
+	if base == "" {
+		return "  (inherited)"
+	}
+	return fmt.Sprintf("  (inherited from %s)", base)
+}
+
+func fromClause(base string) string {
+	if base == "" {
+		return ""
+	}
+	return " from '" + base + "'"
 }
 
 func runEnvDelete(cmd *cobra.Command, args []string) {
@@ -254,6 +315,16 @@ func runEnvDelete(cmd *cobra.Command, args []string) {
 	projectID, siteID, _, err := envSiteContext(client, "delete env vars from")
 	if err != nil {
 		reportSiteError(err)
+		return
+	}
+
+	// The per-key endpoint is the only one that can tell "remove my override"
+	// (the inherited value comes back) from "remove something I only inherit"
+	// (refused, because the variable lives on another site) — the replace-all
+	// PUT would report the second as a success and keep injecting the value.
+	// A platform that does not serve it yet falls back to the old path below,
+	// which is still exactly right on a site that inherits nothing.
+	if deleteEnvKeys(client, projectID, siteID, args) {
 		return
 	}
 
@@ -308,7 +379,7 @@ func runEnvDelete(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println("✅ Environment variables updated")
-	fmt.Println("🔄 Redeploy to apply: ghayma deploy --prod")
+	fmt.Println("🔄 Redeploy to apply: ghayma deploy")
 }
 
 var envDeleteCmd = &cobra.Command{
@@ -447,7 +518,7 @@ By default, existing vars are overwritten with a printed diff. Use
 			return
 		}
 
-		fmt.Println("\n✅ Import applied. Redeploy with: ghayma deploy --prod")
+		fmt.Println("\n✅ Import applied. Redeploy with: ghayma deploy")
 	},
 }
 
