@@ -50,11 +50,32 @@ ghayma deploy --prod      # Deploy to production
 | `ghayma project transfer` | Transfer project ownership (also: `project status`, `project cancel`, `project accept`) |
 | `ghayma deploy` | Deploy the current project (preview) |
 | `ghayma deploy --prod` | Deploy to production |
+| `ghayma deploy --image <tag>` | Deploy an image already pushed with `ghayma docker push` instead of uploading source |
 | `ghayma status` | List your projects |
 | `ghayma logs` | View application logs |
 | `ghayma logs -n 500` | View last 500 lines |
 | `ghayma rollback` | Rollback to a previous deployment |
 | `ghayma delete` | Delete the current project and all its resources |
+
+### Docker Images
+
+Build an image locally and push it straight to your site's repository in the Ghayma registry — only the layers the registry does not already have are uploaded — then deploy it. Requires the docker CLI.
+
+```bash
+docker build -t my-app .
+ghayma docker push my-app --tag v1
+ghayma deploy --image v1
+```
+
+| Command | Description |
+|---|---|
+| `ghayma docker push <image[:tag]>` | Push a locally built image to this site's repository |
+| `ghayma docker push <image> --tag v1` | Push it under a different tag (default: the local image's tag, else `latest`) |
+| `ghayma docker push <image> --site admin` | Push to another site's repository |
+| `ghayma docker push <image> --deploy [--prod]` | Push and deploy it in one command |
+| `ghayma deploy --image <tag\|sha256:digest>` | Deploy an already-pushed image |
+
+The image must expose a `linux/amd64` variant, declare a numeric non-root `USER`, and listen on `$PORT` — the platform refuses it at deploy time otherwise, and says which rule it broke in the deployment's build log.
 
 ### Points
 

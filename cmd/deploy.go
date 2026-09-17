@@ -18,8 +18,9 @@ import (
 )
 
 var (
-	deployProd bool
-	deploySite string
+	deployProd  bool
+	deploySite  string
+	deployImage string
 )
 
 type projectConfig struct {
@@ -150,7 +151,9 @@ func monorepoRelDir(monorepoRoot, appDir string) string {
 }
 
 // deployWaitPolls × deployWaitInterval = 25 minutes: the server's queue plus its 20-minute build deadline.
-const (
+// A var, not a const, only so a test that drives the whole command through the
+// wait does not sit out a real three-second poll.
+var (
 	deployWaitPolls    = 500
 	deployWaitInterval = 3 * time.Second
 )
@@ -163,7 +166,17 @@ var deployCmd = &cobra.Command{
 Inside an app directory — or anywhere below it — this deploys that directory's
 site. At the root of a workspace linked with 'ghayma link' (whole project) it
 asks which site to deploy, or takes --site <slug> — required when the shell is
-not interactive.`,
+not interactive.
+
+--image deploys an image you already pushed with 'ghayma docker push' instead
+of uploading this directory: nothing is built, the image is checked and rolled
+out as it is. Name a tag, or a sha256: digest for one exact image.
+
+Examples:
+  ghayma deploy --prod
+  ghayma deploy --site admin
+  ghayma deploy --image v1
+  ghayma deploy --image sha256:0a1b2c… --prod`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		if !cfg.LoggedIn() {
@@ -237,6 +250,14 @@ not interactive.`,
 
 		client := api.NewClient(cfg)
 
+		// An image deploy ships what was already pushed to the registry, so it
+		// branches out before every line of the upload path below: no tarball,
+		// no ignore rules, no Dockerfile and no build settings are involved.
+		if strings.TrimSpace(deployImage) != "" {
+			runImageDeploy(client, ctx, deployImage, deploySite, deployProd)
+			return
+		}
+
 		// A site-less project still deploys — the platform materializes `main`
 		// on the first one — but say so, because nothing in the config or the
 		// init flow ever mentioned a site. A config naming no site on a
@@ -282,70 +303,124 @@ not interactive.`,
 
 		fmt.Printf("📦 Build queued (deployment: %s)\n", resp.DeploymentID)
 		fmt.Println("⏳ Waiting for build...")
+		waitForDeployment(client, resp.DeploymentID)
+	},
+}
 
-		// The platform builds a bounded number of deployments at a time and allows a
-		// build twenty minutes, so a deploy can legitimately wait behind other builds
-		// and then build for a while; give it the same budget the server does before
-		// giving up on the wait.
-		lastStatus := ""
-		var queue queueTracker
-		for i := 0; i < deployWaitPolls; i++ {
-			time.Sleep(deployWaitInterval)
+// waitForDeployment is the wait every deploy shares, whatever it was created
+// from: poll, narrate, then print where the app is live or why it failed.
+//
+// An image deploy uses it unchanged on purpose — it IS a normal deployment,
+// and an image refused by admission is a FAILED one whose build logs carry the
+// reason, which is exactly what the failure branch already prints.
+func waitForDeployment(client *api.Client, deploymentID string) {
+	// The platform builds a bounded number of deployments at a time and allows a
+	// build twenty minutes, so a deploy can legitimately wait behind other builds
+	// and then build for a while; give it the same budget the server does before
+	// giving up on the wait.
+	lastStatus := ""
+	var queue queueTracker
+	for i := 0; i < deployWaitPolls; i++ {
+		time.Sleep(deployWaitInterval)
 
-			deployment, err := client.GetDeployment(resp.DeploymentID)
-			if err != nil {
-				continue
-			}
-
-			// The queued line carries the rank, so it is reprinted when the rank
-			// moves rather than when the status changes — a long wait stays one
-			// line plus dots instead of repeating an identical line every poll.
-			if line := queue.next(deployment.Status, deployment.QueuePosition, deployment.QueueSize); line != "" {
-				fmt.Print("\n" + line)
-			}
-
-			if deployment.Status != lastStatus {
-				switch deployment.Status {
-				case "building":
-					fmt.Print("\n🔨 Building")
-				case "deploying":
-					fmt.Print("\n🚀 Deploying")
-				}
-				lastStatus = deployment.Status
-			}
-
-			switch deployment.Status {
-			case "live":
-				fmt.Println("\n✅ Deployed successfully!")
-				if len(deployment.Domains) > 0 {
-					fmt.Println("🌐 Your app is live at:")
-					for _, d := range deployment.Domains {
-						fmt.Printf("   https://%s\n", d)
-					}
-				} else {
-					fmt.Println("🌐 Your app is live")
-				}
-				return
-			case "failed":
-				fmt.Println("\n❌ Deployment failed!")
-				logs, _ := client.GetDeploymentLogs(resp.DeploymentID)
-				if logs != "" {
-					fmt.Println("\n📋 Build logs:")
-					fmt.Println(logs)
-				}
-				return
-			case "queued", "building", "deploying":
-				fmt.Print(".")
-			}
+		deployment, err := client.GetDeployment(deploymentID)
+		if err != nil {
+			continue
 		}
 
-		fmt.Println("\n⚠️  Still not finished after 25 minutes; the build keeps running on the platform. Check with: ghayma status")
-	},
+		// The queued line carries the rank, so it is reprinted when the rank
+		// moves rather than when the status changes — a long wait stays one
+		// line plus dots instead of repeating an identical line every poll.
+		if line := queue.next(deployment.Status, deployment.QueuePosition, deployment.QueueSize); line != "" {
+			fmt.Print("\n" + line)
+		}
+
+		if deployment.Status != lastStatus {
+			switch deployment.Status {
+			case "building":
+				fmt.Print("\n🔨 Building")
+			case "deploying":
+				fmt.Print("\n🚀 Deploying")
+			}
+			lastStatus = deployment.Status
+		}
+
+		switch deployment.Status {
+		case "live":
+			fmt.Println("\n✅ Deployed successfully!")
+			if len(deployment.Domains) > 0 {
+				fmt.Println("🌐 Your app is live at:")
+				for _, d := range deployment.Domains {
+					fmt.Printf("   https://%s\n", d)
+				}
+			} else {
+				fmt.Println("🌐 Your app is live")
+			}
+			return
+		case "failed":
+			fmt.Println("\n❌ Deployment failed!")
+			logs, _ := client.GetDeploymentLogs(deploymentID)
+			if logs != "" {
+				fmt.Println("\n📋 Build logs:")
+				fmt.Println(logs)
+			}
+			return
+		case "queued", "building", "deploying":
+			fmt.Print(".")
+		}
+	}
+
+	fmt.Println("\n⚠️  Still not finished after 25 minutes; the build keeps running on the platform. Check with: ghayma status")
+}
+
+// noSiteForImageMessage is what a site-less project is told when it asks for an
+// image deploy. The deploy route acts on an EXISTING site, and the two ways to
+// get one differ: a source deploy materializes the canonical main site (its
+// build settings, its bare <project>.ghayma.app domain), while 'site create'
+// adds a site by name. Both are offered rather than one being run silently.
+const noSiteForImageMessage = "ℹ️  This project has no site yet, and deploying an image needs one.\n" +
+	"   Create it with: ghayma site create main\n" +
+	"   (or run 'ghayma deploy' once to deploy from source, which creates the main site)"
+
+// runImageDeploy deploys an image already in the project's registry
+// repository. The site has to be a LIVE one: the endpoint is site-scoped and
+// takes a site id, so the config's linked site is mapped onto the project's
+// actual sites first.
+func runImageDeploy(client *api.Client, ctx *SiteContext, image, siteFlag string, prod bool) {
+	site, err := liveSiteOf(client, ctx, siteFlag)
+	if err != nil {
+		if errors.Is(err, errNoSite) {
+			fmt.Println(noSiteForImageMessage)
+			exitFn(1)
+			return
+		}
+		reportSiteError(err)
+		exitFn(1)
+		return
+	}
+	image = strings.TrimSpace(image)
+	fmt.Printf("🚀 Deploying image %s to %s [site: %s]...\n", image, ctx.ProjectName, site.Slug)
+	deployPushedImage(client, ctx.ProjectID, site.ID, image, prod)
+}
+
+// deployPushedImage creates the image deployment and waits on it. The commit
+// message is left to the server, which labels the row "Deploy image <ref>" —
+// one place decides how an image deployment is named.
+func deployPushedImage(client *api.Client, projectID, siteID, image string, prod bool) {
+	resp, err := client.DeployImage(projectID, siteID, image, "", prod)
+	if err != nil {
+		failf("Deploy failed: %v", err)
+		return
+	}
+	fmt.Printf("📦 Deploy queued (deployment: %s)\n", resp.ID)
+	fmt.Println("⏳ Checking the image and rolling it out...")
+	waitForDeployment(client, resp.ID)
 }
 
 func init() {
 	deployCmd.Flags().BoolVarP(&deployProd, "prod", "p", false, "Deploy to production")
 	deployCmd.Flags().StringVar(&deploySite, "site", "", "Site to deploy (slug); at a workspace root with several sites this replaces the picker")
+	deployCmd.Flags().StringVar(&deployImage, "image", "", "Deploy an image already pushed with 'ghayma docker push' (tag, or sha256: digest) instead of uploading this directory")
 	rootCmd.AddCommand(deployCmd)
 }
 

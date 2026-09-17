@@ -100,3 +100,24 @@ func resolveSiteLess(client *api.Client, projectID, siteFlag string) (*api.Site,
 	}
 	return liveSiteFor(sites, siteFlag)
 }
+
+// liveSiteOf maps an already-resolved context onto a LIVE site of the project:
+// the linked site, or --site / the only site when the config names none. The
+// live list is the authority because a config may name a site by NAME alone
+// (init writes `"site_name": "main"` before the backend materializes it) or
+// name one that has since been deleted. errNoSite means the project has no
+// site at all — a state each caller explains in its own words.
+func liveSiteOf(client *api.Client, ctx *SiteContext, siteFlag string) (*api.Site, error) {
+	sites, err := client.ListSites(ctx.ProjectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sites: %v", err)
+	}
+	if ctx.NoSite {
+		// A config naming no site is either a site-less project or one written
+		// before configs carried site keys, so the live list decides — and
+		// --site applies here, since the offline resolver had nothing to match
+		// it against.
+		return liveSiteFor(sites, siteFlag)
+	}
+	return pickLiveSite(sites, ctx.Site)
+}
