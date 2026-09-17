@@ -35,7 +35,8 @@ func cliHome(t *testing.T, apiHost string) {
 // package-level vars that outlive one Execute, so a --site from one test would
 // otherwise leak into the next.
 func resetCommandFlags() {
-	deploySite, deployProd = "", false
+	deploySite, deployProd, deployImage = "", false, ""
+	dockerPushSite, dockerPushTag, dockerPushDeploy, dockerPushProd = "", "", false, false
 	envSite, domainSite = "", ""
 	cronSiteFlag = ""
 	siteScaleSite, siteScaleTier, siteScaleReplicas = "", "", 0

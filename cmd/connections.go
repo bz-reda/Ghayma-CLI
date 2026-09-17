@@ -78,20 +78,7 @@ func resolveConnectionTarget(client *api.Client, siteFlag, verb string) (*connec
 	case err != nil:
 		return nil, err
 	}
-	sites, err := client.ListSites(ctx.ProjectID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list sites: %v", err)
-	}
-	var site *api.Site
-	if ctx.NoSite {
-		// A config naming no site is either a site-less project or one written
-		// before configs carried site keys (init before 2026-07-23), so the live
-		// list decides — and --site applies here, since the offline resolver had
-		// nothing to match it against.
-		site, err = liveSiteFor(sites, siteFlag)
-	} else {
-		site, err = pickLiveSite(sites, ctx.Site)
-	}
+	site, err := liveSiteOf(client, ctx, siteFlag)
 	if err != nil {
 		return nil, err
 	}
