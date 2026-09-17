@@ -24,7 +24,7 @@ Or download a binary for your platform from [Releases](https://github.com/bz-red
 ghayma register          # Create an account
 ghayma login              # Authenticate
 ghayma init               # Initialize a project
-ghayma deploy --prod      # Deploy to production
+ghayma deploy             # Deploy (production when the target site is a production site)
 ```
 
 ## Commands
@@ -48,8 +48,9 @@ ghayma deploy --prod      # Deploy to production
 | `ghayma init --plan <slug>` | Initialize with a specific plan (e.g. `hobby`, `pro`); interactive plan picker when omitted |
 | `ghayma link` | Link the current directory to an existing project |
 | `ghayma project transfer` | Transfer project ownership (also: `project status`, `project cancel`, `project accept`) |
-| `ghayma deploy` | Deploy the current project (preview) |
-| `ghayma deploy --prod` | Deploy to production |
+| `ghayma deploy` | Deploy the current project — production when the target site is a production site |
+| `ghayma deploy --prod` | Accepted, but no longer changes anything: the target site's environment decides |
+| `ghayma promote --from <site>` | Ship the image a site already runs onto another site (default target: the project's default site) |
 | `ghayma deploy --image <tag>` | Deploy an image already pushed with `ghayma docker push` instead of uploading source |
 | `ghayma status` | List your projects |
 | `ghayma logs` | View application logs |
@@ -91,6 +92,9 @@ Each project has a points budget (or runs pay-as-you-go). Databases, apps, stora
 |---|---|
 | `ghayma site list` | List all sites in the current project |
 | `ghayma site create [name]` | Add a new site to the current project |
+| `ghayma site create <name> --env <kind>` | Add a site as a `development` (default), `staging` or `production` environment |
+| `ghayma site environment <site> <kind>` | Change which environment a site is (the default site is always production) |
+| `ghayma site inherit-env <site> <on\|off>` | Resolve this site's variables from the default site's, overridden by its own |
 | `ghayma site use <slug>` | Switch the active site for the project |
 | `ghayma site scale --tier <tier>` | Scale the active app to a new compute tier (e.g. `a`, `b`, `c`, `d`) |
 | `ghayma site scale --replicas <n>` | Scale the active app to `n` replicas (must be >= 1) |

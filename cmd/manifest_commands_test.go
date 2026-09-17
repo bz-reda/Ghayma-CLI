@@ -39,6 +39,9 @@ func resetCommandFlags() {
 	dockerPushSite, dockerPushTag, dockerPushDeploy, dockerPushProd = "", "", false, false
 	envSite, domainSite = "", ""
 	cronSiteFlag = ""
+	siteEnvKind = ""
+	connectYes = false
+	promoteFrom, promoteDeployment, promoteSite, promoteMessage = "", "", "", ""
 	siteScaleSite, siteScaleTier, siteScaleReplicas = "", "", 0
 	initNoSite, initSite, initDomain = false, "", ""
 	linkNoSite = false

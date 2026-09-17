@@ -245,7 +245,7 @@ question.`,
 				}
 			}
 		} else {
-			site, err := client.CreateSite(project.ID, siteName)
+			site, err := client.CreateSite(project.ID, siteName, "")
 			if err != nil {
 				fmt.Printf("⚠️  Failed to create site '%s': %v\n", siteName, err)
 				fmt.Println("   You can add sites later with: ghayma site add <name>")
@@ -300,7 +300,7 @@ question.`,
 			fmt.Printf("   Site: %s (slug: %s)\n", siteName, siteSlug)
 		}
 		fmt.Printf("📁 Config saved to %s\n", configPath)
-		fmt.Println("\nNext: run 'ghayma deploy --prod' to deploy")
+		fmt.Println("\nNext: run 'ghayma deploy' to deploy")
 	},
 }
 

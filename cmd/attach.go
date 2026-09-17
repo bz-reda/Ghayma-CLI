@@ -161,7 +161,7 @@ func resolveOrCreateSite(client *api.Client, projectID string, noSite bool) (*ap
 		if name == "" {
 			return nil, fmt.Errorf("site name cannot be empty")
 		}
-		return client.CreateSite(projectID, name)
+		return client.CreateSite(projectID, name, "")
 	case noSiteIdx:
 		return nil, errNoSiteChosen
 	}
@@ -218,6 +218,6 @@ func attachToExistingProject(client *api.Client, project *api.Project, configDir
 	fmt.Printf("✅ Linked to project '%s' (slug: %s)\n", project.Name, project.Slug)
 	fmt.Printf("   Site: %s (slug: %s)\n", site.Name, site.Slug)
 	fmt.Printf("📁 Config saved to %s\n", path)
-	fmt.Println("\nNext: run 'ghayma deploy --prod' to deploy")
+	fmt.Println("\nNext: run 'ghayma deploy' to deploy")
 	return nil
 }

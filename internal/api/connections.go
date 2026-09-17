@@ -158,24 +158,12 @@ func (c *Client) RotateSiteConnection(projectID, siteID, kind, resourceID string
 // GetEffectiveSiteEnv returns the exact environment a pod of the site receives:
 // the stored variables plus every connection-derived value (GET …/env/effective
 // → {"env":{…}}). Project admin role; the server audits every read. Never nil
-// on success.
+// on success. Callers that also want to know where each value came from take
+// EffectiveSiteEnv instead (envvars_inherit.go).
 func (c *Client) GetEffectiveSiteEnv(projectID, siteID string) (map[string]string, error) {
-	resp, err := c.authRequest("GET", "/api/v1/projects/"+projectID+"/sites/"+siteID+"/env/effective", nil)
+	out, err := c.EffectiveSiteEnv(projectID, siteID)
 	if err != nil {
 		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, decodeAPIError(resp)
-	}
-	var out struct {
-		Env map[string]string `json:"env"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	if out.Env == nil {
-		out.Env = map[string]string{}
 	}
 	return out.Env, nil
 }

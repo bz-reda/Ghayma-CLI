@@ -64,7 +64,7 @@ func runDomainCreate(cmd *cobra.Command, args []string) {
 	fmt.Printf("✅ Domain '%s' added to %s\n", domain, ctx.ProjectName)
 	fmt.Println("\n📋 Next steps:")
 	fmt.Printf("   1. Add an A record in your DNS: %s → 65.109.68.181\n", domain)
-	fmt.Printf("   2. Redeploy: ghayma deploy --prod\n")
+	fmt.Printf("   2. Redeploy: ghayma deploy\n")
 	fmt.Printf("   3. SSL will be provisioned automatically\n")
 }
 

@@ -17,6 +17,7 @@ var (
 	connectLocal      bool
 	connectLocalOut   string
 	connectLocalForce bool
+	connectYes        bool
 	disconnectSite    string
 	disconnectYes     bool
 )
@@ -36,6 +37,11 @@ full level (database: connect, bucket: read-write, auth: client);
 to reading, and 'auth ... --level admin' additionally lets the app manage all
 of that auth app's users. Running it again with another --level changes the
 level.
+
+Connecting a database that a site on the other side of the production line
+already uses is warned about and confirmed first (--yes skips the question):
+a development site writing to a production database can corrupt real data, and
+a separate database for it is the recommended path.
 
 --local connects the other way round: it tunnels the app's databases to this
 machine and writes .env.local (or --out) with the effective variables, their
@@ -189,6 +195,21 @@ func runConnect(cmd *cobra.Command, args []string) {
 		fmt.Printf("ℹ️  %s\n", plan.Note)
 	}
 
+	// Cross-environment database pre-flight. Only a NEW database connection can
+	// create the sharing this warns about — a level change is already sharing —
+	// and the pre-flight never blocks: a read that fails leaves it silent.
+	if kind == "database" && plan.Held == nil {
+		warning := crossEnvWarning(
+			args[1],
+			siteKind{Slug: target.Site.Slug, Environment: target.Site.Environment},
+			databaseSiteKinds(client, target.ProjectID, plan.Item.ResourceID),
+		)
+		if !confirmCrossEnv(warning, connectYes, readAnswer) {
+			fmt.Println("❌ Cancelled.")
+			return
+		}
+	}
+
 	row, err := client.AddSiteConnection(target.ProjectID, target.Site.ID, plan.Item)
 	if err != nil {
 		failf("Failed to connect: %v", err)
@@ -287,6 +308,7 @@ func init() {
 	connectCmd.Flags().BoolVar(&connectLocal, "local", false, "Tunnel the app's databases to this machine and write a dotenv file pointing at them")
 	connectCmd.Flags().StringVar(&connectLocalOut, "out", "", "Where --local writes the dotenv file (default: .env.local next to the app)")
 	connectCmd.Flags().BoolVar(&connectLocalForce, "force", false, "Let --local write the dotenv file even when git does not ignore it")
+	connectCmd.Flags().BoolVar(&connectYes, "yes", false, "Skip the confirmation when connecting a database across environments")
 	disconnectCmd.Flags().StringVar(&disconnectSite, "site", "", "Site (app) to disconnect, by name or slug")
 	disconnectCmd.Flags().BoolVar(&disconnectYes, "yes", false, "Skip the confirmation")
 	rootCmd.AddCommand(connectCmd)

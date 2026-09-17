@@ -173,10 +173,10 @@ of uploading this directory: nothing is built, the image is checked and rolled
 out as it is. Name a tag, or a sha256: digest for one exact image.
 
 Examples:
-  ghayma deploy --prod
+  ghayma deploy
   ghayma deploy --site admin
   ghayma deploy --image v1
-  ghayma deploy --image sha256:0a1b2c… --prod`,
+  ghayma deploy --image sha256:0a1b2c…`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		if !cfg.LoggedIn() {
@@ -267,6 +267,14 @@ Examples:
 			if none, err := projectHasNoSites(client, ctx.ProjectID); err != nil || none {
 				fmt.Println("ℹ️  This project has no site yet; deploying creates the site 'main'.")
 			}
+		}
+
+		// --prod is a no-op since Environments (design D6): the target site's
+		// kind decides. Said here, before the upload, so the answer arrives
+		// with the deploy rather than after it.
+		if deployProd {
+			slug, environment := bestEffortSiteKind(client, ctx, deploySite)
+			fmt.Println(prodFlagNotice(slug, environment))
 		}
 
 		fmt.Println(deployHeadline(ctx))
@@ -398,6 +406,11 @@ func runImageDeploy(client *api.Client, ctx *SiteContext, image, siteFlag string
 		exitFn(1)
 		return
 	}
+	// Same notice as the upload path — the site is already resolved here, so
+	// it costs no extra request.
+	if prod {
+		fmt.Println(prodFlagNotice(site.Slug, site.Environment))
+	}
 	image = strings.TrimSpace(image)
 	fmt.Printf("🚀 Deploying image %s to %s [site: %s]...\n", image, ctx.ProjectName, site.Slug)
 	deployPushedImage(client, ctx.ProjectID, site.ID, image, prod)
@@ -417,8 +430,37 @@ func deployPushedImage(client *api.Client, projectID, siteID, image string, prod
 	waitForDeployment(client, resp.ID)
 }
 
+// prodFlagNotice is what --prod prints since Environments (design D6). The flag
+// is kept — scripts and muscle memory carry it everywhere — and it is still
+// sent, but a deployment is a production one exactly when the site it targets
+// is a production site, so the flag no longer decides anything. The notice
+// names the target and its kind, which is the fact that replaced the flag;
+// environment is "" on a platform that predates the field, and the sentence
+// then stops before claiming one.
+func prodFlagNotice(siteSlug, environment string) string {
+	const lead = "ℹ️  --prod no longer changes anything: whether a deploy is production now follows the target site's environment"
+	if siteSlug == "" || environment == "" {
+		return lead + "."
+	}
+	return fmt.Sprintf("%s (%s is %s).", lead, siteSlug, environment)
+}
+
+// bestEffortSiteKind names the site a source deploy targets and its
+// environment. Best-effort by design: it exists to label a notice, so a live
+// list that cannot be read falls back to the linked site's name with no kind
+// rather than failing a deploy that is otherwise fine.
+func bestEffortSiteKind(client *api.Client, ctx *SiteContext, siteFlag string) (slug, environment string) {
+	if site, err := liveSiteOf(client, ctx, siteFlag); err == nil {
+		return site.Slug, site.Environment
+	}
+	if ctx.NoSite {
+		return "", ""
+	}
+	return siteLabel(ctx.Site), ""
+}
+
 func init() {
-	deployCmd.Flags().BoolVarP(&deployProd, "prod", "p", false, "Deploy to production")
+	deployCmd.Flags().BoolVarP(&deployProd, "prod", "p", false, "(no longer needed) a deploy is production when the target site is a production site")
 	deployCmd.Flags().StringVar(&deploySite, "site", "", "Site to deploy (slug); at a workspace root with several sites this replaces the picker")
 	deployCmd.Flags().StringVar(&deployImage, "image", "", "Deploy an image already pushed with 'ghayma docker push' (tag, or sha256: digest) instead of uploading this directory")
 	rootCmd.AddCommand(deployCmd)

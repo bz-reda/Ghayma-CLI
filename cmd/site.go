@@ -53,14 +53,32 @@ var siteListCmd = &cobra.Command{
 
 		fmt.Println("📌 Sites:")
 		for _, s := range sites {
-			marker := "  "
-			if s.ID == localCfg.SiteID {
-				marker = "▶ "
-			}
-			fmt.Printf("  %s%s  (slug: %s, status: %s, id: %s)\n", marker, s.Name, s.Slug, s.Status, s.ID)
+			fmt.Println(siteListLine(s, s.ID == localCfg.SiteID))
 		}
 		fmt.Println("\nTo switch active site: ghayma site use <slug>")
 	},
+}
+
+// siteListLine renders one row of `site list`. The environment is part of a
+// site's identity since Environments (§1) — it decides whether a deploy is a
+// production one — so it sits next to the slug; a site resolving its variables
+// through the ladder says so, because that is why its env list shows rows it
+// does not own. A server that predates the field sends no environment, and the
+// row then reads exactly as it always did rather than claiming a kind.
+func siteListLine(s api.Site, active bool) string {
+	marker := "  "
+	if active {
+		marker = "▶ "
+	}
+	env := ""
+	if s.Environment != "" {
+		env = fmt.Sprintf("env: %s, ", s.Environment)
+	}
+	inherits := ""
+	if s.InheritEnv {
+		inherits = "  [inherits env]"
+	}
+	return fmt.Sprintf("  %s%s  (slug: %s, %sstatus: %s, id: %s)%s", marker, s.Name, s.Slug, env, s.Status, s.ID, inherits)
 }
 
 func runSiteCreate(cmd *cobra.Command, args []string) {
@@ -88,14 +106,25 @@ func runSiteCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	// --env is checked before the request so a typo costs no round-trip and
+	// reads as the CLI's own message rather than a server binding error.
+	environment, err := parseEnvironmentKind(siteEnvKind)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		return
+	}
+
 	client := api.NewClient(cfg)
-	site, err := client.CreateSite(projectID, siteName)
+	site, err := client.CreateSite(projectID, siteName, environment)
 	if err != nil {
 		fmt.Printf("❌ Failed to create site: %v\n", err)
 		return
 	}
 
 	fmt.Printf("✅ Site '%s' created (slug: %s, id: %s)\n", site.Name, site.Slug, site.ID)
+	if line := createdEnvironmentLine(site); line != "" {
+		fmt.Println(line)
+	}
 
 	// In a linked workspace the new site is unreachable until the manifest says
 	// which directory builds it, so offer that mapping here. `site use` is not
@@ -104,21 +133,38 @@ func runSiteCreate(cmd *cobra.Command, args []string) {
 	switch {
 	case added:
 		fmt.Printf("\nTo deploy to this site:\n")
-		fmt.Printf("  ghayma deploy --site %s --prod\n", site.Slug)
+		fmt.Printf("  ghayma deploy --site %s\n", site.Slug)
 	case inWorkspace:
 		// mapNewSiteInManifest already said how to map it later.
 	default:
 		fmt.Printf("\nTo deploy to this site, switch to it first:\n")
 		fmt.Printf("  ghayma site use %s\n", site.Slug)
-		fmt.Printf("  ghayma deploy --prod\n")
+		fmt.Printf("  ghayma deploy\n")
 	}
 }
 
 var siteCreateCmd = &cobra.Command{
 	Use:   "create [name]",
 	Short: "Create a new site in the current project",
-	Args:  cobra.MaximumNArgs(1),
-	Run:   runSiteCreate,
+	Long: `Create a new site (app) in the current project.
+
+A site IS an environment: it has its own namespace, variables, connections and
+credentials, its own domain and its own deployment history. --env names which
+kind it is — a deploy counts as production exactly when the site it targets is
+a production site. New sites are development sites unless you say otherwise;
+the project's default site is always production and cannot be re-kinded.
+
+A new non-production site also starts with env var inheritance ON: it resolves
+the default site's variables as its base and overrides them key by key, so
+standing one up is not a hand-copy of production's list. Credentials are never
+inherited — a development site gets its own database through its own
+connection. Turn it off with 'ghayma site inherit-env <site> off'.
+
+Examples:
+  ghayma site create staging --env staging
+  ghayma site create admin --env production`,
+	Args: cobra.MaximumNArgs(1),
+	Run:  runSiteCreate,
 }
 
 // siteAddCmd is the deprecated alias; hidden from help output, prints a
@@ -225,7 +271,7 @@ var siteUseCmd = &cobra.Command{
 		}
 
 		fmt.Printf("✅ Active site switched to '%s' (slug: %s)\n", matched.Name, matched.Slug)
-		fmt.Println("   Run 'ghayma deploy --prod' to deploy to this site")
+		fmt.Println("   Run 'ghayma deploy' to deploy to this site")
 	},
 }
 
@@ -340,6 +386,9 @@ func init() {
 	siteCmd.AddCommand(siteUseCmd)
 	siteCmd.AddCommand(siteScaleCmd)
 	rootCmd.AddCommand(siteCmd)
+
+	siteCreateCmd.Flags().StringVar(&siteEnvKind, "env", "", "Environment kind of the new site: development (default), staging or production")
+	siteAddCmd.Flags().StringVar(&siteEnvKind, "env", "", "Environment kind of the new site: development (default), staging or production")
 
 	siteScaleCmd.Flags().StringVar(&siteScaleSite, "site", "", "Site name or slug to scale (defaults to the project's active or only site)")
 	siteScaleCmd.Flags().StringVar(&siteScaleTier, "tier", "", "New app compute tier (e.g. a, b, c, d). Keeps the current tier when omitted.")

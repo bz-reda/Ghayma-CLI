@@ -28,6 +28,8 @@ Tests are Go tests: `cmd/*_test.go` and `internal/api/*_test.go`. Run with `go t
 - `deploy.go` — tarball upload + deployment polling loop; has monorepo detection via `turbo.json`
 - `init.go` — interactive project init, writes `.ghayma.json`
 - `site.go` — `site create|list|use|scale` subcommands (`site add` kept as hidden deprecated alias)
+- `site_environment.go` — `site environment|inherit-env` (Environments: a site's kind + the env var ladder)
+- `promote.go` — `promote --from <site>`: ship the image a site already runs onto another site (default target: the project's default site)
 - `db.go` — `db create|resize|list|info|credentials|expose|unexpose|stop|start|rotate|delete`
 - `storage.go` — `storage create|list|info|credentials|expose|unexpose|rotate|delete`
 - `auth.go` — `auth create|list|info|config|users|stats|rotate-keys|delete`
@@ -46,4 +48,6 @@ Tests are Go tests: `cmd/*_test.go` and `internal/api/*_test.go`. Run with `go t
 - Project config lives in `.ghayma.json` in the project directory (not the CLI config). New projects write `.ghayma.json`; existing `.espacetech.json` projects are still read as a dual-read fallback (back-compat)
 - Deploy detects monorepos by walking up to find `turbo.json`, then scans for `.ghayma.json` (or legacy `.espacetech.json`) files
 - Env var operations auto-detect single-site projects and use site-scoped endpoints; multi-site projects require `site_id` in `.ghayma.json`
+- Env vars can be INHERITED from the project's default site (Environments §3): the listing's `env_vars` are the site's own rows (what the replace-all PUT takes), `vars` is the resolved ladder. `env delete` uses the per-key DELETE and falls back to read-modify-write on a platform that does not serve it
+- `--prod` on `deploy` is a warned no-op (Environments D6): a deployment is production when the target SITE is a production site
 - Releases are triggered by pushing a `v*` tag (see `.github/workflows/release.yml`)
