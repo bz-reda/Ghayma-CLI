@@ -45,6 +45,14 @@ func resetCommandFlags() {
 	siteScaleSite, siteScaleTier, siteScaleReplicas = "", "", 0
 	initNoSite, initSite, initDomain = false, "", ""
 	linkNoSite = false
+	accessJSON, accessAddName, accessAddLevel, accessAddAllow, accessAddDays = false, "", "", "", 0
+	accessRevokeYes, accessRotateYes, accessAllowSet = false, false, ""
+	// `access allow` branches on whether --set was GIVEN, and cobra keeps
+	// Changed set across Executes, so the flag's own state is cleared too.
+	if f := accessAllowCmd.Flags().Lookup("set"); f != nil {
+		f.Changed = false
+		_ = f.Value.Set("")
+	}
 	// init's billing/plan flags are read off the flag set rather than bound to
 	// vars, so clear their stored values too.
 	_ = initCmd.Flags().Set("billing-account", "")

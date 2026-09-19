@@ -30,6 +30,7 @@ Tests are Go tests: `cmd/*_test.go` and `internal/api/*_test.go`. Run with `go t
 - `site.go` — `site create|list|use|scale` subcommands (`site add` kept as hidden deprecated alias)
 - `site_environment.go` — `site environment|inherit-env` (Environments: a site's kind + the env var ladder)
 - `promote.go` — `promote --from <site>`: ship the image a site already runs onto another site (default target: the project's default site)
+- `access.go` / `access_render.go` — `access <kind> <name>` plus `add|rotate|allow|revoke`: the external principals (Connections 3c) that reach a database or bucket from outside Ghayma; the credential is printed once, at add and at rotate
 - `db.go` — `db create|resize|list|info|credentials|expose|unexpose|stop|start|rotate|delete`
 - `storage.go` — `storage create|list|info|credentials|expose|unexpose|rotate|delete`
 - `auth.go` — `auth create|list|info|config|users|stats|rotate-keys|delete`
