@@ -130,6 +130,20 @@ A connection lets one site (app) use one of the project's services — a databas
 | `ghayma disconnect <database\|bucket\|auth> <name> [--site <slug>] [--yes]` | Disconnect a service from an app |
 | `ghayma connect --local [--site <slug>] [--out <file>]` | Tunnel the app's databases to localhost and write `.env.local` pointing at them |
 
+### External access
+
+An external principal is a named identity OUTSIDE Ghayma — a BI tool, a partner's CI — that holds its own credential for one database or bucket, with an optional source-IP allowlist and an optional expiry. Its credential is shown once, at `add` and at `rotate`. Auth apps have no principals: their external access is their restricted project keys, minted in the console.
+
+| Command | Description |
+|---|---|
+| `ghayma access <database\|bucket> <name> [--json]` | Show the apps connected to a service and the external principals that reach it |
+| `ghayma access add <database\|bucket> <name> --name <principal> [--level <level>] [--allow <cidr,...>] [--expires <days>]` | Grant an outside principal its own credential (printed once) |
+| `ghayma access rotate <database\|bucket> <name> <principal> [--yes]` | Replace a principal's secret, keeping its identity (printed once) |
+| `ghayma access allow <database\|bucket> <name> <principal> --set <cidr,...>` | Replace the sources it may connect from; `--set ""` clears them |
+| `ghayma access revoke <database\|bucket> <name> <principal> [--yes]` | Drop a principal's credential for good |
+
+The allowlist is enforced at the front door, before any authentication, so it cannot tell which principal a connection belongs to: while any principal of a resource is unrestricted, no IP filter is enforced for that resource at all.
+
 ### Databases
 
 | Command | Description |
