@@ -428,67 +428,6 @@ func findDatabaseByName(client *api.Client, name string) (*api.DatabaseInfo, err
 	return nil, fmt.Errorf("database '%s' not found", name)
 }
 
-var dbExposeCmd = &cobra.Command{
-	Use:   "expose [name]",
-	Short: "Enable external access to a database",
-	Args:  requireOneArg("name", "db list"),
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.Load()
-		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
-			return
-		}
-
-		client := api.NewClient(cfg)
-		db, err := findDatabaseByName(client, args[0])
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
-			return
-		}
-
-		result, err := client.ExposeDatabase(db.ID)
-		if err != nil {
-			fmt.Printf("❌ Failed to expose: %v\n", err)
-			return
-		}
-
-		fmt.Printf("✅ Database '%s' exposed externally\n", args[0])
-		fmt.Printf("   Host: %v\n", result["external_host"])
-		fmt.Printf("   Port: %v\n", result["external_port"])
-		fmt.Printf("   Connection: %v\n", result["connection"])
-		fmt.Println("\n📋 Get full credentials with:")
-		fmt.Printf("   ghayma db credentials %s\n", args[0])
-	},
-}
-
-var dbUnexposeCmd = &cobra.Command{
-	Use:   "unexpose [name]",
-	Short: "Disable external access to a database",
-	Args:  requireOneArg("name", "db list"),
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.Load()
-		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
-			return
-		}
-
-		client := api.NewClient(cfg)
-		db, err := findDatabaseByName(client, args[0])
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
-			return
-		}
-
-		err = client.UnexposeDatabase(db.ID)
-		if err != nil {
-			fmt.Printf("❌ Failed to unexpose: %v\n", err)
-			return
-		}
-
-		fmt.Printf("✅ External access disabled for '%s'\n", args[0])
-	},
-}
-
 var dbCredentialsCmd = &cobra.Command{
 	Use:   "credentials [name]",
 	Short: "Show database connection credentials",
@@ -525,12 +464,8 @@ var dbCredentialsCmd = &cobra.Command{
 		fmt.Printf("   Password: %v\n", creds["password"])
 		fmt.Printf("\n   Internal URL: %v\n", creds["internal_url"])
 
-		if creds["external_access"] == true {
-			fmt.Printf("   External URL: %v\n", creds["external_url"])
-		} else {
-			fmt.Println("\n   ℹ️  External access is off. Enable with:")
-			fmt.Printf("      ghayma db expose %s\n", args[0])
-		}
+		// External reach is per named principal now, not a shared endpoint.
+		fmt.Printf("\n   ℹ️  External access is granted per principal — add one with: ghayma access add database %s --name <principal>\n", args[0])
 	},
 }
 
@@ -649,8 +584,6 @@ func init() {
 	dbCmd.AddCommand(dbInfoCmd)
 	dbCmd.AddCommand(dbDeleteCmd)
 	rootCmd.AddCommand(dbCmd)
-	dbCmd.AddCommand(dbExposeCmd)
-	dbCmd.AddCommand(dbUnexposeCmd)
 	dbCmd.AddCommand(dbCredentialsCmd)
 	dbCmd.AddCommand(dbStopCmd)
 	dbCmd.AddCommand(dbStartCmd)

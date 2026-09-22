@@ -157,12 +157,12 @@ The allowlist is enforced at the front door, before any authentication, so it ca
 | `ghayma db list` | List your databases |
 | `ghayma db info [name]` | Show database details |
 | `ghayma db credentials [name]` | Show connection credentials |
-| `ghayma db expose [name]` | Enable external access |
-| `ghayma db unexpose [name]` | Disable external access |
 | `ghayma db stop [name]` | Stop database (preserves data) |
 | `ghayma db start [name]` | Start a stopped database |
 | `ghayma db rotate [name]` | Rotate database password |
 | `ghayma db delete [name]` | Delete database and all its data |
+
+Reaching a database from outside Ghayma is a named principal with its own credential — see [External access](#external-access) above.
 
 ### Storage
 

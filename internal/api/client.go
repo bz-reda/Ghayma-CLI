@@ -1176,36 +1176,6 @@ func (c *Client) decodeJSON(resp *http.Response, out any) error {
 	return nil
 }
 
-func (c *Client) ExposeDatabase(id string) (map[string]interface{}, error) {
-	resp, err := c.authRequest("POST", "/api/v1/databases/"+id+"/expose", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s", result["error"])
-	}
-	return result, nil
-}
-
-func (c *Client) UnexposeDatabase(id string) error {
-	resp, err := c.authRequest("POST", "/api/v1/databases/"+id+"/unexpose", nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return fmt.Errorf("%s", errResp["error"])
-	}
-	return nil
-}
-
 func (c *Client) GetDatabaseCredentials(id string) (map[string]interface{}, error) {
 	resp, err := c.authRequest("GET", "/api/v1/databases/"+id+"/credentials", nil)
 	if err != nil {
