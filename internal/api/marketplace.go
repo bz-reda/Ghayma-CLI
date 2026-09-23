@@ -32,6 +32,16 @@ type CatalogDBTier struct {
 	MemoryLimitMB int    `json:"memory_limit_mb"`
 	PointsCost    int    `json:"points_cost"`
 	Position      int    `json:"position"`
+	// MongoEnabled gates whether MongoDB may run on this tier. A pointer so an
+	// older backend that omits the field reads as "allowed" rather than
+	// filtering every tier out.
+	MongoEnabled *bool `json:"mongo_enabled"`
+}
+
+// MongoAllowed reports whether MongoDB may run on this tier. An absent
+// mongo_enabled (pre-gate backend) means allowed.
+func (t CatalogDBTier) MongoAllowed() bool {
+	return t.MongoEnabled == nil || *t.MongoEnabled
 }
 
 // CatalogAuthTier is one auth-tier row. SMS pricing is deliberately absent: the

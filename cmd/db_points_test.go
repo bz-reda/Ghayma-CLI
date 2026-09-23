@@ -105,14 +105,14 @@ func TestDBCostPreview_UnknownSlugs(t *testing.T) {
 func TestValidateDBTier(t *testing.T) {
 	cat := fixtureCatalog()
 
-	if err := validateDBTier(cat, ""); err != nil {
+	if err := validateDBTier(cat, "", "postgres"); err != nil {
 		t.Errorf("blank tier (server default) must pass, got %v", err)
 	}
-	if err := validateDBTier(cat, "s"); err != nil {
+	if err := validateDBTier(cat, "s", "postgres"); err != nil {
 		t.Errorf("known tier s must pass, got %v", err)
 	}
 
-	err := validateDBTier(cat, "xl")
+	err := validateDBTier(cat, "xl", "postgres")
 	if err == nil {
 		t.Fatal("unknown tier must error")
 	}
@@ -250,7 +250,7 @@ func TestPromptDBSelections_CancelAborts(t *testing.T) {
 
 			diskCalled, backupCalled := false, false
 
-			promptDBTierFn = func(*api.MarketplaceCatalog) (string, error) {
+			promptDBTierFn = func(*api.MarketplaceCatalog, string) (string, error) {
 				if failStage == "tier" {
 					return "", promptui.ErrInterrupt
 				}
@@ -271,7 +271,7 @@ func TestPromptDBSelections_CancelAborts(t *testing.T) {
 				return "daily", nil
 			}
 
-			tier, disk, backup, err := promptDBSelections(fixtureCatalog())
+			tier, disk, backup, err := promptDBSelections(fixtureCatalog(), "postgres")
 			if err == nil {
 				t.Fatal("expected a cancel error; nil would fall through to a create")
 			}
@@ -295,11 +295,11 @@ func TestPromptDBSelections_CancelAborts(t *testing.T) {
 // The happy path composes all three picker results in order.
 func TestPromptDBSelections_AllSucceed(t *testing.T) {
 	defer swapPickers()()
-	promptDBTierFn = func(*api.MarketplaceCatalog) (string, error) { return "m", nil }
+	promptDBTierFn = func(*api.MarketplaceCatalog, string) (string, error) { return "m", nil }
 	promptDBDiskFn = func(*api.MarketplaceCatalog) (int, error) { return 30, nil }
 	promptDBBackupFn = func(*api.MarketplaceCatalog, int) (string, error) { return "weekly", nil }
 
-	tier, disk, backup, err := promptDBSelections(fixtureCatalog())
+	tier, disk, backup, err := promptDBSelections(fixtureCatalog(), "postgres")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
