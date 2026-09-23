@@ -19,6 +19,15 @@ type Config struct {
 	UserID     string   `json:"user_id"`
 	Email      string   `json:"email"`
 	CLI        CLIState `json:"cli,omitempty"`
+
+	// fileAPIHost is the host as the config file had it, before any
+	// GHAYMA_API_HOST override was applied. Save() writes this back so a
+	// one-command override is never baked into the file by an unrelated
+	// write (maybeWarnDeprecated does Load → mutate → Save on every run).
+	// A Config built by hand rather than by Load() should set its host
+	// through SetHost, which keeps the two fields in step. Unexported, so
+	// encoding/json skips it without needing a tag.
+	fileAPIHost string
 }
 
 // CLIState carries local client-side metadata that doesn't round-trip with
@@ -32,31 +41,63 @@ type CLIState struct {
 	DeprecationNotices map[string]string `json:"deprecation_notices,omitempty"`
 }
 
-func configPath() string {
+// Path is the config file: GHAYMA_CONFIG when set, else ~/.paas-cli.json. A
+// second file is how a staging login lives beside the production one.
+func Path() string {
+	if p := strings.TrimSpace(os.Getenv("GHAYMA_CONFIG")); p != "" {
+		return p
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".paas-cli.json")
 }
 
-func Load() *Config {
-	data, err := os.ReadFile(configPath())
-	if err != nil {
-		return &Config{APIHost: "https://api.ghayma.tech"}
-	}
+// defaultAPIHost is the backend used when neither the config file nor
+// GHAYMA_API_HOST names one.
+const defaultAPIHost = "https://api.ghayma.tech"
 
-	var cfg Config
-	json.Unmarshal(data, &cfg)
-	if cfg.APIHost == "" {
-		cfg.APIHost = "https://api.ghayma.tech"
+// envAPIHost is the GHAYMA_API_HOST override, normalised; empty when unset.
+func envAPIHost() string {
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("GHAYMA_API_HOST")), "/")
+}
+
+func Load() *Config {
+	cfg := &Config{}
+	if data, err := os.ReadFile(Path()); err == nil {
+		json.Unmarshal(data, cfg)
 	}
-	return &cfg
+	cfg.fileAPIHost = cfg.APIHost
+	// GHAYMA_API_HOST wins over the file; the file wins over the default.
+	if h := envAPIHost(); h != "" {
+		cfg.APIHost = h
+	}
+	if cfg.APIHost == "" {
+		cfg.APIHost = defaultAPIHost
+	}
+	return cfg
+}
+
+// SetHost points this config at a backend for good — the host is written to
+// the file on the next Save even when GHAYMA_API_HOST is set. This is what
+// `ghayma login --host` uses; a plain assignment to APIHost would be treated
+// as an override and dropped on save.
+func (c *Config) SetHost(h string) {
+	h = strings.TrimRight(strings.TrimSpace(h), "/")
+	c.APIHost = h
+	c.fileAPIHost = h
 }
 
 func (c *Config) Save() error {
-	data, err := json.MarshalIndent(c, "", "  ")
+	out := *c
+	// An override is a per-command thing, not a login: keep whatever host the
+	// file already had.
+	if envAPIHost() != "" {
+		out.APIHost = c.fileAPIHost
+	}
+	data, err := json.MarshalIndent(&out, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath(), data, 0600)
+	return os.WriteFile(Path(), data, 0600)
 }
 
 // IsAPIToken reports whether s looks like a personal access token the backend

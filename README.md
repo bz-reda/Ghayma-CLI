@@ -40,6 +40,18 @@ ghayma deploy             # Deploy (production when the target site is a product
 | `ghayma whoami` | Show the current CLI identity |
 | `ghayma version` | Show CLI version |
 
+#### Two logins side by side
+
+`GHAYMA_CONFIG` points the CLI at another config file, so a second login lives
+beside the first instead of replacing it:
+
+```bash
+GHAYMA_CONFIG=~/.ghayma-staging.json ghayma login --host https://api.staging.ghayma.tech --email
+GHAYMA_CONFIG=~/.ghayma-staging.json ghayma whoami
+```
+
+`GHAYMA_API_HOST` overrides the host for a single command without touching any file.
+
 ### Projects
 
 | Command | Description |
@@ -210,7 +222,7 @@ Running `ghayma init` creates a `.ghayma.json` file in the project directory:
 }
 ```
 
-New projects use `.ghayma.json`. Existing projects that already have a `.espacetech.json` keep working — the CLI reads it as a fallback when no `.ghayma.json` is present, so no migration is required. The user-level config (auth token, API host) remains at `~/.paas-cli.json`.
+New projects use `.ghayma.json`. Existing projects that already have a `.espacetech.json` keep working — the CLI reads it as a fallback when no `.ghayma.json` is present, so no migration is required. The user-level config (auth token, API host) remains at `~/.paas-cli.json`, or wherever `GHAYMA_CONFIG` points.
 
 ## Building from Source
 

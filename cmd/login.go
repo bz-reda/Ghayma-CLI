@@ -88,6 +88,17 @@ var loginCmd = &cobra.Command{
 	Short: "Login to Ghayma",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
+		// A login is the one deliberate act that should persist the host, so
+		// both ways of naming one go through SetHost: --host says it outright,
+		// and an active GHAYMA_API_HOST is the backend this token is being
+		// minted against. Everywhere else the variable stays per-command and
+		// Save() drops it. A plain assignment to cfg.APIHost would be treated
+		// as such an override and lost.
+		if h, _ := cmd.Flags().GetString("host"); h != "" {
+			cfg.SetHost(h)
+		} else if os.Getenv("GHAYMA_API_HOST") != "" {
+			cfg.SetHost(cfg.APIHost)
+		}
 		client := api.NewClient(cfg)
 
 		useEmail, _ := cmd.Flags().GetBool("email")
@@ -198,5 +209,6 @@ func openBrowser(url string) {
 
 func init() {
 	loginCmd.Flags().Bool("email", false, "Login with email/password instead of browser")
+	loginCmd.Flags().String("host", "", "API host to log in to (e.g. https://api.staging.ghayma.tech); stored in the config file")
 	rootCmd.AddCommand(loginCmd)
 }

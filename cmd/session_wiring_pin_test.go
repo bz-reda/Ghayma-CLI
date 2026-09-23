@@ -45,6 +45,48 @@ func TestLogin_ProvisionsLongLivedToken(t *testing.T) {
 	}
 }
 
+// TestLogin_PersistsTheHostItAuthenticatedAgainst pins the one place where a
+// host override is deliberately written to the config file. GHAYMA_API_HOST is
+// per-command everywhere else and Save() drops it, but the token these paths
+// mint is only valid against the backend that issued it — so an active
+// override goes through SetHost, before the client is built and the first
+// request goes out. login also takes --host; register deliberately does not
+// (it is not the place to choose a backend), so it only carries the env guard.
+func TestLogin_PersistsTheHostItAuthenticatedAgainst(t *testing.T) {
+	for _, file := range []string{"login.go", "register.go"} {
+		t.Run(file, func(t *testing.T) {
+			src := readCmdSource(t, file)
+
+			envPath := strings.Index(src, `cfg.SetHost(cfg.APIHost)`)
+			if envPath < 0 {
+				t.Errorf("%s should persist an active GHAYMA_API_HOST through cfg.SetHost, so the config records the host the token was minted against", file)
+			}
+			if !strings.Contains(src, `os.Getenv("GHAYMA_API_HOST")`) {
+				t.Errorf("%s should only persist the env host when it is actually set; an unconditional SetHost would write the default into a config that had none", file)
+			}
+
+			client := strings.Index(src, "api.NewClient(cfg)")
+			if client < 0 {
+				t.Fatalf("%s no longer builds a client from cfg", file)
+			}
+			if envPath > client {
+				t.Errorf("%s applies the GHAYMA_API_HOST host after building the client; the first request would go to the old backend", file)
+			}
+
+			// login alone offers --host, and it must persist the same way.
+			if file != "login.go" {
+				return
+			}
+			flagPath := strings.Index(src, `cfg.SetHost(h)`)
+			if flagPath < 0 {
+				t.Error("login.go should persist --host through cfg.SetHost; a plain cfg.APIHost assignment is dropped on save")
+			} else if flagPath > client {
+				t.Error("login.go applies the --host value after building the client; the first request would go to the old backend")
+			}
+		})
+	}
+}
+
 // TestProvisionCLIToken_ResetsStaleCredentials pins the ordering trap: the
 // mint call itself is authenticated, so a stale PAT left over from an earlier
 // login on this machine has to be cleared BEFORE the request goes out, or
