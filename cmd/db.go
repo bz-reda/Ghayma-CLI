@@ -78,7 +78,7 @@ var dbCreateCmd = &cobra.Command{
 			// a scripted run (any flag present) stays fully non-interactive.
 			if !cmd.Flags().Changed("tier") && !cmd.Flags().Changed("disk-gb") && !cmd.Flags().Changed("backup") {
 				var selErr error
-				tier, diskGB, backup, selErr = promptDBSelections(cat)
+				tier, diskGB, backup, selErr = promptDBSelections(cat, dbCreateType)
 				if selErr != nil {
 					// A promptui cancel (Ctrl-C) must abort — never fall
 					// through to a smallest-tier create on an explicit cancel.
@@ -90,14 +90,14 @@ var dbCreateCmd = &cobra.Command{
 				// previewing (mirrors auth create's validateAuthBracket / init's
 				// validatePlanFlag), instead of deferring silently to a backend
 				// error. Fail-soft — only reached when the catalog is present.
-				if err := validateDBTier(cat, tier); err != nil {
+				if err := validateDBTier(cat, tier, dbCreateType); err != nil {
 					fmt.Printf("❌ %v\n", err)
 					return
 				}
 			}
 			// Best-effort reserve preview from the resolved selections,
 			// defaulting the unset tier/backup to the catalog's smallest.
-			printReservePreview(client, cat, projectID, tier, diskGB, backup)
+			printReservePreview(client, cat, projectID, dbCreateType, tier, diskGB, backup)
 		}
 
 		db, err := client.CreateDatabase(args[0], dbCreateType, projectID, replicaSet, tier, diskGB, backup)
@@ -186,8 +186,8 @@ var (
 // catalog (never hardcoded). A promptui cancel (Ctrl-C) from any picker returns
 // a non-nil error so the caller aborts WITHOUT creating a database — an empty
 // tiers/backups catalog is NOT a cancel and still degrades to server defaults.
-func promptDBSelections(cat *api.MarketplaceCatalog) (string, int, string, error) {
-	tier, err := promptDBTierFn(cat)
+func promptDBSelections(cat *api.MarketplaceCatalog, dbType string) (string, int, string, error) {
+	tier, err := promptDBTierFn(cat, dbType)
 	if err != nil {
 		return "", 0, "", err
 	}
@@ -202,8 +202,11 @@ func promptDBSelections(cat *api.MarketplaceCatalog) (string, int, string, error
 	return tier, diskGB, backup, nil
 }
 
-func promptDBTier(cat *api.MarketplaceCatalog) (string, error) {
-	tiers := sortedDBTiers(cat)
+// promptDBTier lists only the tiers that can run dbType, so a mongodb create
+// never offers a tier the server would reject; the cursor therefore starts on
+// the smallest allowed tier.
+func promptDBTier(cat *api.MarketplaceCatalog, dbType string) (string, error) {
+	tiers := dbTiersForEngine(cat, dbType)
 	if len(tiers) == 0 {
 		return "", nil
 	}
@@ -276,10 +279,10 @@ func promptDBBackup(cat *api.MarketplaceCatalog, diskGB int) (string, error) {
 // with the remaining-after tail when the points summary is fetchable. Every
 // step is fail-soft: a missing catalog slug or a failed summary fetch just
 // prints less — it never blocks the create.
-func printReservePreview(client *api.Client, cat *api.MarketplaceCatalog, projectID, tier string, diskGB int, backup string) {
+func printReservePreview(client *api.Client, cat *api.MarketplaceCatalog, projectID, dbType, tier string, diskGB int, backup string) {
 	previewTier := tier
 	if previewTier == "" {
-		if dt, ok := defaultDBTier(cat); ok {
+		if dt, ok := defaultDBTierForEngine(cat, dbType); ok {
 			previewTier = dt.Slug
 		}
 	}
@@ -300,6 +303,9 @@ func printReservePreview(client *api.Client, cat *api.MarketplaceCatalog, projec
 // sortedDBTiers / sortedBackupTiers return catalog rows ordered by Position so
 // the pickers list smallest→largest regardless of server ordering.
 func sortedDBTiers(cat *api.MarketplaceCatalog) []api.CatalogDBTier {
+	if cat == nil {
+		return nil
+	}
 	out := append([]api.CatalogDBTier(nil), cat.DBTiers...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Position < out[j].Position })
 	return out
@@ -571,7 +577,7 @@ func init() {
 	// it here only buys the user a server-side failure.
 	dbCreateCmd.Flags().StringVarP(&dbCreateType, "type", "t", "postgres", "Database type: postgres, mongodb")
 	dbCreateCmd.Flags().BoolVar(&dbCreateReplicaSet, "replica-set", true, "MongoDB only: run as a single-node replica set (rs0). Default true so multi-document transactions work. Pass --replica-set=false for a standalone mongod.")
-	dbCreateCmd.Flags().StringVar(&dbCreateTier, "tier", "", "Database tier (e.g. xs, s, m, l, xl). MongoDB needs s or larger. Interactive picker when omitted; server default if no catalog.")
+	dbCreateCmd.Flags().StringVar(&dbCreateTier, "tier", "", "Database tier (e.g. xs, s, m, l, xl). MongoDB needs a larger tier — the picker lists only the Mongo-capable ones. Interactive picker when omitted; server default if no catalog.")
 	dbCreateCmd.Flags().IntVar(&dbCreateDiskGB, "disk-gb", 0, "Persistent disk in GB, priced in points. Server default (from size) when omitted.")
 	dbCreateCmd.Flags().StringVar(&dbCreateBackup, "backup", "", "Backup schedule: weekly, daily, sixhourly. Interactive picker when omitted; weekly default if no catalog.")
 
