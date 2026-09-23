@@ -47,7 +47,7 @@ var whoamiCmd = &cobra.Command{
 	Use:     "whoami",
 	Aliases: []string{"account"},
 	Short:   "Show the current CLI identity",
-	Long:    "Prints the email, user ID, API endpoint and CLI version for the currently logged-in session. Tokens are never printed.",
+	Long:    "Prints the email, user ID, API endpoint, config file and CLI version for the currently logged-in session. Tokens are never printed.",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		loggedIn := cfg.LoggedIn()
@@ -58,6 +58,7 @@ var whoamiCmd = &cobra.Command{
 				"email":       cfg.Email,
 				"user_id":     cfg.UserID,
 				"api_host":    cfg.APIHost,
+				"config_file": config.Path(),
 				"cli_version": version,
 			}
 			if loggedIn {
@@ -83,6 +84,7 @@ var whoamiCmd = &cobra.Command{
 			fmt.Printf("  User ID:      %s\n", cfg.UserID)
 		}
 		fmt.Printf("  API endpoint: %s\n", cfg.APIHost)
+		fmt.Printf("  Config file:  %s\n", config.Path())
 		fmt.Printf("  Auth:         %s\n", authDescription(cfg))
 		fmt.Printf("  CLI version:  %s\n", version)
 	},

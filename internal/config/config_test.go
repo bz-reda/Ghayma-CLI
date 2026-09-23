@@ -3,6 +3,8 @@ package config
 import (
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -171,4 +173,104 @@ func TestLoggedIn(t *testing.T) {
 			t.Errorf("%s: LoggedIn() = %v; want %v", tc.name, got, tc.want)
 		}
 	}
+}
+
+// TestPathHonoursGhaymaConfig pins the override that lets a staging login live
+// in its own file beside the production one — and that the default is unchanged.
+func TestPathHonoursGhaymaConfig(t *testing.T) {
+	dir := t.TempDir()
+	want := filepath.Join(dir, "staging.json")
+	t.Setenv("GHAYMA_CONFIG", want)
+	if got := Path(); got != want {
+		t.Fatalf("Path()=%q want %q", got, want)
+	}
+	t.Setenv("GHAYMA_CONFIG", "")
+	if got := Path(); filepath.Base(got) != ".paas-cli.json" {
+		t.Fatalf("default Path()=%q", got)
+	}
+}
+
+// TestLoadHonoursGhaymaAPIHost pins the precedence: env > file > compiled default.
+func TestLoadHonoursGhaymaAPIHost(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GHAYMA_CONFIG", filepath.Join(dir, "cfg.json"))
+	t.Setenv("GHAYMA_API_HOST", "")
+	if got := Load().APIHost; got != "https://api.ghayma.tech" {
+		t.Fatalf("default host=%q", got)
+	}
+	cfg := &Config{APIHost: "https://api.example.test", Email: "x@example.test"}
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := Load().APIHost; got != "https://api.example.test" {
+		t.Fatalf("file host=%q", got)
+	}
+	t.Setenv("GHAYMA_API_HOST", "https://api.override.test/")
+	if got := Load().APIHost; got != "https://api.override.test" {
+		t.Fatalf("env host=%q (trailing slash must be trimmed)", got)
+	}
+}
+
+// TestSaveNeverPersistsGhaymaAPIHost is the regression pin for the override
+// leaking into the file: any Load → mutate → Save path (maybeWarnDeprecated
+// runs one on every command) would otherwise bake a one-command host into
+// ~/.paas-cli.json. SetHost is the sanctioned way to change it for good.
+func TestSaveNeverPersistsGhaymaAPIHost(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "cfg.json")
+	t.Setenv("GHAYMA_CONFIG", file)
+	t.Setenv("GHAYMA_API_HOST", "")
+
+	if err := (&Config{APIHost: "https://api.file.test", Email: "x@example.test"}).Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// An unrelated write while the override is active must leave the file's host alone.
+	t.Setenv("GHAYMA_API_HOST", "https://api.override.test")
+	cfg := Load()
+	if cfg.APIHost != "https://api.override.test" {
+		t.Fatalf("in-memory host=%q; want the override", cfg.APIHost)
+	}
+	cfg.Email = "changed@example.test"
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	onDisk := readHost(t, file)
+	if onDisk != "https://api.file.test" {
+		t.Fatalf("file api_host=%q; the override must never be persisted", onDisk)
+	}
+
+	// SetHost is a real change of backend and must survive the save.
+	cfg.SetHost("https://api.staging.test/")
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk := readHost(t, file); onDisk != "https://api.staging.test" {
+		t.Fatalf("file api_host=%q; want the SetHost value (trailing slash trimmed)", onDisk)
+	}
+
+	// The override still wins in memory on the next load; the file is intact.
+	if got := Load().APIHost; got != "https://api.override.test" {
+		t.Fatalf("host after SetHost+Save=%q; want the override", got)
+	}
+	t.Setenv("GHAYMA_API_HOST", "")
+	if got := Load().APIHost; got != "https://api.staging.test" {
+		t.Fatalf("host without the override=%q; want the saved host", got)
+	}
+}
+
+// readHost reads api_host straight out of the config file on disk.
+func readHost(t *testing.T, file string) string {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		APIHost string `json:"api_host"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal %s: %v", file, err)
+	}
+	return raw.APIHost
 }

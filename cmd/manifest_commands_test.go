@@ -19,7 +19,9 @@ import (
 
 // cliHome points the CLI config at a temp home holding a logged-in session, so
 // config.Load() finds a token and the stub API host. USERPROFILE goes with HOME
-// or the Windows CI job breaks (see TestHomeFixturesAlsoSetUSERPROFILE).
+// or the Windows CI job breaks, and the two override variables are cleared or
+// an operator running the suite with a staging login exported would send every
+// stubbed request somewhere else (see TestHomeFixturesAlsoSetUSERPROFILE).
 func cliHome(t *testing.T, apiHost string) {
 	t.Helper()
 	home := t.TempDir()
@@ -29,6 +31,8 @@ func cliHome(t *testing.T, apiHost string) {
 	}
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("GHAYMA_CONFIG", "")
+	t.Setenv("GHAYMA_API_HOST", "")
 }
 
 // resetCommandFlags clears the flag state these tests set. Cobra binds flags to

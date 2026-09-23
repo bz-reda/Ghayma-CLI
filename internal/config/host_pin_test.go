@@ -18,6 +18,9 @@ func TestDefaultAPIHostIsGhayma(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	// The overrides must not leak in from the operator's shell either.
+	t.Setenv("GHAYMA_CONFIG", "")
+	t.Setenv("GHAYMA_API_HOST", "")
 
 	if got := Load().APIHost; got != want {
 		t.Fatalf("default APIHost = %q, want %q", got, want)

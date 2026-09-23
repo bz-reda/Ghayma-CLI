@@ -41,7 +41,7 @@ Tests are Go tests: `cmd/*_test.go` and `internal/api/*_test.go`. Run with `go t
 
 **`internal/api/tar.go`** — creates gzip tarballs for deploy uploads, skipping `node_modules`, `.next`, `.git`, `.turbo`, `dist`.
 
-**`internal/config/config.go`** — reads/writes `~/.paas-cli.json` (token, api_host, user_id, email). Default API host: `https://api.ghayma.tech`.
+**`internal/config/config.go`** — reads/writes `config.Path()` — `GHAYMA_CONFIG` when set, else `~/.paas-cli.json` (token, api_host, user_id, email). Default API host: `https://api.ghayma.tech`, overridden per-command by `GHAYMA_API_HOST`.
 
 ## Key Patterns
 

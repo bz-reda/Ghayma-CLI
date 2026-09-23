@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"paas-cli/internal/api"
 	"paas-cli/internal/config"
@@ -17,13 +16,7 @@ var logoutCmd = &cobra.Command{
 	Use:   "logout",
 	Short: "Log out and clear saved credentials",
 	Run: func(cmd *cobra.Command, args []string) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			fmt.Printf("❌ Could not locate config: %v\n", err)
-			return
-		}
-
-		configFile := filepath.Join(home, ".paas-cli.json")
+		configFile := config.Path()
 
 		if _, err := os.Stat(configFile); os.IsNotExist(err) {
 			fmt.Println("ℹ️  Not logged in.")

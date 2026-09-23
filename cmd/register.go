@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"paas-cli/internal/api"
 	"paas-cli/internal/config"
@@ -23,8 +24,17 @@ While Ghayma is in private beta, registration requires an invitation code:
   ghayma register --invite GYB-XXXXXXXX`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// The API host comes from config (default api.ghayma.tech), same as
-		// every other command — registration is not the place to change it.
+		// every other command — register deliberately has no --host flag, since
+		// it is not the place to choose a backend.
 		cfg := config.Load()
+		// It is, however, the place to record one: register auto-logs in and
+		// mints a CLI token, and that token is only valid against the backend
+		// that issued it. So when GHAYMA_API_HOST is steering this run, the
+		// host is persisted with the credential instead of being dropped on
+		// save the way a per-command override normally is.
+		if os.Getenv("GHAYMA_API_HOST") != "" {
+			cfg.SetHost(cfg.APIHost)
+		}
 
 		// Name
 		namePrompt := promptui.Prompt{Label: "Full Name"}
