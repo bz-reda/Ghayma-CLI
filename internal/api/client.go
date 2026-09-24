@@ -168,31 +168,57 @@ func (c *Client) GetMe(token string) (*MeResponse, error) {
 // month later still works — the browser handoff only ever yields the
 // Dashboard's 7-day session JWT, which has no refresh (2026-08-16).
 
-// CreatedAPIToken is the 201 body of POST /tokens — the one and only time the
+// TokenProject is one project a restricted token is limited to.
+type TokenProject struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+}
+
+// CreatedAPIToken is the body of a create or a rotate — the only times the
 // server returns the raw token.
 type CreatedAPIToken struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Token     string     `json:"token"`
-	ExpiresAt *time.Time `json:"expires_at"`
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Token      string         `json:"token"`
+	Scope      string         `json:"scope"`
+	ExpiresAt  *time.Time     `json:"expires_at"`
+	ProjectIDs []string       `json:"project_ids"`
+	Projects   []TokenProject `json:"projects"`
 }
 
 // APITokenInfo is a listed token; the raw secret is never returned again.
 type APITokenInfo struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	TokenPrefix string     `json:"token_prefix"`
-	Scope       string     `json:"scope"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	TokenPrefix string         `json:"token_prefix"`
+	Scope       string         `json:"scope"`
+	ExpiresAt   *time.Time     `json:"expires_at"`
+	LastUsedAt  *time.Time     `json:"last_used_at"`
+	RevokedAt   *time.Time     `json:"revoked_at"`
+	CreatedAt   time.Time      `json:"created_at"`
+	ProjectIDs  []string       `json:"project_ids"`
+	Projects    []TokenProject `json:"projects"`
 }
 
-func (c *Client) CreateAPIToken(name, scope string, expiresInDays int) (*CreatedAPIToken, error) {
-	body, _ := json.Marshal(map[string]interface{}{
-		"name":            name,
-		"scope":           scope,
-		"expires_in_days": expiresInDays,
-	})
+// CreateAPITokenInput is a mint request. ProjectIDs (ids or slugs) restricts
+// the token; empty means every project the account reaches.
+type CreateAPITokenInput struct {
+	Name          string
+	Scope         string
+	ExpiresInDays int
+	ProjectIDs    []string
+}
+
+func (c *Client) CreateAPIToken(in CreateAPITokenInput) (*CreatedAPIToken, error) {
+	payload := map[string]interface{}{
+		"name":            in.Name,
+		"scope":           in.Scope,
+		"expires_in_days": in.ExpiresInDays,
+	}
+	if len(in.ProjectIDs) > 0 {
+		payload["project_ids"] = in.ProjectIDs
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/tokens", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -206,8 +232,12 @@ func (c *Client) CreateAPIToken(name, scope string, expiresInDays int) (*Created
 	return &created, nil
 }
 
-func (c *Client) ListAPITokens() ([]APITokenInfo, error) {
-	resp, err := c.authRequest("GET", "/api/v1/tokens", nil)
+func (c *Client) ListAPITokens(includeRevoked bool) ([]APITokenInfo, error) {
+	path := "/api/v1/tokens"
+	if includeRevoked {
+		path += "?include_revoked=1"
+	}
+	resp, err := c.authRequest("GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +248,22 @@ func (c *Client) ListAPITokens() ([]APITokenInfo, error) {
 		return nil, err
 	}
 	return tokens, nil
+}
+
+// RotateAPIToken replaces a token's secret; the old one stops working.
+func (c *Client) RotateAPIToken(id string, expiresInDays int) (*CreatedAPIToken, error) {
+	body, _ := json.Marshal(map[string]int{"expires_in_days": expiresInDays})
+	resp, err := c.authRequest("POST", "/api/v1/tokens/"+id+"/rotate", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var rotated CreatedAPIToken
+	if err := c.decodeJSON(resp, &rotated); err != nil {
+		return nil, err
+	}
+	return &rotated, nil
 }
 
 func (c *Client) DeleteAPIToken(id string) error {

@@ -57,7 +57,7 @@ func provisionCLIToken(client *api.Client, cfg *config.Config, jwt string) {
 
 	// One token per machine: drop the previous one before minting its
 	// replacement. Best-effort — an older CLI may not have left one.
-	if existing, err := client.ListAPITokens(); err == nil {
+	if existing, err := client.ListAPITokens(false); err == nil {
 		for _, tok := range existing {
 			if tok.Name == name {
 				client.DeleteAPIToken(tok.ID)
@@ -65,7 +65,7 @@ func provisionCLIToken(client *api.Client, cfg *config.Config, jwt string) {
 		}
 	}
 
-	created, err := client.CreateAPIToken(name, cliTokenScope, cliTokenTTLDays)
+	created, err := client.CreateAPIToken(api.CreateAPITokenInput{Name: name, Scope: cliTokenScope, ExpiresInDays: cliTokenTTLDays})
 	if err != nil {
 		fmt.Printf("⚠️  Could not create a long-lived CLI token (%v) — using a 7-day session instead.\n", err)
 		return

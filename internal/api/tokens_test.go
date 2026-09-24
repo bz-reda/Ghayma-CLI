@@ -28,12 +28,15 @@ func TestCreateAPIToken_RoundTrip(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	created, err := newTestClient(ts.URL).CreateAPIToken("ghayma-cli@mac", "full", 365)
+	created, err := newTestClient(ts.URL).CreateAPIToken(CreateAPITokenInput{Name: "ghayma-cli@mac", Scope: "full", ExpiresInDays: 365})
 	if err != nil {
 		t.Fatalf("CreateAPIToken: %v", err)
 	}
 	if gotMethod != http.MethodPost || gotPath != "/api/v1/tokens" {
 		t.Errorf("request = %s %s; want POST /api/v1/tokens", gotMethod, gotPath)
+	}
+	if _, sent := gotBody["project_ids"]; sent {
+		t.Errorf("body = %v; project_ids must be omitted for an unrestricted token", gotBody)
 	}
 	if gotBody["name"] != "ghayma-cli@mac" || gotBody["scope"] != "full" {
 		t.Errorf("body = %v; want the name and scope", gotBody)
@@ -54,7 +57,7 @@ func TestCreateAPIToken_RoundTrip(t *testing.T) {
 func TestCreateAPIToken_NullExpiry(t *testing.T) {
 	ts := jsonStatusServer(t, http.StatusCreated, `{"id":"tok-1","name":"n","token":"gh_x","expires_at":null}`)
 
-	created, err := newTestClient(ts.URL).CreateAPIToken("n", "full", 0)
+	created, err := newTestClient(ts.URL).CreateAPIToken(CreateAPITokenInput{Name: "n", Scope: "full"})
 	if err != nil {
 		t.Fatalf("CreateAPIToken: %v", err)
 	}
@@ -68,7 +71,7 @@ func TestCreateAPIToken_NullExpiry(t *testing.T) {
 func TestCreateAPIToken_QuotaError(t *testing.T) {
 	ts := jsonStatusServer(t, http.StatusBadRequest, `{"error":"maximum 10 API tokens per account"}`)
 
-	_, err := newTestClient(ts.URL).CreateAPIToken("n", "full", 365)
+	_, err := newTestClient(ts.URL).CreateAPIToken(CreateAPITokenInput{Name: "n", Scope: "full", ExpiresInDays: 365})
 	if err == nil {
 		t.Fatal("want an error when the token quota is full")
 	}
@@ -80,9 +83,9 @@ func TestCreateAPIToken_QuotaError(t *testing.T) {
 // TestListAPITokens_RoundTrip pins the GET used to find and drop this
 // machine's previous token before minting a new one.
 func TestListAPITokens_RoundTrip(t *testing.T) {
-	var gotMethod, gotPath string
+	var gotMethod, gotPath, gotQuery string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath = r.Method, r.URL.Path
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
 		io.WriteString(w, `[
 		  {"id":"tok-1","name":"ghayma-cli@mac","token_prefix":"gh_dead","scope":"full","expires_at":"2027-08-16T10:00:00Z","created_at":"2026-08-16T10:00:00Z"},
 		  {"id":"tok-2","name":"ci","token_prefix":"gh_beef","scope":"full","expires_at":null,"created_at":"2026-08-01T10:00:00Z"}
@@ -90,12 +93,15 @@ func TestListAPITokens_RoundTrip(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	tokens, err := newTestClient(ts.URL).ListAPITokens()
+	tokens, err := newTestClient(ts.URL).ListAPITokens(false)
 	if err != nil {
 		t.Fatalf("ListAPITokens: %v", err)
 	}
 	if gotMethod != http.MethodGet || gotPath != "/api/v1/tokens" {
 		t.Errorf("request = %s %s; want GET /api/v1/tokens", gotMethod, gotPath)
+	}
+	if gotQuery != "" {
+		t.Errorf("query = %q; want none unless revoked tokens are asked for", gotQuery)
 	}
 	if len(tokens) != 2 {
 		t.Fatalf("got %d tokens; want 2", len(tokens))
@@ -137,5 +143,126 @@ func TestDeleteAPIToken_NotFound(t *testing.T) {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
 		t.Errorf("err = %v; want *APIError with status 404", err)
+	}
+}
+
+// TestCreateAPIToken_WithProjects pins the project restriction: project_ids go
+// out as given (slug or id) and the resolved projects come back.
+func TestCreateAPIToken_WithProjects(t *testing.T) {
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, `{"id":"tok-2","name":"ci","token":"gh_cafe","scope":"deploy,databases","expires_at":null,
+		  "project_ids":["p-uuid-1"],"projects":[{"id":"p-uuid-1","slug":"shop"}]}`)
+	}))
+	defer ts.Close()
+
+	created, err := newTestClient(ts.URL).CreateAPIToken(CreateAPITokenInput{
+		Name: "ci", Scope: "deploy,databases", ExpiresInDays: 90, ProjectIDs: []string{"shop"},
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+	ids, _ := gotBody["project_ids"].([]any)
+	if len(ids) != 1 || ids[0] != "shop" {
+		t.Errorf("body project_ids = %v; want [shop]", gotBody["project_ids"])
+	}
+	if created.Scope != "deploy,databases" {
+		t.Errorf("Scope = %q; want deploy,databases", created.Scope)
+	}
+	if len(created.Projects) != 1 || created.Projects[0].Slug != "shop" || created.Projects[0].ID != "p-uuid-1" {
+		t.Errorf("Projects = %+v; want the resolved shop project", created.Projects)
+	}
+	if len(created.ProjectIDs) != 1 || created.ProjectIDs[0] != "p-uuid-1" {
+		t.Errorf("ProjectIDs = %v; want [p-uuid-1]", created.ProjectIDs)
+	}
+}
+
+// TestCreateAPIToken_WiderThanCaller surfaces the subset refusal with its
+// machine code, so the command can print the server's message verbatim.
+func TestCreateAPIToken_WiderThanCaller(t *testing.T) {
+	ts := jsonStatusServer(t, http.StatusForbidden, `{"error":"a token cannot grant a scope it does not hold","code":"scope_exceeds_token"}`)
+
+	_, err := newTestClient(ts.URL).CreateAPIToken(CreateAPITokenInput{Name: "n", Scope: "full"})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusForbidden || apiErr.Code != "scope_exceeds_token" {
+		t.Fatalf("err = %#v; want *APIError{403, scope_exceeds_token}", err)
+	}
+	if apiErr.Message != "a token cannot grant a scope it does not hold" {
+		t.Errorf("Message = %q; want the server's message", apiErr.Message)
+	}
+}
+
+// TestListAPITokens_IncludeRevoked asks for revoked rows only when told to and
+// decodes the lifecycle and restriction fields.
+func TestListAPITokens_IncludeRevoked(t *testing.T) {
+	var gotQuery string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		io.WriteString(w, `[{"id":"tok-3","name":"old","token_prefix":"gh_0ld","scope":"deploy","expires_at":null,
+		  "last_used_at":"2026-09-20T08:00:00Z","revoked_at":"2026-09-21T08:00:00Z","created_at":"2026-09-01T08:00:00Z",
+		  "project_ids":["p1"],"projects":[{"id":"p1","slug":"shop"}]}]`)
+	}))
+	defer ts.Close()
+
+	tokens, err := newTestClient(ts.URL).ListAPITokens(true)
+	if err != nil {
+		t.Fatalf("ListAPITokens: %v", err)
+	}
+	if gotQuery != "include_revoked=1" {
+		t.Errorf("query = %q; want include_revoked=1", gotQuery)
+	}
+	if len(tokens) != 1 {
+		t.Fatalf("got %d tokens; want 1", len(tokens))
+	}
+	tok := tokens[0]
+	if tok.RevokedAt == nil || tok.LastUsedAt == nil {
+		t.Errorf("RevokedAt/LastUsedAt = %v/%v; want both set", tok.RevokedAt, tok.LastUsedAt)
+	}
+	if len(tok.Projects) != 1 || tok.Projects[0].Slug != "shop" || len(tok.ProjectIDs) != 1 {
+		t.Errorf("projects = %+v / %v; want shop", tok.Projects, tok.ProjectIDs)
+	}
+}
+
+// TestRotateAPIToken_RoundTrip pins POST /tokens/:id/rotate: the expiry goes
+// out, the new secret comes back once.
+func TestRotateAPIToken_RoundTrip(t *testing.T) {
+	var (
+		gotMethod, gotPath string
+		gotBody            map[string]any
+	)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		io.WriteString(w, `{"id":"tok-9","name":"ci","token":"gh_new","scope":"deploy","expires_at":"2026-12-23T00:00:00Z","project_ids":[],"projects":[]}`)
+	}))
+	defer ts.Close()
+
+	rotated, err := newTestClient(ts.URL).RotateAPIToken("tok-1", 90)
+	if err != nil {
+		t.Fatalf("RotateAPIToken: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/api/v1/tokens/tok-1/rotate" {
+		t.Errorf("request = %s %s; want POST /api/v1/tokens/tok-1/rotate", gotMethod, gotPath)
+	}
+	if days, _ := gotBody["expires_in_days"].(float64); days != 90 {
+		t.Errorf("body expires_in_days = %v; want 90", gotBody["expires_in_days"])
+	}
+	if rotated.ID != "tok-9" || rotated.Token != "gh_new" {
+		t.Errorf("rotated = %+v; want tok-9/gh_new", rotated)
+	}
+}
+
+// TestRotateAPIToken_Revoked surfaces the 409 a revoked token answers.
+func TestRotateAPIToken_Revoked(t *testing.T) {
+	ts := jsonStatusServer(t, http.StatusConflict, `{"error":"token is revoked","code":"token_revoked"}`)
+
+	_, err := newTestClient(ts.URL).RotateAPIToken("tok-1", 90)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict || apiErr.Code != "token_revoked" {
+		t.Errorf("err = %#v; want *APIError{409, token_revoked}", err)
 	}
 }
