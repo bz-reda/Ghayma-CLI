@@ -40,6 +40,17 @@ ghayma deploy             # Deploy (production when the target site is a product
 | `ghayma whoami` | Show the current CLI identity |
 | `ghayma version` | Show CLI version |
 
+### API tokens
+
+Account API tokens act as you across the API: scoped, optionally restricted to projects. A token is shown once, at `create` and at `rotate`, and is named by its id, its prefix (`gh_xxxxxxx`) or its name. A token can only create, rotate or revoke tokens no wider than itself.
+
+| Command | Description |
+|---|---|
+| `ghayma token create <name> [--scope deploy,databases] [--expires 90] [--project <slug> ...] [--json]` | Create a token (default scope `deploy`, 90 days; `--expires 0` = never) |
+| `ghayma token list [--all] [--json]` | List tokens; `--all` includes revoked ones |
+| `ghayma token revoke <id\|prefix\|name> [--yes]` | Revoke a token; revoking the CLI's own token logs it out |
+| `ghayma token rotate <id\|prefix\|name> [--expires <days>] [--json]` | Replace a token's secret; the CLI's own token is updated in its config |
+
 #### Two logins side by side
 
 `GHAYMA_CONFIG` points the CLI at another config file, so a second login lives
