@@ -228,3 +228,46 @@ func TestTokenCommandsRegistered(t *testing.T) {
 		}
 	}
 }
+
+// TestTokenRotate_DefaultKeepsLifetime: without --expires, rotate sends
+// expires_in_days 0 (keep the remaining lifetime) and never warns about a
+// never-expiring token.
+func TestTokenRotate_DefaultKeepsLifetime(t *testing.T) {
+	var rotateBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/tokens" {
+			io.WriteString(w, `[{"id":"tok-2","name":"ci","token_prefix":"gh_aaaaaaa","scope":"deploy","created_at":"2026-09-01T00:00:00Z"}]`)
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/tokens/tok-2/rotate" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &rotateBody)
+		io.WriteString(w, `{"id":"tok-2","name":"ci","token":"gh_new","scope":"deploy","expires_at":"2026-11-30T00:00:00Z"}`)
+	}))
+	t.Cleanup(ts.Close)
+	tokenConfig(t, ts.URL)
+	resetRotate := func() {
+		tokenRotateDays, tokenJSON = 0, false
+		tokenRotateCmd.Flags().Lookup("expires").Changed = false
+	}
+	resetRotate()
+	t.Cleanup(resetRotate)
+
+	if def := tokenRotateCmd.Flags().Lookup("expires").DefValue; def != "0" {
+		t.Errorf("rotate --expires default = %s; want 0", def)
+	}
+	out := runCLI(t, t.TempDir(), "token", "rotate", "ci")
+	if days, ok := rotateBody["expires_in_days"].(float64); !ok || days != 0 {
+		t.Errorf("rotate body = %v; want expires_in_days 0", rotateBody)
+	}
+	if !strings.Contains(out, "Token (shown once): gh_new") {
+		t.Errorf("new secret not printed: %q", out)
+	}
+
+	runCLI(t, t.TempDir(), "token", "rotate", "ci", "--expires", "30")
+	if days, _ := rotateBody["expires_in_days"].(float64); days != 30 {
+		t.Errorf("rotate --expires 30 body = %v; want 30", rotateBody)
+	}
+}

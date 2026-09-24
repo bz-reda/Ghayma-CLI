@@ -49,7 +49,7 @@ Account API tokens act as you across the API: scoped, optionally restricted to p
 | `ghayma token create <name> [--scope deploy,databases] [--expires 90] [--project <slug> ...] [--json]` | Create a token (default scope `deploy`, 90 days; `--expires 0` = never) |
 | `ghayma token list [--all] [--json]` | List tokens; `--all` includes revoked ones |
 | `ghayma token revoke <id\|prefix\|name> [--yes]` | Revoke a token; revoking the CLI's own token logs it out |
-| `ghayma token rotate <id\|prefix\|name> [--expires <days>] [--json]` | Replace a token's secret; the CLI's own token is updated in its config |
+| `ghayma token rotate <id\|prefix\|name> [--expires <days>] [--json]` | Replace a token's secret. By default the new token keeps the remaining lifetime of the old one; `--expires N` sets a new one. The CLI's own token is updated in its config |
 
 #### Two logins side by side
 

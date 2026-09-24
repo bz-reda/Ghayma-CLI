@@ -96,8 +96,9 @@ var tokenRotateCmd = &cobra.Command{
 	Long: `Replace an API token's secret, keeping its name, scope and projects. The old
 secret stops working immediately; the new one is printed ONCE.
 
---expires sets the new expiry in days (default 90; 0 = never). Rotating the token
-this CLI is logged in with updates the CLI config in place.
+By default the new token keeps the remaining lifetime of the old one; --expires N
+sets a new one. Rotating the token this CLI is logged in with updates the CLI
+config in place.
 
 Examples:
   ghayma token rotate ci
@@ -408,7 +409,8 @@ func runTokenRotate(cmd *cobra.Command, args []string) {
 }
 
 // rotateToken replaces a resolved token's secret and prints the new one once.
-// When it is the CLI's own token, the config takes the new secret.
+// days 0 keeps the remaining lifetime. When it is the CLI's own token, the
+// config takes the new secret.
 func rotateToken(client *api.Client, cfg *config.Config, tok *api.APITokenInfo, days int, asJSON bool) {
 	rotated, err := client.RotateAPIToken(tok.ID, days)
 	if err != nil {
@@ -430,7 +432,6 @@ func rotateToken(client *api.Client, cfg *config.Config, tok *api.APITokenInfo, 
 		fmt.Printf("✅ Rotated token %q\n", rotated.Name)
 		renderTokenSecret(rotated)
 	}
-	neverExpiresNote(days)
 	if own {
 		note := "This CLI's own token was rotated; the config was updated."
 		if asJSON {
@@ -452,7 +453,7 @@ func init() {
 
 	tokenRevokeCmd.Flags().BoolVar(&tokenRevokeYes, "yes", false, "Skip the confirmation")
 
-	tokenRotateCmd.Flags().IntVar(&tokenRotateDays, "expires", tokenDefaultDays, "New expiry in days (0 = never)")
+	tokenRotateCmd.Flags().IntVar(&tokenRotateDays, "expires", 0, "New expiry in days (default: keep the token's remaining lifetime)")
 	tokenRotateCmd.Flags().BoolVar(&tokenJSON, "json", false, "Print the rotated token as JSON")
 
 	tokenCmd.AddCommand(tokenCreateCmd, tokenListCmd, tokenRevokeCmd, tokenRotateCmd)
