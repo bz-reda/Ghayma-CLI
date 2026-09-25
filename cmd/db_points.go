@@ -237,13 +237,3 @@ func formatReserveLine(cost int64, summary *api.ProjectPointsSummary) string {
 	}
 	return line
 }
-
-// diskShrinkError returns a non-empty message when a resize target disk is
-// below the current disk. Disk is GROW-ONLY (local-path PVCs can't shrink
-// safely); the command aborts before hitting the API.
-func diskShrinkError(currentGB, targetGB int) string {
-	if targetGB < currentGB {
-		return fmt.Sprintf("disk cannot shrink from %d GB to %d GB", currentGB, targetGB)
-	}
-	return ""
-}

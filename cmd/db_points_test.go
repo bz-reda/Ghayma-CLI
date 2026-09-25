@@ -173,19 +173,6 @@ func TestFormatReserveLine(t *testing.T) {
 	}
 }
 
-// Disk is grow-only: a target below the current disk aborts client-side.
-func TestDiskShrinkError(t *testing.T) {
-	if msg := diskShrinkError(10, 5); !strings.Contains(msg, "disk cannot shrink") {
-		t.Errorf("shrink msg = %q; want a 'disk cannot shrink' message", msg)
-	}
-	if msg := diskShrinkError(10, 20); msg != "" {
-		t.Errorf("grow msg = %q; want empty (grow allowed)", msg)
-	}
-	if msg := diskShrinkError(10, 10); msg != "" {
-		t.Errorf("same-size msg = %q; want empty", msg)
-	}
-}
-
 // formatMarketplaceError renders each MarketplaceError Kind per the Global
 // Constraints. Shared across db create + resize (and Tasks 4 & 5) so the copy
 // never drifts.

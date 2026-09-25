@@ -28,6 +28,7 @@ var dbCreateBackup string
 var dbResizeTier string
 var dbResizeDiskGB int
 var dbResizeBackup string
+var dbResizeNoWait bool
 
 var dbCreateCmd = &cobra.Command{
 	Use:   "create [name]",
@@ -126,19 +127,17 @@ func mongoModeLabel(replicaSet bool) string {
 
 var dbResizeCmd = &cobra.Command{
 	Use:   "resize [name]",
-	Short: "Change a database's tier, disk (grow-only), or backup schedule",
-	Args:  requireOneArg("name", "db list"),
+	Short: "Change a database's tier, disk size, or backup schedule",
+	Long: "Change a database's tier, disk size, or backup schedule.\n\n" +
+		"A larger disk grows online. A smaller one stops the database for about a minute\n" +
+		"while its data moves to the smaller disk; 'ghayma db info' shows the smallest disk\n" +
+		"it can shrink to. The command waits for a disk change to finish unless --no-wait\n" +
+		"is given.",
+	Args: requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
-			return
-		}
-
-		client := api.NewClient(cfg)
-		db, err := findDatabaseByName(client, args[0])
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
+			failf("Please login first: ghayma login")
 			return
 		}
 
@@ -146,30 +145,51 @@ var dbResizeCmd = &cobra.Command{
 		diskGB := dbResizeDiskGB
 		backup := dbResizeBackup
 
+		if cmd.Flags().Changed("disk-gb") && diskGB < 1 {
+			failf("--disk-gb must be a whole number of GB, at least 1.")
+			return
+		}
 		if tier == "" && diskGB == 0 && backup == "" {
-			fmt.Println("❌ Nothing to change. Pass at least one of --tier, --disk-gb, --backup.")
+			failf("Nothing to change. Pass at least one of --tier, --disk-gb, --backup.")
 			return
 		}
 
-		// Disk is grow-only — reject a shrink client-side before the request
-		// (local-path PVCs can't shrink safely).
-		if diskGB > 0 {
-			if msg := diskShrinkError(db.DiskGB, diskGB); msg != "" {
-				fmt.Printf("❌ %s\n", msg)
-				return
-			}
+		client := api.NewClient(cfg)
+		db, err := findDatabaseByName(client, args[0])
+		if err != nil {
+			failf("%v", err)
+			return
 		}
 
 		updated, err := client.RetierDatabase(db.ID, tier, diskGB, backup)
 		if err != nil {
-			fmt.Printf("❌ Failed to resize database: %s\n", formatMarketplaceError(err))
+			failf("Failed to resize database: %s", resizeErrorText(err, db.DiskGB))
 			return
 		}
 
-		fmt.Printf("✅ Database '%s' updated\n", updated.Name)
-		fmt.Printf("   Tier:    %s\n", updated.TierSlug)
-		fmt.Printf("   Disk:    %d GB\n", updated.DiskGB)
-		fmt.Printf("   Backup:  %s\n", updated.BackupTierSlug)
+		if updated.Status != dbStatusResizing {
+			fmt.Printf("✅ Database '%s' updated\n", updated.Name)
+			fmt.Printf("   Tier:    %s\n", updated.TierSlug)
+			fmt.Printf("   Disk:    %d GB\n", updated.DiskGB)
+			fmt.Printf("   Backup:  %s\n", updated.BackupTierSlug)
+			return
+		}
+
+		// The tier and backup changes are already applied; the disk follows.
+		if tier != "" || backup != "" {
+			fmt.Printf("✅ Database '%s' updated\n", updated.Name)
+			fmt.Printf("   Tier:    %s\n", updated.TierSlug)
+			fmt.Printf("   Backup:  %s\n", updated.BackupTierSlug)
+		}
+		change := startedDiskChange(updated, db.DiskGB, diskGB)
+		fmt.Println(diskChangeHeadline(change))
+		if dbResizeNoWait {
+			fmt.Printf("   The change continues on the platform. Check it with: ghayma db info %s\n", db.Name)
+			return
+		}
+		if !waitForDiskChange(client, db.Name, db.ID, change) {
+			exitFn(1)
+		}
 	},
 }
 
@@ -341,7 +361,7 @@ var dbListCmd = &cobra.Command{
 
 		fmt.Printf("🗄️  Your databases (%d):\n\n", len(databases))
 		for _, db := range databases {
-			fmt.Printf("   %-15s  %-10s  %s\n", db.Name, db.Type, db.Status)
+			fmt.Printf("   %-15s  %-10s  %s\n", db.Name, db.Type, dbStatusText(db))
 		}
 	},
 }
@@ -366,7 +386,7 @@ var dbInfoCmd = &cobra.Command{
 
 		fmt.Printf("🗄️  Database: %s\n\n", db.Name)
 		fmt.Printf("   Type:       %s %s\n", db.Type, db.Version)
-		fmt.Printf("   Status:     %s\n", db.Status)
+		fmt.Printf("   Status:     %s\n", dbStatusText(*db))
 		fmt.Printf("   Host:       %s\n", db.Host)
 		fmt.Printf("   Port:       %d\n", db.Port)
 		if db.DBName != "" {
@@ -374,6 +394,13 @@ var dbInfoCmd = &cobra.Command{
 			fmt.Printf("   Username:   %s\n", db.Username)
 		}
 		fmt.Printf("   Storage:    %d MB\n", db.StorageMB)
+		if db.DiskUsedBytes > 0 {
+			used := formatBytes(db.DiskUsedBytes)
+			if db.MinDiskGB != nil {
+				used += fmt.Sprintf(" (smallest disk now: %d GB)", *db.MinDiskGB)
+			}
+			fmt.Printf("   Disk used:  %s\n", used)
+		}
 		fmt.Printf("   CPU:        %s\n", db.CPULimit)
 		fmt.Printf("   Memory:     %s\n", db.MemoryLimit)
 		if db.ProjectID != "" {
@@ -582,8 +609,9 @@ func init() {
 	dbCreateCmd.Flags().StringVar(&dbCreateBackup, "backup", "", "Backup schedule: weekly, daily, sixhourly. Interactive picker when omitted; weekly default if no catalog.")
 
 	dbResizeCmd.Flags().StringVar(&dbResizeTier, "tier", "", "New database tier (e.g. xs, s, m, l)")
-	dbResizeCmd.Flags().IntVar(&dbResizeDiskGB, "disk-gb", 0, "New disk size in GB (grow-only — cannot shrink)")
+	dbResizeCmd.Flags().IntVar(&dbResizeDiskGB, "disk-gb", 0, "New disk size in GB. Larger grows it online; smaller shrinks it, stopping the database for about a minute")
 	dbResizeCmd.Flags().StringVar(&dbResizeBackup, "backup", "", "New backup schedule: weekly, daily, sixhourly")
+	dbResizeCmd.Flags().BoolVar(&dbResizeNoWait, "no-wait", false, "Return once a disk change has started instead of waiting for it to finish")
 
 	dbCmd.AddCommand(dbCreateCmd)
 	dbCmd.AddCommand(dbListCmd)

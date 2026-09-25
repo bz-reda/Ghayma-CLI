@@ -51,6 +51,11 @@ func resetCommandFlags() {
 	linkNoSite = false
 	accessJSON, accessAddName, accessAddLevel, accessAddAllow, accessAddDays = false, "", "", "", 0
 	accessRevokeYes, accessRotateYes, accessAllowSet = false, false, ""
+	dbResizeTier, dbResizeDiskGB, dbResizeBackup, dbResizeNoWait = "", 0, "", false
+	// `db resize` checks whether --disk-gb was GIVEN.
+	if f := dbResizeCmd.Flags().Lookup("disk-gb"); f != nil {
+		f.Changed = false
+	}
 	// `access allow` branches on whether --set was GIVEN, and cobra keeps
 	// Changed set across Executes, so the flag's own state is cleared too.
 	if f := accessAllowCmd.Flags().Lookup("set"); f != nil {

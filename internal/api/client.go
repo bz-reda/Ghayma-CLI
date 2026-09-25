@@ -1038,11 +1038,83 @@ type DatabaseInfo struct {
 	ReplicaSet  bool   `json:"replica_set,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	// Points-marketplace footprint fields (mirror managed_databases columns).
-	// TierSlug/DiskGB/BackupTierSlug drive the resize preview and the
-	// client-side grow-only disk check.
+	// DiskGB keeps its old value while a disk change runs.
 	TierSlug       string `json:"tier_slug,omitempty"`
 	DiskGB         int    `json:"disk_gb,omitempty"`
 	BackupTierSlug string `json:"backup_tier_slug,omitempty"`
+	// DiskUsedBytes is what the volume holds, engine files included (0: not
+	// measured yet). MinDiskGB is the smallest disk it can shrink to now; it
+	// may exceed DiskGB.
+	DiskUsedBytes int64 `json:"disk_used_bytes,omitempty"`
+	MinDiskGB     *int  `json:"min_disk_gb,omitempty"`
+	// Resize is the disk change in progress (status "resizing") or the last
+	// one that failed.
+	Resize *DatabaseResize `json:"resize,omitempty"`
+}
+
+// DatabaseResize is a database's disk change. Error is set once a change
+// failed: the status is then "running" when it was undone, or "error" when it
+// needs support.
+type DatabaseResize struct {
+	Direction    string     `json:"direction"` // grow | shrink
+	TargetDiskGB int        `json:"target_disk_gb"`
+	Phase        string     `json:"phase,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+}
+
+// Disk-change refusal codes.
+const (
+	CodeDiskTooSmall       = "disk_too_small"
+	CodeResizeInProgress   = "resize_in_progress"
+	CodeDatabaseNotRunning = "database_not_running"
+	CodeStorageCapacity    = "storage_capacity"
+)
+
+// DiskChangeError is a refused disk change, carrying the server's code and
+// sentence. A disk_too_small refusal also says what the volume holds and the
+// smallest disk it fits now.
+type DiskChangeError struct {
+	Status        int
+	Code          string
+	Message       string
+	DiskUsedBytes int64
+	MinDiskGB     int
+	TargetDiskGB  int
+}
+
+func (e *DiskChangeError) Error() string {
+	if e.Message == "" {
+		return fmt.Sprintf("HTTP %d: %s", e.Status, e.Code)
+	}
+	return e.Message
+}
+
+// diskChangeError reads a disk-change refusal from an error body; nil when the
+// body carries none of the disk-change codes.
+func diskChangeError(status int, body []byte) *DiskChangeError {
+	var r struct {
+		Error         string `json:"error"`
+		Code          string `json:"code"`
+		DiskUsedBytes int64  `json:"disk_used_bytes"`
+		MinDiskGB     int    `json:"min_disk_gb"`
+		TargetDiskGB  int    `json:"target_disk_gb"`
+	}
+	if json.Unmarshal(body, &r) != nil {
+		return nil
+	}
+	switch r.Code {
+	case CodeDiskTooSmall, CodeResizeInProgress, CodeDatabaseNotRunning, CodeStorageCapacity:
+		return &DiskChangeError{
+			Status:        status,
+			Code:          r.Code,
+			Message:       r.Error,
+			DiskUsedBytes: r.DiskUsedBytes,
+			MinDiskGB:     r.MinDiskGB,
+			TargetDiskGB:  r.TargetDiskGB,
+		}
+	}
+	return nil
 }
 
 // CreateDatabase creates a managed database. replicaSet is only meaningful for
@@ -1091,9 +1163,10 @@ func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool
 // RetierDatabase changes a database's tier, disk, and/or backup schedule via
 // PATCH /api/v1/databases/:id/tier. At least one of tier/diskGB/backupSlug must
 // be meaningful; unset fields (blank slug, 0 disk) are omitted so a single-axis
-// change doesn't clobber the others. Non-200 responses route through
-// classifyAPIError so the marketplace classes render (disk grow-only is checked
-// client-side before this call).
+// change doesn't clobber the others. The disk may grow or shrink; a reply with
+// status "resizing" means the disk change continues on the platform. A refused
+// disk change is a *DiskChangeError; other non-200 responses route through
+// classifyAPIError so the marketplace classes render.
 func (c *Client) RetierDatabase(id, tier string, diskGB int, backupSlug string) (*DatabaseInfo, error) {
 	payload := map[string]interface{}{}
 	if tier != "" {
@@ -1114,6 +1187,9 @@ func (c *Client) RetierDatabase(id, tier string, diskGB int, backupSlug string) 
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
+		if de := diskChangeError(resp.StatusCode, respBody); de != nil {
+			return nil, de
+		}
 		return nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
@@ -1147,29 +1223,23 @@ func (c *Client) GetDatabase(id string) (*DatabaseInfo, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("database not found")
-	}
-
 	var result struct {
 		Database DatabaseInfo `json:"database"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return nil, err
+	}
 	return &result.Database, nil
 }
 
+// DeleteDatabase keeps the server's own refusal (e.g. while the disk resizes).
 func (c *Client) DeleteDatabase(id string) error {
 	resp, err := c.authRequest("DELETE", "/api/v1/databases/"+id, nil)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed: %s", string(respBody))
-	}
-	return nil
+	return c.decodeJSON(resp, nil)
 }
 
 // Helpers
