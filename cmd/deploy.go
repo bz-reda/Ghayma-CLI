@@ -258,6 +258,23 @@ Examples:
 			return
 		}
 
+		// A config naming no site leaves --site to the live list, as every
+		// other site-scoped command does. The upload has to carry the site it
+		// picked: without a site_id the server deploys to the default site.
+		if ctx.NoSite && deploySite != "" {
+			site, err := liveSiteOf(client, ctx, deploySite)
+			if errors.Is(err, errNoSite) {
+				failNoSite()
+				return
+			}
+			if err != nil {
+				failf("%v", err)
+				return
+			}
+			ctx.Site.SiteID, ctx.Site.SiteSlug, ctx.Site.SiteName = site.ID, site.Slug, site.Name
+			ctx.NoSite = false
+		}
+
 		// A site-less project still deploys — the platform materializes `main`
 		// on the first one — but say so, because nothing in the config or the
 		// init flow ever mentioned a site. A config naming no site on a
@@ -461,7 +478,7 @@ func bestEffortSiteKind(client *api.Client, ctx *SiteContext, siteFlag string) (
 
 func init() {
 	deployCmd.Flags().BoolVarP(&deployProd, "prod", "p", false, "(no longer needed) a deploy is production when the target site is a production site")
-	deployCmd.Flags().StringVar(&deploySite, "site", "", "Site to deploy (slug); at a workspace root with several sites this replaces the picker")
+	deployCmd.Flags().StringVar(&deploySite, "site", "", "Site to deploy (slug, name or id); picks the project's site when this directory's config names none, and replaces the picker at a workspace root")
 	deployCmd.Flags().StringVar(&deployImage, "image", "", "Deploy an image already pushed with 'ghayma docker push' (tag, or sha256: digest) instead of uploading this directory")
 	rootCmd.AddCommand(deployCmd)
 }

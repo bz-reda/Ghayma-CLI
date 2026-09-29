@@ -230,7 +230,7 @@ func renderConnectionsTable(rows []api.Connection) string {
 }
 
 // liveSiteFor picks a site from the live list when the config names none:
-// --site by slug or name, else the only site, else an error naming the
+// --site by slug, name or id, else the only site, else an error naming the
 // choices. No sites at all is the site-less project.
 func liveSiteFor(sites []api.Site, siteFlag string) (*api.Site, error) {
 	if len(sites) == 0 {
@@ -238,7 +238,7 @@ func liveSiteFor(sites []api.Site, siteFlag string) (*api.Site, error) {
 	}
 	if siteFlag != "" {
 		for i := range sites {
-			if strings.EqualFold(sites[i].Slug, siteFlag) || strings.EqualFold(sites[i].Name, siteFlag) {
+			if strings.EqualFold(sites[i].Slug, siteFlag) || strings.EqualFold(sites[i].Name, siteFlag) || strings.EqualFold(sites[i].ID, siteFlag) {
 				return &sites[i], nil
 			}
 		}
