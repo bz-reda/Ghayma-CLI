@@ -62,10 +62,31 @@ func runDomainCreate(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Printf("✅ Domain '%s' added to %s\n", domain, ctx.ProjectName)
+	status, err := client.CheckDomain(domain)
+	printDomainNextSteps(domain, status, err)
+}
+
+// printDomainNextSteps says what the new domain still needs. The A record's
+// address is the server's dns_target: the platform's address moves, and a
+// copy in the CLI went stale for three weeks after the 2026-09-06 cutover.
+// When the check fails no address is printed at all. The domain is live
+// without a redeploy: the platform publishes it once DNS points here.
+func printDomainNextSteps(domain string, status *api.DomainStatus, err error) {
+	if err == nil && status.DNS.OK {
+		fmt.Println("🌐 DNS already points here; SSL is provisioned automatically.")
+		return
+	}
 	fmt.Println("\n📋 Next steps:")
-	fmt.Printf("   1. Add an A record in your DNS: %s → 65.109.68.181\n", domain)
-	fmt.Printf("   2. Redeploy: ghayma deploy\n")
-	fmt.Printf("   3. SSL will be provisioned automatically\n")
+	if err != nil || status.DNSTarget == "" {
+		fmt.Printf("   1. Add an A record in your DNS for %s, pointing at the address shown in the Dashboard (Project → Domains)\n", domain)
+	} else {
+		fmt.Printf("   1. Add an A record in your DNS: %s → %s\n", domain, status.DNSTarget)
+		if status.DNS.Reason != "" {
+			fmt.Printf("      Right now: %s.\n", status.DNS.Reason)
+		}
+	}
+	fmt.Println("   2. Remove any AAAA (IPv6) record for it: Ghayma serves IPv4 only")
+	fmt.Println("   3. SSL is provisioned automatically once DNS points here; no redeploy needed")
 }
 
 var domainCreateCmd = &cobra.Command{
