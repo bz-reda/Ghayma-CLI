@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -765,6 +766,35 @@ func (c *Client) ListDomains(projectID string) ([]string, error) {
 		result = append(result, d.Domain)
 	}
 	return result, nil
+}
+
+// DomainStatus is GET /domains/check. DNSTarget is the address the domain's A
+// record must point at — the platform's, which only the server knows.
+type DomainStatus struct {
+	Domain    string `json:"domain"`
+	DNSTarget string `json:"dns_target"`
+	DNS       struct {
+		OK          bool     `json:"ok"`
+		ResolvedIPs []string `json:"resolved_ips"`
+		Reason      string   `json:"reason"`
+	} `json:"dns"`
+	SSL struct {
+		OK bool `json:"ok"`
+	} `json:"ssl"`
+}
+
+func (c *Client) CheckDomain(domain string) (*DomainStatus, error) {
+	resp, err := c.authRequest("GET", "/api/v1/domains/check?domain="+url.QueryEscape(domain), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var status DomainStatus
+	if err := c.decodeJSON(resp, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
 }
 
 func (c *Client) RemoveDomain(projectID, domain string) error {
