@@ -376,7 +376,26 @@ Examples:
 		}
 
 		fmt.Printf("✅ '%s' scaled to tier %s · %d replica(s)\n", updated.Name, displayTier(updated.AppTierSlug), updated.Replicas)
+		if line := appliedLine(updated); line != "" {
+			fmt.Println(line)
+		}
 	},
+}
+
+// appliedLine says whether a tier change reached the running app, and nothing
+// against a server without live resizing.
+func appliedLine(s *api.Site) string {
+	switch {
+	case s.Applied == nil:
+		return ""
+	case *s.Applied:
+		return "   The app is moving to the new size now, with no downtime."
+	}
+	note := s.ApplyNote
+	if note == "" {
+		note = "it applies at the next deploy"
+	}
+	return "   " + capitalize(note) + "."
 }
 
 func init() {
