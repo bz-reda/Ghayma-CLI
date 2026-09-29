@@ -470,6 +470,11 @@ type Site struct {
 	// and price the change as AppCost(tier.PointsCost, replicas).
 	AppTierSlug string `json:"app_tier_slug"`
 	Replicas    int    `json:"replicas"`
+	// Applied and ApplyNote report what a tier change did to the running app.
+	// Only the tier endpoint sends them, and a server without live resizing
+	// sends neither.
+	Applied   *bool  `json:"applied,omitempty"`
+	ApplyNote string `json:"apply_note,omitempty"`
 }
 
 // CreateSite creates a site. environment is the kind the new site is born as
