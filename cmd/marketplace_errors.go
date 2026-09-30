@@ -11,8 +11,8 @@ import (
 // user-facing guidance. It type-asserts *api.MarketplaceError and branches on
 // Kind per the plan's Global Constraints; a non-marketplace error renders its
 // raw text. db create + db resize (Task 3) and the app/storage/auth flows
-// (Tasks 4 & 5) all call this — single source so the three-path insufficient
-// copy and the capacity/maxtier lines never drift.
+// (Tasks 4 & 5) all call this — single source so the insufficient copy and
+// the capacity/maxtier lines never drift.
 func formatMarketplaceError(err error) string {
 	if err == nil {
 		return ""
@@ -23,14 +23,14 @@ func formatMarketplaceError(err error) string {
 	}
 	switch me.Kind {
 	case "insufficient":
-		// Shortfall (server message) + the three ways out.
+		// Shortfall (server message) + the ways out. No PAYG: the API refuses
+		// it until the PAYG relaunch (2026-09-30).
 		var b strings.Builder
 		b.WriteString(me.Message)
 		b.WriteString("\n")
 		b.WriteString("You can:\n")
 		b.WriteString("  • Upgrade your plan for a larger points budget\n")
-		b.WriteString("  • Free up points by deleting or downsizing other resources\n")
-		b.WriteString("  • Switch to pay-as-you-go (PAYG) to lift the budget cap")
+		b.WriteString("  • Free up points by deleting or downsizing other resources")
 		return b.String()
 	case "capacity":
 		// Never an upsell — the platform, not the plan, is the constraint.
