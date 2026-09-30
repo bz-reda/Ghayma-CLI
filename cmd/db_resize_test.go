@@ -163,7 +163,7 @@ func TestResizeErrorText(t *testing.T) {
 	if got := resizeErrorText(errors.New("a database disk is at least 1 GB"), 10); got != "a database disk is at least 1 GB" {
 		t.Errorf("plain error = %q", got)
 	}
-	if got := resizeErrorText(&api.MarketplaceError{Kind: "insufficient", Message: "over budget"}, 10); !strings.Contains(got, "PAYG") {
+	if got := resizeErrorText(&api.MarketplaceError{Kind: "insufficient", Message: "over budget"}, 10); !strings.Contains(got, "Free up points") {
 		t.Errorf("points error = %q; want the insufficient guidance", got)
 	}
 }
@@ -335,7 +335,7 @@ func TestDBResize_RefusalsPrintTheServerMessage(t *testing.T) {
 		{"below 1 GB", `{"error":"a database disk is at least 1 GB"}`,
 			http.StatusBadRequest, []string{"❌ Failed to resize database: a database disk is at least 1 GB\n"}},
 		{"points budget", `{"error":"this change would exceed your plan's points budget; upgrade your plan"}`,
-			http.StatusConflict, []string{"exceed your plan's points budget", "Switch to pay-as-you-go (PAYG)"}},
+			http.StatusConflict, []string{"exceed your plan's points budget", "Free up points by deleting or downsizing other resources"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

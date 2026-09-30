@@ -159,7 +159,7 @@ func TestRetierDatabase_OmitsUnsetFields(t *testing.T) {
 func TestRetierDatabase_ClassifiesError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
-		io.WriteString(w, `{"error":"this change would exceed your plan's points budget; upgrade your plan, free up resources, or switch to pay-as-you-go (PAYG)"}`)
+		io.WriteString(w, `{"error":"this change would exceed your plan's points budget; upgrade your plan or free up resources"}`)
 	}))
 	defer ts.Close()
 

@@ -177,15 +177,19 @@ func TestFormatReserveLine(t *testing.T) {
 // Constraints. Shared across db create + resize (and Tasks 4 & 5) so the copy
 // never drifts.
 func TestFormatMarketplaceError_Kinds(t *testing.T) {
-	// insufficient → shortfall message + THREE explicit paths.
+	// insufficient → shortfall message + the two explicit paths. No PAYG:
+	// the API refuses it until the PAYG relaunch (2026-09-30).
 	insuf := formatMarketplaceError(&api.MarketplaceError{
 		Kind:    "insufficient",
 		Message: "creating this database would exceed your plan's points budget",
 	})
-	for _, want := range []string{"points budget", "Upgrade", "Free up", "PAYG"} {
+	for _, want := range []string{"points budget", "Upgrade", "Free up"} {
 		if !strings.Contains(insuf, want) {
 			t.Errorf("insufficient render missing %q, got:\n%s", want, insuf)
 		}
+	}
+	if l := strings.ToLower(insuf); strings.Contains(l, "payg") || strings.Contains(l, "pay-as-you-go") {
+		t.Errorf("insufficient render must not suggest pay-as-you-go, got:\n%s", insuf)
 	}
 
 	// capacity → contact-support, NEVER an upsell.

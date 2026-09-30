@@ -163,14 +163,14 @@ func TestClassifyAPIError_Kinds(t *testing.T) {
 		{
 			name:       "insufficient_app",
 			status:     http.StatusConflict,
-			body:       `{"error":"this app size would exceed your plan's points budget; upgrade your plan, free up resources, or switch to pay-as-you-go (PAYG)"}`,
+			body:       `{"error":"this app size would exceed your plan's points budget; upgrade your plan or free up resources"}`,
 			wantKind:   "insufficient",
 			wantMsgHas: "points budget",
 		},
 		{
 			name:       "insufficient_db",
 			status:     http.StatusConflict,
-			body:       `{"error":"this change would exceed your plan's points budget; upgrade your plan, free up resources, or switch to pay-as-you-go (PAYG)"}`,
+			body:       `{"error":"this change would exceed your plan's points budget; upgrade your plan or free up resources"}`,
 			wantKind:   "insufficient",
 			wantMsgHas: "points budget",
 		},
