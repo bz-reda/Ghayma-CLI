@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // The command-level tests below drive the REAL cobra tree against a stub API,
@@ -55,6 +57,18 @@ func resetCommandFlags() {
 	// `db resize` checks whether --disk-gb was GIVEN.
 	if f := dbResizeCmd.Flags().Lookup("disk-gb"); f != nil {
 		f.Changed = false
+	}
+	dbCreateSites, dbCreateNoConnect = nil, false
+	storageCreateSites, storageCreateNoConnect = nil, false
+	authCreateSites, authCreateNoConnect = nil, false
+	authProject, authAppSlug = "", ""
+	// The create commands' --site / --no-connect, Changed included.
+	for _, c := range []*cobra.Command{dbCreateCmd, storageCreateCmd, authCreateCmd} {
+		for _, name := range []string{"site", "no-connect"} {
+			if f := c.Flags().Lookup(name); f != nil {
+				f.Changed = false
+			}
+		}
 	}
 	// `access allow` branches on whether --set was GIVEN, and cobra keeps
 	// Changed set across Executes, so the flag's own state is cleared too.

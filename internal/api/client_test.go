@@ -375,8 +375,8 @@ func TestCreates_DecodeTheConnections(t *testing.T) {
 		if !reflect.DeepEqual(choice.Connected, []string{"s1"}) || !reflect.DeepEqual(choice.Pending, []string{"s2"}) {
 			t.Errorf("%s: connected %v, pending %v; want [s1], [s2]", tc.kind, choice.Connected, choice.Pending)
 		}
-		if len(choice.Failed) != 1 || choice.Failed[0].SiteID != "s3" || choice.Failed[0].Error != "could not reach the database" {
-			t.Errorf("%s: failed = %+v; want s3 with its reason", tc.kind, choice.Failed)
+		if want := []SiteConnectFailure{{SiteID: "s3", Error: "could not reach the database"}}; !reflect.DeepEqual(choice.Failed, want) {
+			t.Errorf("%s: failed = %+v; want %+v", tc.kind, choice.Failed, want)
 		}
 	}
 }

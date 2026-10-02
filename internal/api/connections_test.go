@@ -283,5 +283,23 @@ func TestListUnconnected_SurfacesHTTPErrors(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%d: got %v, %v; want an error carrying %q", tc.status, got, err, tc.want)
 		}
+		if got != nil {
+			t.Errorf("%d: result = %#v; want nil beside the error", tc.status, got)
+		}
+	}
+}
+
+// TestListUnconnected_NothingIsAnEmptyList: a project whose services all have a
+// site reads as an empty list, never nil, whether the server sends [] or no key.
+func TestListUnconnected_NothingIsAnEmptyList(t *testing.T) {
+	for _, body := range []string{`{"unconnected":[]}`, `{}`} {
+		ts := jsonStatusServer(t, http.StatusOK, body)
+		got, err := newTestClient(ts.URL).ListUnconnected("p1")
+		if err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if got == nil || len(got) != 0 {
+			t.Errorf("%s: unconnected = %#v; want a non-nil empty slice", body, got)
+		}
 	}
 }

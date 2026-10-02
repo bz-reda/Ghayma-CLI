@@ -59,12 +59,16 @@ type ConnectionItem struct {
 // failed with the reason. A server older than 2026-10-02 sends none, which
 // reads as empty.
 type ConnectChoice struct {
-	Connected []string `json:"connected"`
-	Pending   []string `json:"pending"`
-	Failed    []struct {
-		SiteID string `json:"site_id"`
-		Error  string `json:"error"`
-	} `json:"failed"`
+	Connected []string             `json:"connected"`
+	Pending   []string             `json:"pending"`
+	Failed    []SiteConnectFailure `json:"failed"`
+}
+
+// SiteConnectFailure is a chosen site the new service could not be connected
+// to; Error is a sentence safe to show the user.
+type SiteConnectFailure struct {
+	SiteID string `json:"site_id"`
+	Error  string `json:"error"`
 }
 
 // siteChoice is a create body's connect_site_ids: the chosen sites, or [] for
@@ -129,7 +133,8 @@ func (c *Client) ListConnections(projectID, siteID string) ([]Connection, error)
 }
 
 // ListUnconnected returns the project's services that no site holds, which a
-// deploy offers to connect (GET …/connections/unconnected).
+// deploy offers to connect (GET …/connections/unconnected). Never nil on
+// success.
 func (c *Client) ListUnconnected(projectID string) ([]Unconnected, error) {
 	resp, err := c.authRequest("GET", "/api/v1/projects/"+projectID+"/connections/unconnected", nil)
 	if err != nil {
@@ -141,6 +146,9 @@ func (c *Client) ListUnconnected(projectID string) ([]Unconnected, error) {
 	}
 	if err := c.decodeJSON(resp, &out); err != nil {
 		return nil, err
+	}
+	if out.Unconnected == nil {
+		out.Unconnected = []Unconnected{}
 	}
 	return out.Unconnected, nil
 }

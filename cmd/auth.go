@@ -71,6 +71,13 @@ var authCreateCmd = &cobra.Command{
 			return
 		}
 
+		// --project is looked up over the API, so a contradictory --site /
+		// --no-connect is refused before it.
+		if err := checkConnectFlags(authCreateSites, authCreateNoConnect); err != nil {
+			failf("%v", err)
+			return
+		}
+
 		client := api.NewClient(cfg)
 
 		// Find project
@@ -104,6 +111,13 @@ var authCreateCmd = &cobra.Command{
 			projectID = projectCfg.ProjectID
 		}
 
+		// connect names an auth app by its app id.
+		siteIDs, sites, note, err := resolveSiteChoice(client, projectID, authCreateSites, authCreateNoConnect, "auth_app", authAppSlug)
+		if err != nil {
+			reportSiteChoiceError(err)
+			return
+		}
+
 		bracketSlug := authCreateUsers
 		twofa := authCreate2FA
 
@@ -131,7 +145,7 @@ var authCreateCmd = &cobra.Command{
 			printAuthReservePreview(client, cat, projectID, bracketSlug, twofa)
 		}
 
-		app, _, err := client.CreateAuthApp(args[0], authAppSlug, projectID, bracketSlug, nil)
+		app, outcome, err := client.CreateAuthApp(args[0], authAppSlug, projectID, bracketSlug, siteIDs)
 		if err != nil {
 			fmt.Printf("❌ Failed to create auth app: %s\n", formatMarketplaceError(err))
 			return
@@ -155,6 +169,7 @@ var authCreateCmd = &cobra.Command{
 				fmt.Printf("   Enabled:   2FA\n")
 			}
 		}
+		printConnectOutcome(outcome, siteIDs, sites, note)
 
 		fmt.Printf("\n📋 Endpoints:\n")
 		fmt.Printf("   Register:  POST https://auth.ghayma.tech/v1/%s/register\n", app.AppID)
@@ -284,6 +299,8 @@ var (
 	authAppSlug              string
 	authCreateUsers          string
 	authCreate2FA            bool
+	authCreateSites          []string
+	authCreateNoConnect      bool
 	authConfigName           string
 	authConfigGoogleID       string
 	authConfigGoogleSecret   string
@@ -557,6 +574,8 @@ func init() {
 	authCreateCmd.MarkFlagRequired("app-id")
 	authCreateCmd.Flags().StringVar(&authCreateUsers, "users", "", "User-capacity bracket: 1k|10k|100k|1m (auth_tiers.slug), priced in points. Interactive picker when omitted; server default if no catalog.")
 	authCreateCmd.Flags().BoolVar(&authCreate2FA, "2fa", false, "Enable two-factor auth via authenticator app/TOTP (adds the flat 2FA points add-on).")
+	authCreateCmd.Flags().StringArrayVar(&authCreateSites, "site", nil, "Connect the new auth app to this site (slug); repeat for several. Asked interactively when omitted.")
+	authCreateCmd.Flags().BoolVar(&authCreateNoConnect, "no-connect", false, "Connect the new auth app to no site, without asking.")
 
 	authConfigCmd.Flags().StringVar(&authConfigName, "name", "", "New display name for the auth app")
 	authConfigCmd.Flags().StringVar(&authConfigGoogleID, "google-client-id", "", "Google OAuth client ID")
