@@ -320,7 +320,7 @@ Examples:
 			Port:            ctx.Site.Port,
 			Crons:           cronsFormField(ctx.Site.Crons),
 		}
-		resp, err := client.Deploy(ctx.ProjectID, ctx.Site.SiteID, ctx.SourceDir, "CLI deploy", deployProd, ctx.RootDirectory, filepath.ToSlash(ctx.Site.DockerfilePath), bc, rules)
+		resp, err := client.Deploy(ctx.ProjectID, ctx.Site.SiteID, ctx.SourceDir, "CLI deploy", deployProd, ctx.RootDirectory, filepath.ToSlash(ctx.Site.DockerfilePath), bc, rules, nil)
 		if err != nil {
 			fmt.Printf("❌ Deploy failed: %v\n", err)
 			return

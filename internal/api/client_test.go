@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -278,5 +279,207 @@ func TestRegister_SurfacesGateRefusal(t *testing.T) {
 	}
 	if !strings.Contains(apiErr.Message, "private beta") {
 		t.Errorf("message %q lost the server's text", apiErr.Message)
+	}
+}
+
+// createWithChoice is one of the three creates that take the sites to connect
+// the new service to.
+type createWithChoice struct {
+	kind     string
+	path     string
+	resource string // the resource half of the 201 body
+	id       string
+	create   func(c *Client, siteIDs []string) (string, ConnectChoice, error)
+}
+
+var createsWithChoice = []createWithChoice{
+	{"database", "/api/v1/databases", `"database":{"id":"d1","name":"shop-db","type":"postgres"}`, "d1",
+		func(c *Client, siteIDs []string) (string, ConnectChoice, error) {
+			db, choice, err := c.CreateDatabase("shop-db", "postgres", "p1", nil, "", 0, "", siteIDs)
+			if err != nil {
+				return "", choice, err
+			}
+			return db.ID, choice, nil
+		}},
+	{"bucket", "/api/v1/storage", `"bucket":{"id":"b1","name":"media"}`, "b1",
+		func(c *Client, siteIDs []string) (string, ConnectChoice, error) {
+			bucket, choice, err := c.CreateBucket("media", "p1", 0, siteIDs)
+			if err != nil {
+				return "", choice, err
+			}
+			return bucket.ID, choice, nil
+		}},
+	{"auth app", "/api/v1/auth-apps", `"auth_app":{"id":"a1","name":"shop-auth","app_id":"shop-auth"}`, "a1",
+		func(c *Client, siteIDs []string) (string, ConnectChoice, error) {
+			app, choice, err := c.CreateAuthApp("shop-auth", "shop-auth", "p1", "", siteIDs)
+			if err != nil {
+				return "", choice, err
+			}
+			return app.ID, choice, nil
+		}},
+}
+
+// createServer answers a create with a 201 carrying body and records the
+// request body it received.
+func createServer(t *testing.T, path, body string) (*httptest.Server, map[string]json.RawMessage) {
+	t.Helper()
+	sent := map[string]json.RawMessage{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != path {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		json.Unmarshal(raw, &sent)
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(ts.Close)
+	return ts, sent
+}
+
+// TestCreates_SendTheSiteChoice: every create body states which sites to
+// connect; no choice is [] — never null, never a missing key.
+func TestCreates_SendTheSiteChoice(t *testing.T) {
+	for _, tc := range createsWithChoice {
+		for _, choice := range []struct {
+			siteIDs []string
+			want    string
+		}{
+			{[]string{"s1", "s2"}, `["s1","s2"]`},
+			{nil, `[]`},
+		} {
+			ts, sent := createServer(t, tc.path, "{"+tc.resource+"}")
+			if _, _, err := tc.create(newTestClient(ts.URL), choice.siteIDs); err != nil {
+				t.Fatalf("%s: %v", tc.kind, err)
+			}
+			if got := string(sent["connect_site_ids"]); got != choice.want {
+				t.Errorf("%s with %q: connect_site_ids = %s; want %s", tc.kind, choice.siteIDs, got, choice.want)
+			}
+		}
+	}
+}
+
+// TestCreates_DecodeTheConnections: the 201 reports, beside the resource, what
+// became of each chosen site.
+func TestCreates_DecodeTheConnections(t *testing.T) {
+	const connections = `"connections":{"connected":["s1"],"pending":["s2"],"failed":[{"site_id":"s3","error":"could not reach the database"}]}`
+	for _, tc := range createsWithChoice {
+		ts, _ := createServer(t, tc.path, "{"+tc.resource+","+connections+"}")
+		id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1", "s2", "s3"})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.kind, err)
+		}
+		if id != tc.id {
+			t.Errorf("%s: id = %q; want %q", tc.kind, id, tc.id)
+		}
+		if !reflect.DeepEqual(choice.Connected, []string{"s1"}) || !reflect.DeepEqual(choice.Pending, []string{"s2"}) {
+			t.Errorf("%s: connected %v, pending %v; want [s1], [s2]", tc.kind, choice.Connected, choice.Pending)
+		}
+		if len(choice.Failed) != 1 || choice.Failed[0].SiteID != "s3" || choice.Failed[0].Error != "could not reach the database" {
+			t.Errorf("%s: failed = %+v; want s3 with its reason", tc.kind, choice.Failed)
+		}
+	}
+}
+
+// TestCreates_WithoutConnectionsIsEmpty: a server that predates the field
+// answers without it; the create still succeeds and reports nothing.
+func TestCreates_WithoutConnectionsIsEmpty(t *testing.T) {
+	for _, tc := range createsWithChoice {
+		ts, _ := createServer(t, tc.path, "{"+tc.resource+"}")
+		id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1"})
+		if err != nil || id != tc.id {
+			t.Fatalf("%s: id, err = %q, %v; want %q", tc.kind, id, err, tc.id)
+		}
+		if len(choice.Connected) != 0 || len(choice.Pending) != 0 || len(choice.Failed) != 0 {
+			t.Errorf("%s: choice = %+v; want empty", tc.kind, choice)
+		}
+	}
+}
+
+// uploadServer answers the deploy upload with a 201 carrying body and records
+// the connect_resources form values (none when the upload carried no field).
+func uploadServer(t *testing.T, body string) (*httptest.Server, *[]string) {
+	t.Helper()
+	var connect []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/deploy/upload" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			t.Errorf("upload is not a multipart form: %v", err)
+			return
+		}
+		connect = r.MultipartForm.Value["connect_resources"]
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(ts.Close)
+	return ts, &connect
+}
+
+func testDeploy(t *testing.T, url string, connect []ConnectionItem) (*DeployResponse, error) {
+	return newTestClient(url).Deploy("p1", "s1", t.TempDir(), "CLI deploy", false, "", "", DeployBuildConfig{}, nil, connect)
+}
+
+// TestDeploy_SendsConnectResourcesOnlyWhenChosen: the chosen services ride on
+// the upload as one JSON array; with none the field is left out, so a server
+// that predates it never sees it.
+func TestDeploy_SendsConnectResourcesOnlyWhenChosen(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		connect []ConnectionItem
+		want    []string
+	}{
+		{"nil", nil, nil},
+		{"empty", []ConnectionItem{}, nil},
+		{"two services", []ConnectionItem{{Kind: "database", ResourceID: "d1"}, {Kind: "bucket", ResourceID: "b1"}},
+			[]string{`[{"kind":"database","resource_id":"d1"},{"kind":"bucket","resource_id":"b1"}]`}},
+	} {
+		ts, sent := uploadServer(t, `{"deployment_id":"dep-1","status":"queued"}`)
+		if _, err := testDeploy(t, ts.URL, tc.connect); err != nil {
+			t.Fatalf("%s: Deploy: %v", tc.name, err)
+		}
+		if !reflect.DeepEqual(*sent, tc.want) {
+			t.Errorf("%s: connect_resources = %q; want %q", tc.name, *sent, tc.want)
+		}
+	}
+}
+
+// TestDeploy_DecodesTheConnections: the upload answers with the site it
+// deploys and, keyed by resource, what became of each chosen service; a server
+// that predates the fields leaves both empty.
+func TestDeploy_DecodesTheConnections(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want DeployResponse
+	}{
+		{
+			name: "connected and failed",
+			body: `{"deployment_id":"dep-1","status":"queued","site_id":"s1","connections":{"connected":[{"kind":"database","resource_id":"d1"}],"failed":[{"kind":"bucket","resource_id":"b1","error":"bucket 'media' could not be connected"}]}}`,
+			want: DeployResponse{
+				DeploymentID: "dep-1",
+				Status:       "queued",
+				SiteID:       "s1",
+				Connections: DeployConnections{
+					Connected: []ConnectionItem{{Kind: "database", ResourceID: "d1"}},
+					Failed:    []DeployConnectFailure{{Kind: "bucket", ResourceID: "b1", Error: "bucket 'media' could not be connected"}},
+				},
+			},
+		},
+		{
+			name: "older server",
+			body: `{"deployment_id":"dep-1","status":"queued"}`,
+			want: DeployResponse{DeploymentID: "dep-1", Status: "queued"},
+		},
+	} {
+		ts, _ := uploadServer(t, tc.body)
+		resp, err := testDeploy(t, ts.URL, []ConnectionItem{{Kind: "database", ResourceID: "d1"}, {Kind: "bucket", ResourceID: "b1"}})
+		if err != nil {
+			t.Fatalf("%s: Deploy: %v", tc.name, err)
+		}
+		if !reflect.DeepEqual(*resp, tc.want) {
+			t.Errorf("%s: response = %+v; want %+v", tc.name, *resp, tc.want)
+		}
 	}
 }

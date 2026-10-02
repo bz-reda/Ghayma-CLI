@@ -43,7 +43,7 @@ func TestCreateDatabase_SendsPointsFields(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	db, err := newTestClient(ts.URL).CreateDatabase("pg", "postgres", "proj-1", nil, "s", 20, "daily")
+	db, _, err := newTestClient(ts.URL).CreateDatabase("pg", "postgres", "proj-1", nil, "s", 20, "daily", nil)
 	if err != nil {
 		t.Fatalf("CreateDatabase: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestCreateDatabase_OmitsZeroDiskAndBlankBackup(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	if _, err := newTestClient(ts.URL).CreateDatabase("pg", "postgres", "proj-1", nil, "", 0, ""); err != nil {
+	if _, _, err := newTestClient(ts.URL).CreateDatabase("pg", "postgres", "proj-1", nil, "", 0, "", nil); err != nil {
 		t.Fatalf("CreateDatabase: %v", err)
 	}
 	if _, ok := captured["disk_gb"]; ok {
@@ -97,7 +97,7 @@ func TestCreateDatabase_ClassifiesError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := newTestClient(ts.URL).CreateDatabase("pg", "postgres", "proj-1", nil, "l", 0, "")
+	_, _, err := newTestClient(ts.URL).CreateDatabase("pg", "postgres", "proj-1", nil, "l", 0, "", nil)
 	var me *MarketplaceError
 	if !errors.As(err, &me) || me.Kind != "maxtier" {
 		t.Fatalf("create error = %v; want *MarketplaceError kind maxtier", err)

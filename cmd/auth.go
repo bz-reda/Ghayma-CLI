@@ -131,7 +131,7 @@ var authCreateCmd = &cobra.Command{
 			printAuthReservePreview(client, cat, projectID, bracketSlug, twofa)
 		}
 
-		app, err := client.CreateAuthApp(args[0], authAppSlug, projectID, bracketSlug)
+		app, _, err := client.CreateAuthApp(args[0], authAppSlug, projectID, bracketSlug, nil)
 		if err != nil {
 			fmt.Printf("❌ Failed to create auth app: %s\n", formatMarketplaceError(err))
 			return

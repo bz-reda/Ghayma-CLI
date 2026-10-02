@@ -577,9 +577,11 @@ func (c *Client) AddDomain(projectID, siteID, domain string) error {
 // Deploy
 
 type DeployResponse struct {
-	DeploymentID string `json:"deployment_id"`
-	Status       string `json:"status"`
-	Message      string `json:"message"`
+	DeploymentID string            `json:"deployment_id"`
+	Status       string            `json:"status"`
+	Message      string            `json:"message"`
+	SiteID       string            `json:"site_id"`
+	Connections  DeployConnections `json:"connections"`
 }
 
 // DeployBuildConfig carries the .ghayma.json build fields sent in the upload
@@ -601,7 +603,8 @@ type DeployBuildConfig struct {
 // dockerfilePath is the optional Part 2 PR-C explicit override; pass empty
 // string to fall back to the platform convention (literal `Dockerfile` at
 // appDir, only honored when projects.custom_dockerfile_enabled is TRUE).
-func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isProduction bool, rootDirectory, dockerfilePath string, bc DeployBuildConfig, rules *IgnoreRules) (*DeployResponse, error) {
+// connect are the services to connect to the deploy's site before it builds.
+func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isProduction bool, rootDirectory, dockerfilePath string, bc DeployBuildConfig, rules *IgnoreRules, connect []ConnectionItem) (*DeployResponse, error) {
 	// One archive per process: a fixed name in the shared temp directory let
 	// concurrent deploys from the same machine overwrite each other's upload
 	// (2026-09-08: 11 of 20 parallel deploys failed with "no such file" or a
@@ -658,6 +661,11 @@ func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isPr
 	// (including "[]") ⇒ authoritative per-site sync.
 	if bc.Crons != "" {
 		writer.WriteField("crons", bc.Crons)
+	}
+	// Omitted when nothing was chosen, so an older server never sees it.
+	if len(connect) > 0 {
+		raw, _ := json.Marshal(connect)
+		writer.WriteField("connect_resources", string(raw))
 	}
 
 	file, err := os.Open(tarPath)
@@ -1162,8 +1170,11 @@ func diskChangeError(status int, body []byte) *DiskChangeError {
 // so the server applies the free weekly default). Non-201 responses route
 // through classifyAPIError so max-tier / insufficient-points / capacity classes
 // render.
-func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool, tierSlug string, diskGB int, backupSlug string) (*DatabaseInfo, error) {
-	payload := map[string]interface{}{"name": name, "type": dbType, "project_id": projectID}
+//
+// connectSiteIDs are the sites to connect the new database to (none when
+// empty); the returned ConnectChoice says what became of each.
+func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool, tierSlug string, diskGB int, backupSlug string, connectSiteIDs []string) (*DatabaseInfo, ConnectChoice, error) {
+	payload := map[string]interface{}{"name": name, "type": dbType, "project_id": projectID, "connect_site_ids": siteChoice(connectSiteIDs)}
 	if replicaSet != nil {
 		payload["replica_set"] = *replicaSet
 	}
@@ -1179,20 +1190,21 @@ func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/databases", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, ConnectChoice{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, classifyAPIError(resp.StatusCode, respBody)
+		return nil, ConnectChoice{}, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
-		Database DatabaseInfo `json:"database"`
+		Database    DatabaseInfo  `json:"database"`
+		Connections ConnectChoice `json:"connections"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	return &result.Database, nil
+	return &result.Database, result.Connections, nil
 }
 
 // RetierDatabase changes a database's tier, disk, and/or backup schedule via
@@ -1407,29 +1419,31 @@ type BucketInfo struct {
 // the backend field is size_mb (there is NO quota_gb — the CLI's --quota-gb is
 // converted to MB by the caller). Non-201 responses route through
 // classifyAPIError so the marketplace insufficient-points / capacity classes
-// render.
-func (c *Client) CreateBucket(name, projectID string, sizeMB int) (*BucketInfo, error) {
-	payload := map[string]interface{}{"name": name, "project_id": projectID}
+// render. connectSiteIDs are the sites to connect the new bucket to (none when
+// empty); the returned ConnectChoice says what became of each.
+func (c *Client) CreateBucket(name, projectID string, sizeMB int, connectSiteIDs []string) (*BucketInfo, ConnectChoice, error) {
+	payload := map[string]interface{}{"name": name, "project_id": projectID, "connect_site_ids": siteChoice(connectSiteIDs)}
 	if sizeMB > 0 {
 		payload["size_mb"] = sizeMB
 	}
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/storage", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, ConnectChoice{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, classifyAPIError(resp.StatusCode, respBody)
+		return nil, ConnectChoice{}, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
-		Bucket BucketInfo `json:"bucket"`
+		Bucket      BucketInfo    `json:"bucket"`
+		Connections ConnectChoice `json:"connections"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	return &result.Bucket, nil
+	return &result.Bucket, result.Connections, nil
 }
 
 func (c *Client) ListBuckets() ([]BucketInfo, error) {
@@ -1578,29 +1592,31 @@ type AuthUserInfo struct {
 // default). 2FA is NOT set here (the create endpoint doesn't accept it); it is
 // enabled afterward via UpdateAuthApp. Non-201 responses route through
 // classifyAPIError so the marketplace insufficient-points / capacity classes
-// render.
-func (c *Client) CreateAuthApp(name, appID, projectID, authTierSlug string) (*AuthAppInfo, error) {
-	payload := map[string]interface{}{"name": name, "app_id": appID, "project_id": projectID}
+// render. connectSiteIDs are the sites to connect the new app to (none when
+// empty); the returned ConnectChoice says what became of each.
+func (c *Client) CreateAuthApp(name, appID, projectID, authTierSlug string, connectSiteIDs []string) (*AuthAppInfo, ConnectChoice, error) {
+	payload := map[string]interface{}{"name": name, "app_id": appID, "project_id": projectID, "connect_site_ids": siteChoice(connectSiteIDs)}
 	if authTierSlug != "" {
 		payload["auth_tier_slug"] = authTierSlug
 	}
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/auth-apps", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, ConnectChoice{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, classifyAPIError(resp.StatusCode, respBody)
+		return nil, ConnectChoice{}, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
-		AuthApp AuthAppInfo `json:"auth_app"`
+		AuthApp     AuthAppInfo   `json:"auth_app"`
+		Connections ConnectChoice `json:"connections"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	return &result.AuthApp, nil
+	return &result.AuthApp, result.Connections, nil
 }
 
 func (c *Client) ListAuthApps() ([]AuthAppInfo, error) {

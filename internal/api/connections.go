@@ -46,11 +46,58 @@ type SiteConnections struct {
 }
 
 // ConnectionItem is the request shape for connecting one resource. An empty
-// Level is omitted so the server applies the kind's default level.
+// Level is omitted so the server applies the kind's default level. It is also
+// an element of a deploy's connect_resources field and of what it connected.
 type ConnectionItem struct {
 	Kind       string `json:"kind"`
 	ResourceID string `json:"resource_id"`
 	Level      string `json:"level,omitempty"`
+}
+
+// ConnectChoice is what a create did with the sites chosen for the new
+// service: connected, pending until the engine accepts logins (Postgres), or
+// failed with the reason. A server older than 2026-10-02 sends none, which
+// reads as empty.
+type ConnectChoice struct {
+	Connected []string `json:"connected"`
+	Pending   []string `json:"pending"`
+	Failed    []struct {
+		SiteID string `json:"site_id"`
+		Error  string `json:"error"`
+	} `json:"failed"`
+}
+
+// siteChoice is a create body's connect_site_ids: the chosen sites, or [] for
+// none — never null, so every create states its choice.
+func siteChoice(siteIDs []string) []string {
+	if siteIDs == nil {
+		return []string{}
+	}
+	return siteIDs
+}
+
+// DeployConnections is what a deploy did with the services chosen to connect
+// to its site, keyed by resource since the site is the deploy's own.
+type DeployConnections struct {
+	Connected []ConnectionItem       `json:"connected"`
+	Failed    []DeployConnectFailure `json:"failed"`
+}
+
+// DeployConnectFailure is a chosen service the deploy could not connect; Error
+// is a sentence safe to show the user.
+type DeployConnectFailure struct {
+	Kind       string `json:"kind"`
+	ResourceID string `json:"resource_id"`
+	Error      string `json:"error"`
+}
+
+// Unconnected is a service of the project that no site holds, with the level
+// a connection to it gets by default.
+type Unconnected struct {
+	Kind         string `json:"kind"`
+	ResourceID   string `json:"resource_id"`
+	ResourceName string `json:"resource_name"`
+	DefaultLevel string `json:"default_level"`
 }
 
 // ListConnections returns the project's connections, narrowed to one site when
@@ -79,6 +126,23 @@ func (c *Client) ListConnections(projectID, siteID string) ([]Connection, error)
 		out.Connections = []Connection{}
 	}
 	return out.Connections, nil
+}
+
+// ListUnconnected returns the project's services that no site holds, which a
+// deploy offers to connect (GET …/connections/unconnected).
+func (c *Client) ListUnconnected(projectID string) ([]Unconnected, error) {
+	resp, err := c.authRequest("GET", "/api/v1/projects/"+projectID+"/connections/unconnected", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Unconnected []Unconnected `json:"unconnected"`
+	}
+	if err := c.decodeJSON(resp, &out); err != nil {
+		return nil, err
+	}
+	return out.Unconnected, nil
 }
 
 // GetSiteConnections returns one site's connections plus the project resources

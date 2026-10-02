@@ -101,7 +101,7 @@ var dbCreateCmd = &cobra.Command{
 			printReservePreview(client, cat, projectID, dbCreateType, tier, diskGB, backup)
 		}
 
-		db, err := client.CreateDatabase(args[0], dbCreateType, projectID, replicaSet, tier, diskGB, backup)
+		db, _, err := client.CreateDatabase(args[0], dbCreateType, projectID, replicaSet, tier, diskGB, backup, nil)
 		if err != nil {
 			fmt.Printf("❌ Failed to create database: %s\n", formatMarketplaceError(err))
 			return

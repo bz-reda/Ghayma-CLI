@@ -195,7 +195,7 @@ func TestDeployUpload_Bearer(t *testing.T) {
 	defer ts.Close()
 
 	cfg := &config.Config{APIHost: ts.URL, Token: "jwt-x", APIToken: "gh_x"}
-	_, err := NewClient(cfg).Deploy("p1", "s1", t.TempDir(), "msg", false, "", "", DeployBuildConfig{}, nil)
+	_, err := NewClient(cfg).Deploy("p1", "s1", t.TempDir(), "msg", false, "", "", DeployBuildConfig{}, nil, nil)
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("Deploy err = %v; want ErrUnauthorized", err)
 	}

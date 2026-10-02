@@ -75,7 +75,7 @@ var storageCreateCmd = &cobra.Command{
 
 		// --quota-gb is whole GB; the backend field is size_mb (no quota_gb).
 		sizeMB := quotaGB * 1024
-		bucket, err := client.CreateBucket(args[0], projectID, sizeMB)
+		bucket, _, err := client.CreateBucket(args[0], projectID, sizeMB, nil)
 		if err != nil {
 			fmt.Printf("❌ Failed to create bucket: %s\n", formatMarketplaceError(err))
 			return
