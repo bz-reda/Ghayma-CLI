@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	deployProd  bool
-	deploySite  string
-	deployImage string
+	deployProd      bool
+	deploySite      string
+	deployImage     string
+	deployNoConnect bool
 )
 
 type projectConfig struct {
@@ -172,9 +173,15 @@ not interactive.
 of uploading this directory: nothing is built, the image is checked and rolled
 out as it is. Name a tag, or a sha256: digest for one exact image.
 
+A database, bucket or auth app that no site uses yet is offered to the site
+being deployed, one question each on a terminal, and connected before the
+build starts. Without a terminal, or with --no-connect, nothing is connected
+and the deploy prints the command that connects each one.
+
 Examples:
   ghayma deploy
   ghayma deploy --site admin
+  ghayma deploy --no-connect
   ghayma deploy --image v1
   ghayma deploy --image sha256:0a1b2c…`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -294,6 +301,14 @@ Examples:
 			fmt.Println(prodFlagNotice(slug, environment))
 		}
 
+		// Services no site uses are offered to this site now, with every answer
+		// in before the upload starts; the choice rides on the upload.
+		chosen, err := chooseDeployConnections(client, ctx, stdinIsTerminalFn() && !deployNoConnect)
+		if err != nil {
+			fmt.Println("❌ Cancelled")
+			return
+		}
+
 		fmt.Println(deployHeadline(ctx))
 
 		rules := api.LoadIgnoreRules(ctx.SourceDir)
@@ -320,12 +335,13 @@ Examples:
 			Port:            ctx.Site.Port,
 			Crons:           cronsFormField(ctx.Site.Crons),
 		}
-		resp, err := client.Deploy(ctx.ProjectID, ctx.Site.SiteID, ctx.SourceDir, "CLI deploy", deployProd, ctx.RootDirectory, filepath.ToSlash(ctx.Site.DockerfilePath), bc, rules, nil)
+		resp, err := client.Deploy(ctx.ProjectID, ctx.Site.SiteID, ctx.SourceDir, "CLI deploy", deployProd, ctx.RootDirectory, filepath.ToSlash(ctx.Site.DockerfilePath), bc, rules, connectionItems(chosen))
 		if err != nil {
 			fmt.Printf("❌ Deploy failed: %v\n", err)
 			return
 		}
 
+		printDeployConnections(resp.Connections, chosen, deployTargetSite(ctx))
 		fmt.Printf("📦 Build queued (deployment: %s)\n", resp.DeploymentID)
 		fmt.Println("⏳ Waiting for build...")
 		waitForDeployment(client, resp.DeploymentID)
@@ -480,6 +496,7 @@ func init() {
 	deployCmd.Flags().BoolVarP(&deployProd, "prod", "p", false, "(no longer needed) a deploy is production when the target site is a production site")
 	deployCmd.Flags().StringVar(&deploySite, "site", "", "Site to deploy (slug, name or id); picks the project's site when this directory's config names none, and replaces the picker at a workspace root")
 	deployCmd.Flags().StringVar(&deployImage, "image", "", "Deploy an image already pushed with 'ghayma docker push' (tag, or sha256: digest) instead of uploading this directory")
+	deployCmd.Flags().BoolVar(&deployNoConnect, "no-connect", false, "Leave services no site uses unconnected, without asking")
 	rootCmd.AddCommand(deployCmd)
 }
 

@@ -360,3 +360,47 @@ func TestPrintConnectOutcome_PrintsTheNote(t *testing.T) {
 		t.Errorf("note missing:\n%s", out)
 	}
 }
+
+// A display name never wins over another site's slug: every slug is tried
+// before any name, and names before ids — for create's --site and for the
+// live pick alike.
+func TestSiteFlag_SlugWinsOverAnotherSitesName(t *testing.T) {
+	sites := []api.Site{
+		{ID: "s1", Name: "admin", Slug: "main"},
+		{ID: "s2", Name: "Admin Console", Slug: "admin"},
+	}
+	if s, err := liveSiteFor(sites, "admin"); err != nil || s.ID != "s2" {
+		t.Errorf("liveSiteFor(admin) = %v, %v; want s2, the site whose slug is admin", s, err)
+	}
+	if ids, err := siteIDsByFlag(sites, []string{"admin"}); err != nil || !reflect.DeepEqual(ids, []string{"s2"}) {
+		t.Errorf("siteIDsByFlag(admin) = %v, %v; want [s2]", ids, err)
+	}
+	// A name or an id still names a site when no slug does.
+	if s, err := liveSiteFor(sites, "admin console"); err != nil || s.ID != "s2" {
+		t.Errorf("by name: %v, %v", s, err)
+	}
+	if ids, err := siteIDsByFlag(sites, []string{"S1"}); err != nil || !reflect.DeepEqual(ids, []string{"s1"}) {
+		t.Errorf("by id: %v, %v", ids, err)
+	}
+}
+
+// Both pickers refuse an unknown site with the same sentence.
+func TestSiteFlag_UnknownSiteIsOneSentence(t *testing.T) {
+	sites := []api.Site{{ID: "s1", Slug: "main"}, {ID: "s2", Slug: "admin"}}
+	_, live := liveSiteFor(sites, "nope")
+	_, flags := siteIDsByFlag(sites, []string{"nope"})
+	const want = `site "nope" not found in this project (available: main, admin)`
+	if live == nil || flags == nil || live.Error() != want || flags.Error() != want {
+		t.Errorf("liveSiteFor: %v; siteIDsByFlag: %v; want %q from both", live, flags, want)
+	}
+}
+
+// The Select opens on its first item, so Enter alone takes the default.
+func TestYesNoItems_DefaultFirst(t *testing.T) {
+	if got := yesNoItems(true); !reflect.DeepEqual(got, []string{"Yes", "No"}) {
+		t.Errorf("default Yes: %q; want Yes first", got)
+	}
+	if got := yesNoItems(false); !reflect.DeepEqual(got, []string{"No", "Yes"}) {
+		t.Errorf("default No: %q; want No first", got)
+	}
+}

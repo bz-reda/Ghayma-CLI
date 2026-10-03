@@ -22,16 +22,22 @@ var promptConnectSiteFn = promptConnectSite
 // promptConnectSite asks one No/Yes question with the default answer first. A
 // Select rather than a y/n confirm, so "No" is never mistaken for a cancel.
 func promptConnectSite(label string, defaultYes bool) (bool, error) {
-	items := []string{"No", "Yes"}
-	if defaultYes {
-		items = []string{"Yes", "No"}
-	}
+	items := yesNoItems(defaultYes)
 	sel := promptui.Select{Label: label, Items: items}
 	idx, _, err := sel.Run()
 	if err != nil {
 		return false, err
 	}
 	return items[idx] == "Yes", nil
+}
+
+// yesNoItems lists a No/Yes question's answers with the default first: the
+// Select opens on it, so Enter alone takes the default.
+func yesNoItems(defaultYes bool) []string {
+	if defaultYes {
+		return []string{"Yes", "No"}
+	}
+	return []string{"No", "Yes"}
 }
 
 // checkConnectFlags refuses the contradictory pair before anything reaches
@@ -77,12 +83,9 @@ func siteIDsByFlag(sites []api.Site, siteFlags []string) ([]string, error) {
 	ids := make([]string, 0, len(siteFlags))
 	seen := make(map[string]bool, len(siteFlags))
 	for _, flag := range siteFlags {
-		site := matchSite(sites, flag)
-		if site == nil {
-			if len(sites) == 0 {
-				return nil, fmt.Errorf("site %q not found — this project has no site yet", flag)
-			}
-			return nil, fmt.Errorf("site %q not found in this project (available: %s)", flag, strings.Join(siteSlugs(sites), ", "))
+		site, err := matchSite(sites, flag)
+		if err != nil {
+			return nil, err
 		}
 		if !seen[site.ID] {
 			seen[site.ID] = true
@@ -92,16 +95,26 @@ func siteIDsByFlag(sites []api.Site, siteFlags []string) ([]string, error) {
 	return ids, nil
 }
 
-func matchSite(sites []api.Site, flag string) *api.Site {
-	if flag == "" {
-		return nil
+// matchSite finds the site a --site value names. Every site's slug is tried
+// before any name, and names before ids, so a display name never wins over
+// another site's slug. An unknown value is refused with the site list.
+func matchSite(sites []api.Site, flag string) (*api.Site, error) {
+	keys := []func(api.Site) string{
+		func(s api.Site) string { return s.Slug },
+		func(s api.Site) string { return s.Name },
+		func(s api.Site) string { return s.ID },
 	}
-	for i := range sites {
-		if strings.EqualFold(sites[i].Slug, flag) || strings.EqualFold(sites[i].Name, flag) || strings.EqualFold(sites[i].ID, flag) {
-			return &sites[i]
+	for _, key := range keys {
+		for i := range sites {
+			if value := key(sites[i]); value != "" && strings.EqualFold(value, flag) {
+				return &sites[i], nil
+			}
 		}
 	}
-	return nil
+	if len(sites) == 0 {
+		return nil, fmt.Errorf("site %q not found — this project has no site yet", flag)
+	}
+	return nil, fmt.Errorf("site %q not found in this project (available: %s)", flag, strings.Join(siteSlugs(sites), ", "))
 }
 
 // askConnectSites puts the question on a terminal, one site at a time. A
@@ -174,9 +187,13 @@ func printConnectOutcome(outcome api.ConnectChoice, chosen []string, sites []api
 		fmt.Printf("ℹ️  %s\n", note)
 	}
 	if len(chosen) > 0 && !outcomeMentions(outcome, chosen) {
-		fmt.Println("⚠️  couldn't read the connection result — check with: ghayma connections")
+		fmt.Println(unreadableConnectResult)
 	}
 }
+
+// unreadableConnectResult is said when a response accounts for none of the
+// chosen connections.
+const unreadableConnectResult = "⚠️  couldn't read the connection result — check with: ghayma connections"
 
 func siteSlugByID(sites []api.Site, id string) string {
 	for _, s := range sites {
