@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"paas-cli/internal/api"
@@ -21,26 +23,80 @@ func promptDeployConnect(label string) (bool, error) {
 	return promptConnectSiteFn(label, true)
 }
 
-// deployTargetSite names the site this deploy lands on: the linked site, or
-// main, which the first deploy of a site-less project creates.
-func deployTargetSite(ctx *SiteContext) string {
-	if ctx.NoSite {
-		return "main"
+// deployTargetSite names the site this deploy lands on, by its live slug. An
+// upload naming a site lands on it; one naming none lands where the server
+// puts it (serverPickedSite), and a project with no site gets main. ok is
+// false when the server has no site for it — several sites with neither a
+// default nor main, or a linked site since deleted — as it refuses that
+// upload. A list that could not be read (listed false) leaves the config's
+// slug, else main.
+func deployTargetSite(ctx *SiteContext, sites []api.Site, listed bool) (string, bool) {
+	if id := ctx.Site.SiteID; id != "" {
+		if !listed {
+			// The id, not a display name: a name is no safe --site value.
+			if ctx.Site.SiteSlug != "" {
+				return ctx.Site.SiteSlug, true
+			}
+			return id, true
+		}
+		for _, s := range sites {
+			if s.ID == id {
+				return s.Slug, true
+			}
+		}
+		return "", false
 	}
-	return siteLabel(ctx.Site)
+	if !listed || len(sites) == 0 {
+		return "main", true
+	}
+	if site := serverPickedSite(sites); site != nil {
+		return site.Slug, true
+	}
+	return "", false
+}
+
+// serverPickedSite is where the server deploys an upload naming no site, as
+// paas-api's siteresolve.Pick decides: the default site, else main, else the
+// only site. nil means several sites and none of them marked.
+func serverPickedSite(sites []api.Site) *api.Site {
+	for i := range sites {
+		if sites[i].IsDefault {
+			return &sites[i]
+		}
+	}
+	for i := range sites {
+		if sites[i].Slug == "main" {
+			return &sites[i]
+		}
+	}
+	if len(sites) == 1 {
+		return &sites[0]
+	}
+	return nil
+}
+
+// deployedSiteSlug names the site the server says the upload landed on, by
+// its slug in the list read before the upload. One that list lacks — main,
+// just created — keeps the name the question used.
+func deployedSiteSlug(sites []api.Site, siteID, target string) string {
+	for _, s := range sites {
+		if s.ID == siteID {
+			return s.Slug
+		}
+	}
+	return target
 }
 
 // chooseDeployConnections picks the unconnected services the upload connects
-// to the deploy's site: those answered Yes on a terminal, none otherwise. A
-// failed listing (project keys are refused it) costs a warning line, never the
-// deploy. A cancelled question is errAttachCancelled.
-func chooseDeployConnections(client *api.Client, ctx *SiteContext, interactive bool) ([]api.Unconnected, error) {
-	services, err := client.ListUnconnected(ctx.ProjectID)
+// to site: those answered Yes on a terminal, none otherwise. A failed listing
+// (project keys are refused it) costs a warning line, never the deploy. A
+// cancelled question is errAttachCancelled.
+func chooseDeployConnections(client *api.Client, projectID, site string, interactive bool) ([]api.Unconnected, error) {
+	services, err := client.ListUnconnected(projectID)
 	if err != nil {
-		fmt.Printf("⚠️  couldn't check for services no site uses: %v\n", err)
+		fmt.Printf("⚠️  couldn't check for services no site uses: %v\n", shortReason(err))
 		return nil, nil
 	}
-	site := deployTargetSite(ctx)
 	var chosen, declined []api.Unconnected
 	for _, s := range services {
 		yes := false
@@ -57,6 +113,16 @@ func chooseDeployConnections(client *api.Client, ctx *SiteContext, interactive b
 	}
 	printNotConnected(declined, site)
 	return chosen, nil
+}
+
+// shortReason is why a request failed: a transport error drops the method and
+// URL it leads with.
+func shortReason(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
 }
 
 func deployConnectQuestion(s api.Unconnected, site string) string {

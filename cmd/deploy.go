@@ -282,15 +282,15 @@ Examples:
 			ctx.NoSite = false
 		}
 
-		// A site-less project still deploys — the platform materializes `main`
+		// The live site list names the site the upload lands on (below). A
+		// site-less project still deploys — the platform materializes `main`
 		// on the first one — but say so, because nothing in the config or the
 		// init flow ever mentioned a site. A config naming no site on a
 		// project that already has one gets no such notice; when the list
 		// cannot be read the notice still prints, as before.
-		if ctx.NoSite {
-			if none, err := projectHasNoSites(client, ctx.ProjectID); err != nil || none {
-				fmt.Println("ℹ️  This project has no site yet; deploying creates the site 'main'.")
-			}
+		sites, sitesErr := client.ListSites(ctx.ProjectID)
+		if ctx.NoSite && (sitesErr != nil || len(sites) == 0) {
+			fmt.Println("ℹ️  This project has no site yet; deploying creates the site 'main'.")
 		}
 
 		// --prod is a no-op since Environments (design D6): the target site's
@@ -301,12 +301,18 @@ Examples:
 			fmt.Println(prodFlagNotice(slug, environment))
 		}
 
-		// Services no site uses are offered to this site now, with every answer
-		// in before the upload starts; the choice rides on the upload.
-		chosen, err := chooseDeployConnections(client, ctx, stdinIsTerminalFn() && !deployNoConnect)
-		if err != nil {
-			fmt.Println("❌ Cancelled")
-			return
+		// Services no site uses are offered to the site the upload lands on,
+		// with every answer in before the upload starts; the choice rides on
+		// the upload. When the server has no site for it — several sites, none
+		// default or main, or a linked site since deleted — it refuses the
+		// upload, so nothing is offered.
+		var chosen []api.Unconnected
+		target, known := deployTargetSite(ctx, sites, sitesErr == nil)
+		if known {
+			if chosen, err = chooseDeployConnections(client, ctx.ProjectID, target, stdinIsTerminalFn() && !deployNoConnect); err != nil {
+				fmt.Println("❌ Cancelled")
+				return
+			}
 		}
 
 		fmt.Println(deployHeadline(ctx))
@@ -341,7 +347,7 @@ Examples:
 			return
 		}
 
-		printDeployConnections(resp.Connections, chosen, deployTargetSite(ctx))
+		printDeployConnections(resp.Connections, chosen, deployedSiteSlug(sites, resp.SiteID, target))
 		fmt.Printf("📦 Build queued (deployment: %s)\n", resp.DeploymentID)
 		fmt.Println("⏳ Waiting for build...")
 		waitForDeployment(client, resp.DeploymentID)
