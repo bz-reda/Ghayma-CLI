@@ -233,7 +233,7 @@ Running `ghayma init` creates a `.ghayma.json` file in the project directory:
 }
 ```
 
-New projects use `.ghayma.json`. Existing projects that already have a `.espacetech.json` keep working — the CLI reads it as a fallback when no `.ghayma.json` is present, so no migration is required. The user-level config (auth token, API host) remains at `~/.paas-cli.json`, or wherever `GHAYMA_CONFIG` points.
+The user-level config (auth token, API host) is stored separately, in `~/.paas-cli.json` or wherever `GHAYMA_CONFIG` points.
 
 ## Building from Source
 

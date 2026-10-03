@@ -30,7 +30,7 @@ type projectConfig struct {
 	SiteID        string `json:"site_id,omitempty"`
 	SiteName      string `json:"site_name,omitempty"`
 	SiteSlug      string `json:"site_slug,omitempty"`
-	RootDirectory string `json:"root_directory,omitempty"` // app subdir when .espacetech.json lives at monorepo root
+	RootDirectory string `json:"root_directory,omitempty"` // app subdir when .ghayma.json lives at monorepo root
 	Framework     string `json:"framework,omitempty"`      // recorded from init; server still auto-detects
 	// DockerfilePath is an optional explicit override for the user's
 	// Dockerfile, relative to the appDir (project root or rootDirectory
@@ -554,7 +554,7 @@ func uploadDescription(ctx *SiteContext) string {
 func printIgnoreRules(rules *api.IgnoreRules) {
 	fmt.Printf("📋 Baseline ignore: %s, .env*.local\n", strings.Join(api.BaselineIgnoreDirs, ", "))
 	if rules == nil || rules.Source == "" {
-		fmt.Println("   (no .ghaymaignore, .espacetechignore, or .dockerignore found)")
+		fmt.Println("   (no .ghaymaignore or .dockerignore found)")
 		return
 	}
 	if len(rules.Patterns) == 0 {
