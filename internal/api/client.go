@@ -518,7 +518,9 @@ func (c *Client) ListSites(projectID string) ([]Site, error) {
 	}
 
 	var sites []Site
-	json.NewDecoder(resp.Body).Decode(&sites)
+	if err := c.decodeJSON(resp, &sites); err != nil {
+		return nil, err
+	}
 	return sites, nil
 }
 
@@ -1172,8 +1174,9 @@ func diskChangeError(status int, body []byte) *DiskChangeError {
 // render.
 //
 // connectSiteIDs are the sites to connect the new database to (none when
-// empty); the returned ConnectChoice says what became of each.
-func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool, tierSlug string, diskGB int, backupSlug string, connectSiteIDs []string) (*DatabaseInfo, ConnectChoice, error) {
+// empty); the returned ConnectChoice says what became of each, nil when the
+// server reported none (see ConnectChoice).
+func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool, tierSlug string, diskGB int, backupSlug string, connectSiteIDs []string) (*DatabaseInfo, *ConnectChoice, error) {
 	payload := map[string]interface{}{"name": name, "type": dbType, "project_id": projectID, "connect_site_ids": siteChoice(connectSiteIDs)}
 	if replicaSet != nil {
 		payload["replica_set"] = *replicaSet
@@ -1190,20 +1193,23 @@ func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/databases", bytes.NewReader(body))
 	if err != nil {
-		return nil, ConnectChoice{}, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, ConnectChoice{}, classifyAPIError(resp.StatusCode, respBody)
+		return nil, nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
-		Database    DatabaseInfo  `json:"database"`
-		Connections ConnectChoice `json:"connections"`
+		Database    DatabaseInfo   `json:"database"`
+		Connections *ConnectChoice `json:"connections"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		// Created all the same; connections this CLI cannot read are unknown.
+		return &result.Database, nil, nil
+	}
 	return &result.Database, result.Connections, nil
 }
 
@@ -1420,8 +1426,9 @@ type BucketInfo struct {
 // converted to MB by the caller). Non-201 responses route through
 // classifyAPIError so the marketplace insufficient-points / capacity classes
 // render. connectSiteIDs are the sites to connect the new bucket to (none when
-// empty); the returned ConnectChoice says what became of each.
-func (c *Client) CreateBucket(name, projectID string, sizeMB int, connectSiteIDs []string) (*BucketInfo, ConnectChoice, error) {
+// empty); the returned ConnectChoice says what became of each, nil when the
+// server reported none (see ConnectChoice).
+func (c *Client) CreateBucket(name, projectID string, sizeMB int, connectSiteIDs []string) (*BucketInfo, *ConnectChoice, error) {
 	payload := map[string]interface{}{"name": name, "project_id": projectID, "connect_site_ids": siteChoice(connectSiteIDs)}
 	if sizeMB > 0 {
 		payload["size_mb"] = sizeMB
@@ -1429,20 +1436,23 @@ func (c *Client) CreateBucket(name, projectID string, sizeMB int, connectSiteIDs
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/storage", bytes.NewReader(body))
 	if err != nil {
-		return nil, ConnectChoice{}, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, ConnectChoice{}, classifyAPIError(resp.StatusCode, respBody)
+		return nil, nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
-		Bucket      BucketInfo    `json:"bucket"`
-		Connections ConnectChoice `json:"connections"`
+		Bucket      BucketInfo     `json:"bucket"`
+		Connections *ConnectChoice `json:"connections"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		// Created all the same; connections this CLI cannot read are unknown.
+		return &result.Bucket, nil, nil
+	}
 	return &result.Bucket, result.Connections, nil
 }
 
@@ -1593,8 +1603,9 @@ type AuthUserInfo struct {
 // enabled afterward via UpdateAuthApp. Non-201 responses route through
 // classifyAPIError so the marketplace insufficient-points / capacity classes
 // render. connectSiteIDs are the sites to connect the new app to (none when
-// empty); the returned ConnectChoice says what became of each.
-func (c *Client) CreateAuthApp(name, appID, projectID, authTierSlug string, connectSiteIDs []string) (*AuthAppInfo, ConnectChoice, error) {
+// empty); the returned ConnectChoice says what became of each, nil when the
+// server reported none (see ConnectChoice).
+func (c *Client) CreateAuthApp(name, appID, projectID, authTierSlug string, connectSiteIDs []string) (*AuthAppInfo, *ConnectChoice, error) {
 	payload := map[string]interface{}{"name": name, "app_id": appID, "project_id": projectID, "connect_site_ids": siteChoice(connectSiteIDs)}
 	if authTierSlug != "" {
 		payload["auth_tier_slug"] = authTierSlug
@@ -1602,20 +1613,23 @@ func (c *Client) CreateAuthApp(name, appID, projectID, authTierSlug string, conn
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/auth-apps", bytes.NewReader(body))
 	if err != nil {
-		return nil, ConnectChoice{}, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 201 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, ConnectChoice{}, classifyAPIError(resp.StatusCode, respBody)
+		return nil, nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
 	var result struct {
-		AuthApp     AuthAppInfo   `json:"auth_app"`
-		Connections ConnectChoice `json:"connections"`
+		AuthApp     AuthAppInfo    `json:"auth_app"`
+		Connections *ConnectChoice `json:"connections"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		// Created all the same; connections this CLI cannot read are unknown.
+		return &result.AuthApp, nil, nil
+	}
 	return &result.AuthApp, result.Connections, nil
 }
 

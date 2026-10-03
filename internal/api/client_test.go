@@ -289,12 +289,12 @@ type createWithChoice struct {
 	path     string
 	resource string // the resource half of the 201 body
 	id       string
-	create   func(c *Client, siteIDs []string) (string, ConnectChoice, error)
+	create   func(c *Client, siteIDs []string) (string, *ConnectChoice, error)
 }
 
 var createsWithChoice = []createWithChoice{
 	{"database", "/api/v1/databases", `"database":{"id":"d1","name":"shop-db","type":"postgres"}`, "d1",
-		func(c *Client, siteIDs []string) (string, ConnectChoice, error) {
+		func(c *Client, siteIDs []string) (string, *ConnectChoice, error) {
 			db, choice, err := c.CreateDatabase("shop-db", "postgres", "p1", nil, "", 0, "", siteIDs)
 			if err != nil {
 				return "", choice, err
@@ -302,7 +302,7 @@ var createsWithChoice = []createWithChoice{
 			return db.ID, choice, nil
 		}},
 	{"bucket", "/api/v1/storage", `"bucket":{"id":"b1","name":"media"}`, "b1",
-		func(c *Client, siteIDs []string) (string, ConnectChoice, error) {
+		func(c *Client, siteIDs []string) (string, *ConnectChoice, error) {
 			bucket, choice, err := c.CreateBucket("media", "p1", 0, siteIDs)
 			if err != nil {
 				return "", choice, err
@@ -310,7 +310,7 @@ var createsWithChoice = []createWithChoice{
 			return bucket.ID, choice, nil
 		}},
 	{"auth app", "/api/v1/auth-apps", `"auth_app":{"id":"a1","name":"shop-auth","app_id":"shop-auth"}`, "a1",
-		func(c *Client, siteIDs []string) (string, ConnectChoice, error) {
+		func(c *Client, siteIDs []string) (string, *ConnectChoice, error) {
 			app, choice, err := c.CreateAuthApp("shop-auth", "shop-auth", "p1", "", siteIDs)
 			if err != nil {
 				return "", choice, err
@@ -372,6 +372,9 @@ func TestCreates_DecodeTheConnections(t *testing.T) {
 		if id != tc.id {
 			t.Errorf("%s: id = %q; want %q", tc.kind, id, tc.id)
 		}
+		if choice == nil {
+			t.Fatalf("%s: choice = nil; want the reported connections", tc.kind)
+		}
 		if !reflect.DeepEqual(choice.Connected, []string{"s1"}) || !reflect.DeepEqual(choice.Pending, []string{"s2"}) {
 			t.Errorf("%s: connected %v, pending %v; want [s1], [s2]", tc.kind, choice.Connected, choice.Pending)
 		}
@@ -381,17 +384,40 @@ func TestCreates_DecodeTheConnections(t *testing.T) {
 	}
 }
 
-// TestCreates_WithoutConnectionsIsEmpty: a server that predates the field
-// answers without it; the create still succeeds and reports nothing.
-func TestCreates_WithoutConnectionsIsEmpty(t *testing.T) {
+// TestCreates_WithoutConnectionsIsNil: a server that predates the field
+// answers without it and may still connect on its own, so the create succeeds
+// with no choice at all — never an empty one, which reads as "connected
+// nothing". A server that sends the field, even empty, has answered.
+func TestCreates_WithoutConnectionsIsNil(t *testing.T) {
 	for _, tc := range createsWithChoice {
 		ts, _ := createServer(t, tc.path, "{"+tc.resource+"}")
 		id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1"})
 		if err != nil || id != tc.id {
 			t.Fatalf("%s: id, err = %q, %v; want %q", tc.kind, id, err, tc.id)
 		}
-		if len(choice.Connected) != 0 || len(choice.Pending) != 0 || len(choice.Failed) != 0 {
-			t.Errorf("%s: choice = %+v; want empty", tc.kind, choice)
+		if choice != nil {
+			t.Errorf("%s: choice = %+v; want nil", tc.kind, *choice)
+		}
+
+		ts, _ = createServer(t, tc.path, "{"+tc.resource+`,"connections":{"connected":[],"pending":[],"failed":[]}}`)
+		if _, choice, err = tc.create(newTestClient(ts.URL), nil); err != nil || choice == nil {
+			t.Errorf("%s: choice, err = %v, %v; want an empty choice, not nil", tc.kind, choice, err)
+		}
+	}
+}
+
+// TestCreates_UnreadableConnectionsAreUnknown: the resource exists once the
+// server answers 201, so connections this CLI cannot read leave the choice
+// unknown (nil) rather than half-read, and never fail the create.
+func TestCreates_UnreadableConnectionsAreUnknown(t *testing.T) {
+	for _, tc := range createsWithChoice {
+		ts, _ := createServer(t, tc.path, "{"+tc.resource+`,"connections":{"connected":"s1"}}`)
+		id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1"})
+		if err != nil || id != tc.id {
+			t.Fatalf("%s: id, err = %q, %v; want %q and no error", tc.kind, id, err, tc.id)
+		}
+		if choice != nil {
+			t.Errorf("%s: choice = %+v; want nil", tc.kind, *choice)
 		}
 	}
 }

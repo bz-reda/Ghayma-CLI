@@ -94,7 +94,7 @@ var storageCreateCmd = &cobra.Command{
 		fmt.Printf("   Bucket:   %s\n", bucket.GarageBucket)
 		fmt.Printf("   Limit:    %s\n", formatBytes(bucket.StorageLimitBytes))
 		fmt.Printf("   Status:   %s\n", bucket.Status)
-		printConnectOutcome(outcome, siteIDs, sites, note)
+		printConnectOutcome(outcome, siteIDs, sites, note, "bucket", args[0])
 	},
 }
 

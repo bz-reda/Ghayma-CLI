@@ -53,8 +53,10 @@ func checkConnectFlags(siteFlags []string, noConnect bool) error {
 // before the create, so a refused choice never leaves a half-made resource.
 // kind is the API kind and name what `ghayma connect` calls the service. It
 // returns the site ids to send, the project's sites when it listed them (to
-// name the outcome) and a note to print after the create. A cancelled question
-// is errAttachCancelled.
+// name the outcome) and a note to print after the create. Without a terminal
+// the note's command names the site the server would pick (serverPickedSite),
+// or keeps a placeholder when the list is empty, unreadable or names none. A
+// cancelled question is errAttachCancelled.
 func resolveSiteChoice(client *api.Client, projectID string, siteFlags []string, noConnect bool, kind, name string) (ids []string, sites []api.Site, note string, err error) {
 	if err = checkConnectFlags(siteFlags, noConnect); err != nil {
 		return nil, nil, "", err
@@ -63,7 +65,12 @@ func resolveSiteChoice(client *api.Client, projectID string, siteFlags []string,
 		return []string{}, nil, "", nil
 	}
 	if len(siteFlags) == 0 && !stdinIsTerminalFn() {
-		return []string{}, nil, "Not connected. Connect it with: " + connectCommand(kind, name, "<slug>"), nil
+		sites, _ = client.ListSites(projectID)
+		slug := "<slug>"
+		if site := serverPickedSite(sites); site != nil {
+			slug = site.Slug
+		}
+		return []string{}, sites, notConnected + "Connect it with: " + connectCommand(kind, name, slug), nil
 	}
 	sites, err = client.ListSites(projectID)
 	if err != nil {
@@ -169,24 +176,39 @@ func reportSiteChoiceError(err error) {
 	failf("%v", err)
 }
 
+// notConnected opens the note of a create that chose no site.
+const notConnected = "Not connected. "
+
 // printConnectOutcome says what the create did with the chosen sites, naming
-// each by slug (by id when the listing lacks it), then the note. When the
-// response accounts for none of the chosen sites — an older server, or a shape
-// this CLI cannot read — it says where to look instead of saying nothing.
-func printConnectOutcome(outcome api.ConnectChoice, chosen []string, sites []api.Site, note string) {
+// each by slug (by id when the listing lacks it) and following a failure with
+// the command that retries it, then the note. When the response accounts for
+// none of the chosen sites it says where to look instead of saying nothing. A
+// nil outcome is a server that predates the choice and may have connected the
+// service on its own: it gets a warning instead, and of the note only the
+// command that connects it.
+func printConnectOutcome(outcome *api.ConnectChoice, chosen []string, sites []api.Site, note, kind, name string) {
+	if outcome == nil {
+		fmt.Printf("⚠️  this server didn't report connections — it may have connected the %s to the project's main site; check with: ghayma connections\n", kindLabel(kind))
+		if hint, ok := strings.CutPrefix(note, notConnected); ok {
+			fmt.Printf("ℹ️  %s\n", hint)
+		}
+		return
+	}
 	for _, id := range outcome.Connected {
 		fmt.Printf("🔗 Connected to '%s'\n", siteSlugByID(sites, id))
 	}
 	for _, id := range outcome.Pending {
-		fmt.Printf("⏳ Connecting to '%s' once the database accepts connections\n", siteSlugByID(sites, id))
+		fmt.Printf("⏳ Connecting to '%s' once it is ready to accept connections\n", siteSlugByID(sites, id))
 	}
 	for _, f := range outcome.Failed {
-		fmt.Printf("⚠️  Not connected to '%s': %s\n", siteSlugByID(sites, f.SiteID), f.Error)
+		site := siteSlugByID(sites, f.SiteID)
+		fmt.Printf("⚠️  Not connected to '%s': %s\n", site, f.Error)
+		fmt.Printf("   Retry with: %s\n", connectCommand(kind, name, site))
 	}
 	if note != "" {
 		fmt.Printf("ℹ️  %s\n", note)
 	}
-	if len(chosen) > 0 && !outcomeMentions(outcome, chosen) {
+	if len(chosen) > 0 && !outcomeMentions(*outcome, chosen) {
 		fmt.Println(unreadableConnectResult)
 	}
 }

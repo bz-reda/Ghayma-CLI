@@ -169,7 +169,7 @@ var authCreateCmd = &cobra.Command{
 				fmt.Printf("   Enabled:   2FA\n")
 			}
 		}
-		printConnectOutcome(outcome, siteIDs, sites, note)
+		printConnectOutcome(outcome, siteIDs, sites, note, "auth_app", authAppSlug)
 
 		fmt.Printf("\n📋 Endpoints:\n")
 		fmt.Printf("   Register:  POST https://auth.ghayma.tech/v1/%s/register\n", app.AppID)

@@ -275,9 +275,9 @@ func TestResolveSiteChoice_NotATerminalConnectsNothingAndSaysHow(t *testing.T) {
 	noSiteQuestions(t)
 
 	for _, tc := range []struct{ kind, name, note string }{
-		{"database", "shop-db", "Not connected. Connect it with: ghayma connect database shop-db --site <slug>"},
-		{"bucket", "media", "Not connected. Connect it with: ghayma connect bucket media --site <slug>"},
-		{"auth_app", "shop", "Not connected. Connect it with: ghayma connect auth shop --site <slug>"},
+		{"database", "shop-db", "Not connected. Connect it with: ghayma connect database shop-db --site main"},
+		{"bucket", "media", "Not connected. Connect it with: ghayma connect bucket media --site main"},
+		{"auth_app", "shop", "Not connected. Connect it with: ghayma connect auth shop --site main"},
 	} {
 		stub := createStub(t, shopSites, "")
 		ids, _, note, err := resolveSiteChoice(stub.client(), "p1", nil, false, tc.kind, tc.name)
@@ -287,8 +287,37 @@ func TestResolveSiteChoice_NotATerminalConnectsNothingAndSaysHow(t *testing.T) {
 		if note != tc.note {
 			t.Errorf("%s: note = %q; want %q", tc.kind, note, tc.note)
 		}
-		if calls := stub.seen(); len(calls) != 0 {
-			t.Errorf("%s: a script's create needs no site listing, got %v", tc.kind, calls)
+		if calls := stub.seen(); !reflect.DeepEqual(calls, []string{"GET /api/v1/projects/p1/sites"}) {
+			t.Errorf("%s: requests = %v; want the one site listing", tc.kind, calls)
+		}
+	}
+}
+
+// A script's hint names the site the server would pick — the default site,
+// else main, else the only one — and keeps the placeholder when the list is
+// empty, unreadable or names no such site. A listing that fails never stops
+// the create.
+func TestResolveSiteChoice_NotATerminalNamesTheServersSite(t *testing.T) {
+	forceStdin(t, false)
+	noSiteQuestions(t)
+
+	for _, tc := range []struct {
+		name, project, sites, want string
+	}{
+		{"the default site", "p1", mainAndDefaultWWW, "www"},
+		{"main when none is default", "p1", shopSites, "main"},
+		{"the only site", "p1", `[{"id":"s2","name":"www","slug":"www"}]`, "www"},
+		{"no site yet", "p1", `[]`, "<slug>"},
+		{"several, none default or main", "p1", `[{"id":"s2","name":"www","slug":"www"},{"id":"s3","name":"admin","slug":"admin"}]`, "<slug>"},
+		{"list unreadable", "p-missing", shopSites, "<slug>"},
+	} {
+		stub := createStub(t, tc.sites, "")
+		ids, _, note, err := resolveSiteChoice(stub.client(), tc.project, nil, false, "database", "shop-db")
+		if err != nil || ids == nil || len(ids) != 0 {
+			t.Errorf("%s: ids, err = %#v, %v; want [], nil", tc.name, ids, err)
+		}
+		if want := "Not connected. Connect it with: ghayma connect database shop-db --site " + tc.want; note != want {
+			t.Errorf("%s: note = %q; want %q", tc.name, note, want)
 		}
 	}
 }
@@ -312,13 +341,13 @@ func TestPrintConnectOutcome_NamesEachSiteBySlug(t *testing.T) {
 		Pending:   []string{"s1"},
 		Failed:    []api.SiteConnectFailure{{SiteID: "s3", Error: "you need write access to this site"}},
 	}
-	out := captureStdout(t, func() { printConnectOutcome(outcome, []string{"s1", "s2", "s3"}, sites, "") })
+	out := captureStdout(t, func() { printConnectOutcome(&outcome, []string{"s1", "s2", "s3"}, sites, "", "database", "shop-db") })
 
 	for _, want := range []string{
 		"Connected to 'admin'",
 		"Connected to 's9'",
-		"Connecting to 'main' once the database accepts connections",
-		"Not connected to 'staging': you need write access to this site",
+		"Connecting to 'main' once it is ready to accept connections",
+		"Not connected to 'staging': you need write access to this site\n   Retry with: ghayma connect database shop-db --site staging\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
@@ -329,23 +358,37 @@ func TestPrintConnectOutcome_NamesEachSiteBySlug(t *testing.T) {
 	}
 }
 
+// Buckets and auth apps share the outcome lines, so a pending one never reads
+// as a database.
+func TestPrintConnectOutcome_PendingIsKindNeutral(t *testing.T) {
+	sites := []api.Site{{ID: "s1", Slug: "main"}}
+	out := captureStdout(t, func() {
+		printConnectOutcome(&api.ConnectChoice{Pending: []string{"s1"}}, []string{"s1"}, sites, "", "bucket", "media")
+	})
+	if out != "⏳ Connecting to 'main' once it is ready to accept connections\n" {
+		t.Errorf("printed %q", out)
+	}
+}
+
 func TestPrintConnectOutcome_UnreadableResultSaysWhereToCheck(t *testing.T) {
 	const line = "couldn't read the connection result — check with: ghayma connections\n"
 	sites := []api.Site{{ID: "s1", Slug: "main"}}
 
 	for _, tc := range []struct {
 		name    string
-		outcome api.ConnectChoice
+		outcome *api.ConnectChoice
 		chosen  []string
 		want    bool
 	}{
-		{"older backend", api.ConnectChoice{}, []string{"s1"}, true},
-		{"only other sites", api.ConnectChoice{Connected: []string{"s7"}}, []string{"s1"}, true},
-		{"nothing chosen", api.ConnectChoice{}, []string{}, false},
-		{"pending counts", api.ConnectChoice{Pending: []string{"s1"}}, []string{"s1"}, false},
-		{"failed counts", api.ConnectChoice{Failed: []api.SiteConnectFailure{{SiteID: "s1", Error: "x"}}}, []string{"s1"}, false},
+		{"an answer naming no site", &api.ConnectChoice{}, []string{"s1"}, true},
+		{"only other sites", &api.ConnectChoice{Connected: []string{"s7"}}, []string{"s1"}, true},
+		{"nothing chosen", &api.ConnectChoice{}, []string{}, false},
+		{"pending counts", &api.ConnectChoice{Pending: []string{"s1"}}, []string{"s1"}, false},
+		{"failed counts", &api.ConnectChoice{Failed: []api.SiteConnectFailure{{SiteID: "s1", Error: "x"}}}, []string{"s1"}, false},
+		// An older server gets its own warning instead.
+		{"older server", nil, []string{"s1"}, false},
 	} {
-		out := captureStdout(t, func() { printConnectOutcome(tc.outcome, tc.chosen, sites, "") })
+		out := captureStdout(t, func() { printConnectOutcome(tc.outcome, tc.chosen, sites, "", "database", "shop-db") })
 		if got := strings.Contains(out, line); got != tc.want {
 			t.Errorf("%s: line printed = %v; want %v:\n%s", tc.name, got, tc.want, out)
 		}
@@ -354,10 +397,33 @@ func TestPrintConnectOutcome_UnreadableResultSaysWhereToCheck(t *testing.T) {
 
 func TestPrintConnectOutcome_PrintsTheNote(t *testing.T) {
 	out := captureStdout(t, func() {
-		printConnectOutcome(api.ConnectChoice{}, []string{}, nil, "Not connected. Connect it with: ghayma connect bucket media --site <slug>")
+		printConnectOutcome(&api.ConnectChoice{}, []string{}, nil, "Not connected. Connect it with: ghayma connect bucket media --site <slug>", "bucket", "media")
 	})
 	if !strings.Contains(out, "Not connected. Connect it with: ghayma connect bucket media --site <slug>\n") {
 		t.Errorf("note missing:\n%s", out)
+	}
+}
+
+// A server that predates the choice sends no connections and may still have
+// connected the service on its own: the create says so and where to check —
+// never "not connected", nor that a deploy will offer it — and keeps the
+// command that connects it.
+func TestPrintConnectOutcome_OlderServerMayHaveConnected(t *testing.T) {
+	const warning = "⚠️  this server didn't report connections — it may have connected the auth app to the project's main site; check with: ghayma connections\n"
+	sites := []api.Site{{ID: "s1", Slug: "main"}}
+	for _, tc := range []struct {
+		name, note, hint string
+		chosen           []string
+	}{
+		{"not a terminal", "Not connected. Connect it with: ghayma connect auth shop --site main", "ℹ️  Connect it with: ghayma connect auth shop --site main\n", []string{}},
+		{"no site yet", "No site yet — `ghayma deploy` will offer to connect it.", "", []string{}},
+		{"--no-connect", "", "", []string{}},
+		{"a site chosen", "", "", []string{"s1"}},
+	} {
+		out := captureStdout(t, func() { printConnectOutcome(nil, tc.chosen, sites, tc.note, "auth_app", "shop") })
+		if want := warning + tc.hint; out != want {
+			t.Errorf("%s: printed %q; want %q", tc.name, out, want)
+		}
 	}
 }
 

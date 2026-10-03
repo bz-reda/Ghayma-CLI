@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -28,8 +29,8 @@ func promptDeployConnect(label string) (bool, error) {
 // puts it (serverPickedSite), and a project with no site gets main. ok is
 // false when the server has no site for it — several sites with neither a
 // default nor main, or a linked site since deleted — as it refuses that
-// upload. A list that could not be read (listed false) leaves the config's
-// slug, else main.
+// upload. A list that could not be read (listed false) leaves a linked
+// config's slug — its site id when it has no slug — and main otherwise.
 func deployTargetSite(ctx *SiteContext, sites []api.Site, listed bool) (string, bool) {
 	if id := ctx.Site.SiteID; id != "" {
 		if !listed {
@@ -88,19 +89,22 @@ func deployedSiteSlug(sites []api.Site, siteID, target string) string {
 }
 
 // chooseDeployConnections picks the unconnected services the upload connects
-// to site: those answered Yes on a terminal, none otherwise. A failed listing
-// (project keys are refused it) costs a warning line, never the deploy. A
-// cancelled question is errAttachCancelled.
-func chooseDeployConnections(client *api.Client, projectID, site string, interactive bool) ([]api.Unconnected, error) {
+// to site: those answered Yes on a terminal, none otherwise or with
+// --no-connect. A failed listing never costs the deploy: it is one line
+// (printListingFailure), and none with --no-connect. A cancelled question is
+// errAttachCancelled.
+func chooseDeployConnections(client *api.Client, projectID, site string, interactive, noConnect bool) ([]api.Unconnected, error) {
 	services, err := client.ListUnconnected(projectID)
 	if err != nil {
-		fmt.Printf("⚠️  couldn't check for services no site uses: %v\n", shortReason(err))
+		if !noConnect {
+			printListingFailure(err)
+		}
 		return nil, nil
 	}
 	var chosen, declined []api.Unconnected
 	for _, s := range services {
 		yes := false
-		if interactive {
+		if interactive && !noConnect {
 			if yes, err = promptDeployConnectFn(deployConnectQuestion(s, site)); err != nil {
 				return nil, errAttachCancelled
 			}
@@ -113,6 +117,24 @@ func chooseDeployConnections(client *api.Client, projectID, site string, interac
 	}
 	printNotConnected(declined, site)
 	return chosen, nil
+}
+
+// printListingFailure says why nothing was offered. A project key is refused
+// the listing by design and an older server has no such route: neither is
+// anything to act on, so both are said as facts; any other failure warns.
+func printListingFailure(err error) {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.Status {
+		case http.StatusForbidden:
+			fmt.Println("ℹ️  deploying with a project key — connect services from the console or after `ghayma login`")
+			return
+		case http.StatusNotFound:
+			fmt.Println("ℹ️  this server doesn't list unconnected services yet")
+			return
+		}
+	}
+	fmt.Printf("⚠️  couldn't check for services no site uses: %v\n", shortReason(err))
 }
 
 // shortReason is why a request failed: a transport error drops the method and
@@ -157,8 +179,9 @@ func connectionItems(chosen []api.Unconnected) []api.ConnectionItem {
 }
 
 // printDeployConnections says what the upload did with the chosen services,
-// named as the listing named them (by id otherwise). An answer accounting for
-// none of them — an older server — says where to look instead.
+// named as the listing named them (by id otherwise), each failure followed by
+// the command that retries it. An answer accounting for none of them — an
+// older server — says where to look instead.
 func printDeployConnections(outcome api.DeployConnections, chosen []api.Unconnected, site string) {
 	if len(chosen) == 0 {
 		return
@@ -174,10 +197,11 @@ func printDeployConnections(outcome api.DeployConnections, chosen []api.Unconnec
 		return id
 	}
 	for _, c := range outcome.Connected {
-		fmt.Printf("🔗 Connected %s '%s' to '%s'.\n", kindLabel(c.Kind), nameOf(c.ResourceID), site)
+		fmt.Printf("🔗 Connected %s '%s' to '%s'\n", kindLabel(c.Kind), nameOf(c.ResourceID), site)
 	}
 	for _, f := range outcome.Failed {
 		fmt.Printf("⚠️  Couldn't connect %s '%s': %s\n", kindLabel(f.Kind), nameOf(f.ResourceID), f.Error)
+		fmt.Printf("   Retry with: %s\n", connectCommand(f.Kind, nameOf(f.ResourceID), site))
 	}
 	if !deployOutcomeMentions(outcome, names) {
 		fmt.Println(unreadableConnectResult)

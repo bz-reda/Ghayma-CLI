@@ -20,7 +20,7 @@ func TestListDatabaseSites_ParsesEnvelope(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Errorf("auth header = %q; want Bearer test-token", got)
 		}
-		io.WriteString(w, `{"sites":[{"site_id":"s1","slug":"main","name":"main","has_access":true},{"site_id":"s2","slug":"admin","name":"Admin","has_access":false}]}`)
+		io.WriteString(w, `{"sites":[{"site_id":"s1","slug":"main","name":"main","has_access":true},{"site_id":"s2","slug":"admin","name":"Admin","has_access":false},{"site_id":"s3","slug":"api","name":"API","has_access":false,"pending":true}]}`)
 	}))
 	defer ts.Close()
 
@@ -28,14 +28,17 @@ func TestListDatabaseSites_ParsesEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDatabaseSites: %v", err)
 	}
-	if len(sites) != 2 {
-		t.Fatalf("got %d sites; want 2", len(sites))
+	if len(sites) != 3 {
+		t.Fatalf("got %d sites; want 3", len(sites))
 	}
-	if sites[0].SiteID != "s1" || sites[0].Slug != "main" || !sites[0].HasAccess {
+	if sites[0].SiteID != "s1" || sites[0].Slug != "main" || !sites[0].HasAccess || sites[0].Pending {
 		t.Errorf("sites[0] = %+v; want main granted", sites[0])
 	}
-	if sites[1].Slug != "admin" || sites[1].HasAccess {
+	if sites[1].Slug != "admin" || sites[1].HasAccess || sites[1].Pending {
 		t.Errorf("sites[1] = %+v; want admin blocked", sites[1])
+	}
+	if sites[2].Slug != "api" || sites[2].HasAccess || !sites[2].Pending {
+		t.Errorf("sites[2] = %+v; want api pending", sites[2])
 	}
 }
 

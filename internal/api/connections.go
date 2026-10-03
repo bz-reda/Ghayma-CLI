@@ -56,8 +56,9 @@ type ConnectionItem struct {
 
 // ConnectChoice is what a create did with the sites chosen for the new
 // service: connected, pending until the engine accepts logins (Postgres), or
-// failed with the reason. A server older than 2026-10-02 sends none, which
-// reads as empty.
+// failed with the reason. A create returns it as nil when the server sent none
+// — one older than 2026-10-02, which may still connect the service on its own
+// — or sent one this CLI cannot read; the resource exists either way.
 type ConnectChoice struct {
 	Connected []string             `json:"connected"`
 	Pending   []string             `json:"pending"`

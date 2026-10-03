@@ -7,17 +7,22 @@ import (
 
 // Per-DB site access. Each managed database enforces a network policy (per-DB
 // CiliumNetworkPolicy) naming which of its owning project's sites may open a
-// connection to it. The default is the main site only; secondary sites must be
-// granted. Backend: Ghayma-backend #202, GET/PUT /api/v1/databases/:id/sites.
+// connection to it. A database reaches only the sites connected to it — chosen
+// at create (connect_site_ids), at deploy, or with `ghayma connect database
+// <name> --site <slug>`. Backend: Ghayma-backend #202, GET/PUT
+// /api/v1/databases/:id/sites.
 
 // DatabaseSiteAccess is one row of the sites response: a project site plus
 // whether it may currently reach the database. The response carries EVERY site
-// of the database's owning project, each flagged with has_access.
+// of the database's owning project, each flagged with has_access. Pending marks
+// a site whose connection waits for the database to accept connections; it is
+// part of the current set, though it cannot reach the database yet.
 type DatabaseSiteAccess struct {
 	SiteID    string `json:"site_id"`
 	Slug      string `json:"slug"`
 	Name      string `json:"name"`
 	HasAccess bool   `json:"has_access"`
+	Pending   bool   `json:"pending,omitempty"`
 }
 
 // ListDatabaseSites returns every site of the database's owning project with a

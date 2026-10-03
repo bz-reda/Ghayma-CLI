@@ -58,6 +58,13 @@ func resetCommandFlags() {
 	if f := dbResizeCmd.Flags().Lookup("disk-gb"); f != nil {
 		f.Changed = false
 	}
+	// `db sites` tells its three flags apart through Changed.
+	dbSitesAdd, dbSitesRemove, dbSitesSet = "", "", ""
+	for _, name := range []string{"add", "remove", "set"} {
+		if f := dbSitesCmd.Flags().Lookup(name); f != nil {
+			f.Changed = false
+		}
+	}
 	dbCreateSites, dbCreateNoConnect = nil, false
 	storageCreateSites, storageCreateNoConnect = nil, false
 	authCreateSites, authCreateNoConnect = nil, false
@@ -582,6 +589,10 @@ func TestResetCommandFlags_ClearsChanged(t *testing.T) {
 		{authCreateCmd, "app-id", "shop"},
 		{deployCmd, "site", "admin"},
 		{deployCmd, "no-connect", "true"},
+		{dbCreateCmd, "site", "main"},
+		{storageCreateCmd, "no-connect", "true"},
+		{authCreateCmd, "site", "main"},
+		{dbSitesCmd, "add", "main"},
 	}
 	for _, f := range flags {
 		if err := f.cmd.Flags().Set(f.name, f.value); err != nil {
@@ -593,10 +604,14 @@ func TestResetCommandFlags_ClearsChanged(t *testing.T) {
 
 	for _, f := range flags {
 		if f.cmd.Flags().Lookup(f.name).Changed {
-			t.Errorf("%s --%s is still Changed", f.cmd.Name(), f.name)
+			t.Errorf("%s --%s is still Changed", f.cmd.CommandPath(), f.name)
 		}
 	}
 	if authAppSlug != "" || deploySite != "" || deployNoConnect {
 		t.Errorf("vars not reset: app-id %q, site %q, no-connect %v", authAppSlug, deploySite, deployNoConnect)
+	}
+	if dbCreateSites != nil || storageCreateNoConnect || authCreateSites != nil || dbSitesAdd != "" {
+		t.Errorf("create vars not reset: db --site %q, storage --no-connect %v, auth --site %q, db sites --add %q",
+			dbCreateSites, storageCreateNoConnect, authCreateSites, dbSitesAdd)
 	}
 }

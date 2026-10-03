@@ -149,6 +149,17 @@ func TestListProjects_DecodeErrorSurfaces(t *testing.T) {
 	}
 }
 
+// TestListSites_DecodeErrorSurfaces: a site list that cannot be read is an
+// error, never a project with no sites.
+func TestListSites_DecodeErrorSurfaces(t *testing.T) {
+	ts := jsonStatusServer(t, http.StatusOK, `{"sites": "not-an-array"}`)
+
+	sites, err := newTestClient(ts.URL).ListSites("p1")
+	if err == nil || sites != nil {
+		t.Fatalf("sites, err = %+v, %v; want a decode error and no sites", sites, err)
+	}
+}
+
 // TestAuthRequest_SendsBearer pins which credential goes on the wire: the
 // long-lived PAT when stored, the session JWT otherwise, and never the legacy
 // users.api_token UUID (which the API rejects).

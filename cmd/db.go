@@ -123,7 +123,7 @@ var dbCreateCmd = &cobra.Command{
 		if db.Type == "mongodb" {
 			fmt.Printf("   Mode:    %s\n", mongoModeLabel(db.ReplicaSet))
 		}
-		printConnectOutcome(outcome, siteIDs, sites, note)
+		printConnectOutcome(outcome, siteIDs, sites, note, "database", args[0])
 	},
 }
 

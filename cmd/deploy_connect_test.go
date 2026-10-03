@@ -215,7 +215,7 @@ func TestDeployInteractiveYesCarriesTheChoice(t *testing.T) {
 	if got := stub.connectField(); got != `[{"kind":"database","resource_id":"d1"}]` {
 		t.Fatalf("choice not sent: %q", got)
 	}
-	if !strings.Contains(out, "🔗 Connected database 'shop-db' to 'main'.\n") {
+	if !strings.Contains(out, "🔗 Connected database 'shop-db' to 'main'\n") {
 		t.Errorf("missing the outcome:\n%s", out)
 	}
 	if strings.Contains(out, "Not connected to any site") {
@@ -223,20 +223,26 @@ func TestDeployInteractiveYesCarriesTheChoice(t *testing.T) {
 	}
 }
 
-// The listing never blocks a deploy: a project key is refused it by design, a
-// server can fail it, a network can drop it. One warning line, nothing
-// connected, and the upload still happens — on a terminal too.
+// The listing never blocks a deploy, and costs one line: a project key is
+// refused it by design and an older server has no such route — both said as
+// facts, since nobody can act on them — while a server error or a dropped
+// connection is a warning with its reason. Nothing is connected and the upload
+// still happens — on a terminal too.
 func TestDeployProceedsWhenTheListFails(t *testing.T) {
 	const warning = "⚠️  couldn't check for services no site uses: "
 	for _, tc := range []struct {
 		name   string
 		stub   *deployAPI
+		line   string // the whole line for a known refusal, else "" for the warning
 		reason string
 	}{
-		{"project key", &deployAPI{sites: `[]`, listStatus: http.StatusForbidden, listBody: `{"error":"project keys cannot list unconnected services"}`}, "project keys cannot list unconnected services"},
-		{"server error", &deployAPI{sites: `[]`, listStatus: http.StatusInternalServerError, listBody: `{"error":"boom"}`}, "boom"},
+		{"project key", &deployAPI{sites: `[]`, listStatus: http.StatusForbidden, listBody: `{"error":"project keys cannot list unconnected services"}`},
+			"ℹ️  deploying with a project key — connect services from the console or after `ghayma login`\n", ""},
+		{"older server", &deployAPI{sites: `[]`, listStatus: http.StatusNotFound, listBody: `404 page not found`},
+			"ℹ️  this server doesn't list unconnected services yet\n", ""},
+		{"server error", &deployAPI{sites: `[]`, listStatus: http.StatusInternalServerError, listBody: `{"error":"boom"}`}, "", "boom"},
 		// The transport's wording differs by OS, so only its shape is checked below.
-		{"dropped connection", &deployAPI{sites: `[]`, dropList: true}, ""},
+		{"dropped connection", &deployAPI{sites: `[]`, dropList: true}, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			deploySetup(t, true)
@@ -252,6 +258,15 @@ func TestDeployProceedsWhenTheListFails(t *testing.T) {
 			if got := stub.connectField(); got != "" {
 				t.Errorf("connect_resources = %q; want none", got)
 			}
+			if !strings.Contains(out, "✅ Deployed successfully!") {
+				t.Errorf("the deploy must run to the end:\n%s", out)
+			}
+			if tc.line != "" {
+				if n := strings.Count(out, tc.line); n != 1 || strings.Contains(out, warning) {
+					t.Errorf("want the line %q once and no warning, got %d:\n%s", tc.line, n, out)
+				}
+				return
+			}
 			if n := strings.Count(out, warning); n != 1 {
 				t.Fatalf("want exactly one warning line, got %d:\n%s", n, out)
 			}
@@ -264,8 +279,37 @@ func TestDeployProceedsWhenTheListFails(t *testing.T) {
 			if reason := strings.TrimPrefix(line, warning); reason == "" || strings.Contains(reason, stub.URL) || strings.Contains(reason, "/connections/unconnected") {
 				t.Errorf("warning %q; want a short reason without the request", line)
 			}
-			if !strings.Contains(out, "✅ Deployed successfully!") {
-				t.Errorf("the deploy must run to the end:\n%s", out)
+		})
+	}
+}
+
+// --no-connect leaves the topic: a listing that fails, for whatever reason,
+// says nothing at all, and the deploy goes on.
+func TestDeployNoConnectSaysNothingWhenTheListFails(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stub *deployAPI
+	}{
+		{"project key", &deployAPI{sites: `[]`, listStatus: http.StatusForbidden, listBody: `{"error":"project keys cannot list unconnected services"}`}},
+		{"older server", &deployAPI{sites: `[]`, listStatus: http.StatusNotFound, listBody: `404 page not found`}},
+		{"server error", &deployAPI{sites: `[]`, listStatus: http.StatusInternalServerError, listBody: `{"error":"boom"}`}},
+		{"dropped connection", &deployAPI{sites: `[]`, dropList: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deploySetup(t, true)
+			noDeployQuestions(t)
+			stub := tc.stub.start(t)
+			cliHome(t, stub.URL)
+
+			out := runCLI(t, siteLessDir(t), "deploy", "--no-connect")
+
+			if !stub.uploaded() {
+				t.Fatalf("requests = %v; want the upload\n%s", stub.seen(), out)
+			}
+			for _, said := range []string{"couldn't check for services", "project key", "doesn't list unconnected services"} {
+				if strings.Contains(out, said) {
+					t.Errorf("--no-connect must say nothing about the listing, got %q in:\n%s", said, out)
+				}
 			}
 		})
 	}
@@ -366,7 +410,7 @@ func TestDeployAsksEachServiceInTurn(t *testing.T) {
 	if !strings.Contains(out, notice) {
 		t.Errorf("missing the notice %q:\n%s", notice, out)
 	}
-	for _, line := range []string{"🔗 Connected database 'shop-db' to 'main'.\n", "🔗 Connected auth app 'shop' to 'main'.\n"} {
+	for _, line := range []string{"🔗 Connected database 'shop-db' to 'main'\n", "🔗 Connected auth app 'shop' to 'main'\n"} {
 		if !strings.Contains(out, line) {
 			t.Errorf("missing %q in:\n%s", line, out)
 		}
@@ -433,8 +477,8 @@ func TestDeployPrintsWhatTheUploadConnected(t *testing.T) {
 
 	queued := strings.Index(out, "📦 Build queued")
 	for _, line := range []string{
-		"🔗 Connected database 'shop-db' to 'main'.\n",
-		"⚠️  Couldn't connect bucket 'media': the site's platform key could not be updated\n",
+		"🔗 Connected database 'shop-db' to 'main'\n",
+		"⚠️  Couldn't connect bucket 'media': the site's platform key could not be updated\n   Retry with: ghayma connect bucket media --site main\n",
 	} {
 		i := strings.Index(out, line)
 		if i < 0 {
@@ -487,9 +531,9 @@ func TestPrintDeployConnections(t *testing.T) {
 		unreadable bool
 	}{
 		{"older backend", api.DeployConnections{}, chosen, nil, true},
-		{"only another service", api.DeployConnections{Connected: []api.ConnectionItem{{Kind: "database", ResourceID: "d9"}}}, chosen, []string{"🔗 Connected database 'd9' to 'main'."}, true},
+		{"only another service", api.DeployConnections{Connected: []api.ConnectionItem{{Kind: "database", ResourceID: "d9"}}}, chosen, []string{"🔗 Connected database 'd9' to 'main'"}, true},
 		{"nothing chosen", api.DeployConnections{}, nil, nil, false},
-		{"failed counts", api.DeployConnections{Failed: []api.DeployConnectFailure{{Kind: "database", ResourceID: "d1", Error: "x"}}}, chosen, []string{"⚠️  Couldn't connect database 'shop-db': x"}, false},
+		{"failed counts", api.DeployConnections{Failed: []api.DeployConnectFailure{{Kind: "database", ResourceID: "d1", Error: "x"}}}, chosen, []string{"⚠️  Couldn't connect database 'shop-db': x\n   Retry with: ghayma connect database shop-db --site main"}, false},
 	} {
 		out := captureStdout(t, func() { printDeployConnections(tc.outcome, tc.chosen, "main") })
 		for _, line := range tc.lines {
@@ -639,7 +683,7 @@ func TestDeployOutcomeNamesTheSiteTheServerAnswered(t *testing.T) {
 
 	out := runCLI(t, legacyDir(t), "deploy")
 
-	if !strings.Contains(out, "🔗 Connected database 'shop-db' to 'www'.\n") {
+	if !strings.Contains(out, "🔗 Connected database 'shop-db' to 'www'\n") {
 		t.Errorf("the outcome must name the site the server answered with:\n%s", out)
 	}
 }
@@ -707,5 +751,13 @@ func TestDeployImageNeverAsksAboutServices(t *testing.T) {
 		if strings.Contains(got, "/connections/unconnected") {
 			t.Errorf("requests = %v; an image deploy must not list unconnected services", *seen)
 		}
+	}
+}
+
+// The choice rides on the upload, so the help says an image deploy has none.
+func TestDeployHelp_ConnectionsAreForSourceDeploysOnly(t *testing.T) {
+	const want = "The offer and --no-connect apply to source deploys only, not to --image."
+	if !strings.Contains(strings.Join(strings.Fields(deployCmd.Long), " "), want) {
+		t.Errorf("deploy --help lacks %q:\n%s", want, deployCmd.Long)
 	}
 }

@@ -176,7 +176,8 @@ out as it is. Name a tag, or a sha256: digest for one exact image.
 A database, bucket or auth app that no site uses yet is offered to the site
 being deployed, one question each on a terminal, and connected before the
 build starts. Without a terminal, or with --no-connect, nothing is connected
-and the deploy prints the command that connects each one.
+and the deploy prints the command that connects each one. The offer and
+--no-connect apply to source deploys only, not to --image.
 
 Examples:
   ghayma deploy
@@ -309,7 +310,7 @@ Examples:
 		var chosen []api.Unconnected
 		target, known := deployTargetSite(ctx, sites, sitesErr == nil)
 		if known {
-			if chosen, err = chooseDeployConnections(client, ctx.ProjectID, target, stdinIsTerminalFn() && !deployNoConnect); err != nil {
+			if chosen, err = chooseDeployConnections(client, ctx.ProjectID, target, stdinIsTerminalFn(), deployNoConnect); err != nil {
 				fmt.Println("❌ Cancelled")
 				return
 			}
