@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // The command-level tests below drive the REAL cobra tree against a stub API,
@@ -39,7 +41,7 @@ func cliHome(t *testing.T, apiHost string) {
 // package-level vars that outlive one Execute, so a --site from one test would
 // otherwise leak into the next.
 func resetCommandFlags() {
-	deploySite, deployProd, deployImage = "", false, ""
+	deploySite, deployProd, deployImage, deployNoConnect = "", false, "", false
 	dockerPushSite, dockerPushTag, dockerPushDeploy, dockerPushProd = "", "", false, false
 	envSite, domainSite = "", ""
 	cronSiteFlag = ""
@@ -54,6 +56,29 @@ func resetCommandFlags() {
 	dbResizeTier, dbResizeDiskGB, dbResizeBackup, dbResizeNoWait = "", 0, "", false
 	// `db resize` checks whether --disk-gb was GIVEN.
 	if f := dbResizeCmd.Flags().Lookup("disk-gb"); f != nil {
+		f.Changed = false
+	}
+	// `db sites` tells its three flags apart through Changed.
+	dbSitesAdd, dbSitesRemove, dbSitesSet = "", "", ""
+	for _, name := range []string{"add", "remove", "set"} {
+		if f := dbSitesCmd.Flags().Lookup(name); f != nil {
+			f.Changed = false
+		}
+	}
+	dbCreateSites, dbCreateNoConnect = nil, false
+	storageCreateSites, storageCreateNoConnect = nil, false
+	authCreateSites, authCreateNoConnect = nil, false
+	authProject, authAppSlug = "", ""
+	// The create commands' and deploy's --site / --no-connect, Changed included.
+	for _, c := range []*cobra.Command{dbCreateCmd, storageCreateCmd, authCreateCmd, deployCmd} {
+		for _, name := range []string{"site", "no-connect"} {
+			if f := c.Flags().Lookup(name); f != nil {
+				f.Changed = false
+			}
+		}
+	}
+	// `auth create` requires --app-id, which cobra checks through Changed.
+	if f := authCreateCmd.Flags().Lookup("app-id"); f != nil {
 		f.Changed = false
 	}
 	// `access allow` branches on whether --set was GIVEN, and cobra keeps
@@ -550,5 +575,43 @@ func TestFindProjectConfigUp_StopsAtRepoBoundary(t *testing.T) {
 	writeFiles(t, outer, map[string]string{"repo/" + projectConfigName: manifestJSON})
 	if got, err := findProjectConfigUp(filepath.Join(outer, "repo", "apps", "web")); err != nil || !strings.HasSuffix(got, filepath.Join("repo", projectConfigName)) {
 		t.Fatalf("expected the repo's own manifest, got %q, %v", got, err)
+	}
+}
+
+// Cobra keeps a flag's Changed across Executes and checks a required flag
+// through it: left set, one test's --app-id would satisfy the next test's
+// check. The flag vars go back to their defaults too.
+func TestResetCommandFlags_ClearsChanged(t *testing.T) {
+	flags := []struct {
+		cmd         *cobra.Command
+		name, value string
+	}{
+		{authCreateCmd, "app-id", "shop"},
+		{deployCmd, "site", "admin"},
+		{deployCmd, "no-connect", "true"},
+		{dbCreateCmd, "site", "main"},
+		{storageCreateCmd, "no-connect", "true"},
+		{authCreateCmd, "site", "main"},
+		{dbSitesCmd, "add", "main"},
+	}
+	for _, f := range flags {
+		if err := f.cmd.Flags().Set(f.name, f.value); err != nil {
+			t.Fatalf("set --%s: %v", f.name, err)
+		}
+	}
+
+	resetCommandFlags()
+
+	for _, f := range flags {
+		if f.cmd.Flags().Lookup(f.name).Changed {
+			t.Errorf("%s --%s is still Changed", f.cmd.CommandPath(), f.name)
+		}
+	}
+	if authAppSlug != "" || deploySite != "" || deployNoConnect {
+		t.Errorf("vars not reset: app-id %q, site %q, no-connect %v", authAppSlug, deploySite, deployNoConnect)
+	}
+	if dbCreateSites != nil || storageCreateNoConnect || authCreateSites != nil || dbSitesAdd != "" {
+		t.Errorf("create vars not reset: db --site %q, storage --no-connect %v, auth --site %q, db sites --add %q",
+			dbCreateSites, storageCreateNoConnect, authCreateSites, dbSitesAdd)
 	}
 }

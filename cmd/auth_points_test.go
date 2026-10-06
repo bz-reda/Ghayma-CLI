@@ -191,3 +191,94 @@ func TestPromptAuthSelections_AllSucceed(t *testing.T) {
 		t.Errorf("got %q/%v; want 10k/true", bracket, twofa)
 	}
 }
+
+// authCreated is the create's 201 for the app id shop; connections is the
+// `,"connections":{...}` tail, or "" for a server that predates it.
+func authCreated(connections string) string {
+	return `{"auth_app":{"id":"a1","name":"Shop Auth","app_id":"shop","status":"active"}` + connections + `}`
+}
+
+// connect names an auth app by its app id, so the hint must too.
+func TestAuthCreate_NotATerminalHintNamesTheAppID(t *testing.T) {
+	forceStdin(t, false)
+	noSiteQuestions(t)
+	stub := createStub(t, shopSites, authCreated(`,"connections":{"connected":[],"pending":[],"failed":[]}`))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "auth", "create", "Shop Auth", "--app-id", "shop")
+	if got := stub.sentSites(); got != `[]` {
+		t.Errorf("connect_site_ids = %s; want []", got)
+	}
+	if !strings.Contains(out, "Not connected. Connect it with: ghayma connect auth shop --site main") {
+		t.Errorf("missing the hint:\n%s", out)
+	}
+}
+
+// --project looks the project up over the API, so the conflict is refused first.
+func TestAuthCreate_FlagConflictRefusedBeforeTheProjectLookup(t *testing.T) {
+	forceStdin(t, true)
+	noSiteQuestions(t)
+	stub := createStub(t, shopSites, authCreated(""))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "auth", "create", "Shop Auth", "--app-id", "shop", "--project", "shop", "--site", "main", "--no-connect")
+	if !strings.Contains(out, "--site and --no-connect") || lastExitCode != 1 {
+		t.Errorf("want the refusal and exit 1, got %d:\n%s", lastExitCode, out)
+	}
+	if calls := stub.seen(); len(calls) != 0 {
+		t.Errorf("the refusal must come before any call, got %v", calls)
+	}
+}
+
+func TestAuthCreate_FailedConnectionPrintsTheServerSentence(t *testing.T) {
+	forceStdin(t, true)
+	noSiteQuestions(t)
+	stub := createStub(t, shopSites, authCreated(`,"connections":{"connected":["s1"],"pending":[],"failed":[{"site_id":"s2","error":"the site's platform key could not be updated"}]}`))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "auth", "create", "Shop Auth", "--app-id", "shop", "--site", "main", "--site", "admin")
+	if got := stub.sentSites(); got != `["s1","s2"]` {
+		t.Errorf("connect_site_ids = %s; want [\"s1\",\"s2\"]", got)
+	}
+	for _, want := range []string{
+		"Connected to 'main'",
+		"Not connected to 'admin': the site's platform key could not be updated\n   Retry with: ghayma connect auth shop --site admin\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestAuthCreate_TerminalWithoutSitesSaysDeployWillOffer(t *testing.T) {
+	forceStdin(t, true)
+	noSiteQuestions(t)
+	stub := createStub(t, `[]`, authCreated(`,"connections":{"connected":[],"pending":[],"failed":[]}`))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, siteLessDir(t), "auth", "create", "Shop Auth", "--app-id", "shop")
+	if got := stub.sentSites(); got != `[]` {
+		t.Errorf("connect_site_ids = %s; want []", got)
+	}
+	if !strings.Contains(out, "No site yet — `ghayma deploy` will offer to connect it.") {
+		t.Errorf("missing the note:\n%s", out)
+	}
+}
+
+// A chosen site against a server that predates the choice: the server ignored
+// it and may have connected the app to main, so the create says that rather
+// than that it could not read the answer.
+func TestAuthCreate_ChosenSiteOnAnOlderServerSaysItMayHaveConnected(t *testing.T) {
+	forceStdin(t, true)
+	noSiteQuestions(t)
+	stub := createStub(t, shopSites, authCreated(""))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "auth", "create", "Shop Auth", "--app-id", "shop", "--site", "admin")
+	if !strings.Contains(out, olderServerWarning("auth app")) {
+		t.Errorf("missing the warning:\n%s", out)
+	}
+	if strings.Contains(out, "couldn't read the connection result") {
+		t.Errorf("the warning replaces the unreadable-result line:\n%s", out)
+	}
+}

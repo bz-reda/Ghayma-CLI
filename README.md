@@ -73,6 +73,7 @@ GHAYMA_CONFIG=~/.ghayma-staging.json ghayma whoami
 | `ghayma project transfer` | Transfer project ownership (also: `project status`, `project cancel`, `project accept`) |
 | `ghayma deploy` | Deploy the current project — production when the target site is a production site |
 | `ghayma deploy --prod` | Accepted, but no longer changes anything: the target site's environment decides |
+| `ghayma deploy --no-connect` | Deploy without connecting the services no site uses yet; prints the `ghayma connect` command for each. Without it, a terminal deploy offers each one to the site it deploys. The offer and `--no-connect` apply to source deploys only, not to `--image` |
 | `ghayma promote --from <site>` | Ship the image a site already runs onto another site (default target: the project's default site) |
 | `ghayma deploy --image <tag>` | Deploy an image already pushed with `ghayma docker push` instead of uploading source |
 | `ghayma status` | List your projects |
@@ -174,6 +175,8 @@ The allowlist is enforced at the front door, before any authentication, so it ca
 | `ghayma db create [name]` | Create a managed database |
 | `ghayma db create [name] --type mongodb` | Create with specific type (postgres, mongodb) |
 | `ghayma db create [name] --tier <tier> --disk-gb <gb> --backup <schedule>` | Create with a specific compute tier, disk size, and backup schedule (weekly, daily, sixhourly); interactive pickers appear when you pass none of these |
+| `ghayma db create [name] --site <slug>` | Connect the new database to a site; repeat `--site` for several. Without it, a terminal asks about each site |
+| `ghayma db create [name] --no-connect` | Connect the new database to no site, without asking |
 | `ghayma db resize [name] --tier <tier>` | Change a database's compute tier |
 | `ghayma db resize [name] --disk-gb <gb>` | Grow or shrink a database's disk. A grow stays online; a shrink stops the database for about a minute while its data moves to the smaller disk. Waits for the change to finish; `--no-wait` returns once it has started |
 | `ghayma db resize [name] --backup <schedule>` | Change the backup schedule (weekly, daily, sixhourly) |
@@ -193,6 +196,8 @@ Reaching a database from outside Ghayma is a named principal with its own creden
 |---|---|
 | `ghayma storage create [name]` | Create a storage bucket |
 | `ghayma storage create [name] --quota-gb <gb>` | Create with a specific storage quota in GB; interactive picker when omitted |
+| `ghayma storage create [name] --site <slug>` | Connect the new bucket to a site; repeat `--site` for several. Without it, a terminal asks about each site |
+| `ghayma storage create [name] --no-connect` | Connect the new bucket to no site, without asking |
 | `ghayma storage list` | List your storage buckets |
 | `ghayma storage info [name]` | Show bucket details |
 | `ghayma storage credentials [name]` | Show S3 access credentials |
@@ -209,6 +214,8 @@ Reaching a database from outside Ghayma is a named principal with its own creden
 | `ghayma auth create [name] --app-id my-app` | Create with custom app ID |
 | `ghayma auth create [name] --users <bracket>` | Set the user-capacity bracket (1k, 10k, 100k, 1m); interactive picker when omitted |
 | `ghayma auth create [name] --2fa` | Enable two-factor authentication (authenticator app / TOTP) |
+| `ghayma auth create [name] --site <slug>` | Connect the new auth app to a site; repeat `--site` for several. Without it, a terminal asks about each site |
+| `ghayma auth create [name] --no-connect` | Connect the new auth app to no site, without asking |
 | `ghayma auth list` | List your auth apps |
 | `ghayma auth info [name]` | Show auth app details and endpoints |
 | `ghayma auth config [name]` | Configure OAuth providers and settings |

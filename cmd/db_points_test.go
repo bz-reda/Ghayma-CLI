@@ -298,3 +298,126 @@ func TestPromptDBSelections_AllSucceed(t *testing.T) {
 		t.Errorf("got %q/%d/%q; want m/30/weekly", tier, disk, backup)
 	}
 }
+
+// dbCreated is the create's 201 for shop-db; connections is the
+// `,"connections":{...}` tail, or "" for a server that predates it.
+func dbCreated(connections string) string {
+	return `{"database":{"id":"d1","name":"shop-db","type":"postgres","host":"shop-db.internal","port":5432,"status":"provisioning"}` + connections + `}`
+}
+
+func TestDBCreate_SiteFlagsSendTheChosenSites(t *testing.T) {
+	forceStdin(t, true)
+	noSiteQuestions(t)
+	stub := createStub(t, shopSites, dbCreated(`,"connections":{"connected":["s2"],"pending":["s1"],"failed":[]}`))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "db", "create", "shop-db", "--site", "main", "--site", "admin")
+	if got := stub.sentSites(); got != `["s1","s2"]` {
+		t.Errorf("connect_site_ids = %s; want [\"s1\",\"s2\"]", got)
+	}
+	for _, want := range []string{
+		"Created postgres database 'shop-db'",
+		"Connecting to 'main' once it is ready to accept connections",
+		"Connected to 'admin'",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestDBCreate_SiteWithNoConnectRefusedBeforeAnyCall(t *testing.T) {
+	forceStdin(t, true)
+	noSiteQuestions(t)
+	stub := createStub(t, shopSites, dbCreated(""))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "db", "create", "shop-db", "--site", "main", "--no-connect")
+	if !strings.Contains(out, "--site and --no-connect") || lastExitCode != 1 {
+		t.Errorf("want the refusal and exit 1, got %d:\n%s", lastExitCode, out)
+	}
+	if calls := stub.seen(); len(calls) != 0 {
+		t.Errorf("the refusal must come before any call, got %v", calls)
+	}
+}
+
+func TestDBCreate_UnknownSiteNeverCreates(t *testing.T) {
+	forceStdin(t, false)
+	stub := createStub(t, shopSites, dbCreated(""))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "db", "create", "shop-db", "--site", "nope")
+	if !strings.Contains(out, `"nope"`) || !strings.Contains(out, "main, admin, legacy") || lastExitCode != 1 {
+		t.Errorf("want the unknown site, the project's sites and exit 1, got %d:\n%s", lastExitCode, out)
+	}
+	if stub.created() {
+		t.Errorf("an unknown site must stop the create, got %v", stub.seen())
+	}
+}
+
+func TestDBCreate_TerminalAnswersAreSent(t *testing.T) {
+	forceStdin(t, true)
+	answerSiteQuestions(t, false, true, false)
+	stub := createStub(t, shopSites, dbCreated(`,"connections":{"connected":[],"pending":["s2"],"failed":[]}`))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "db", "create", "shop-db")
+	if got := stub.sentSites(); got != `["s2"]` {
+		t.Errorf("connect_site_ids = %s; want [\"s2\"]", got)
+	}
+	if !strings.Contains(out, "Connecting to 'admin' once it is ready to accept connections") {
+		t.Errorf("missing the pending line:\n%s", out)
+	}
+}
+
+func TestDBCreate_CancelledQuestionCreatesNothing(t *testing.T) {
+	forceStdin(t, true)
+	orig := promptConnectSiteFn
+	t.Cleanup(func() { promptConnectSiteFn = orig })
+	promptConnectSiteFn = func(string, bool) (bool, error) { return false, promptui.ErrInterrupt }
+	stub := createStub(t, shopSites, dbCreated(""))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "db", "create", "shop-db")
+	if !strings.Contains(out, "Cancelled") {
+		t.Errorf("want the cancel line:\n%s", out)
+	}
+	if stub.created() {
+		t.Errorf("a cancelled question must not create, got %v", stub.seen())
+	}
+}
+
+// An answer that accounts for none of the chosen sites says where to check.
+func TestDBCreate_UnreadableResultSaysWhereToCheck(t *testing.T) {
+	forceStdin(t, false)
+	stub := createStub(t, shopSites, dbCreated(`,"connections":{}`))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "db", "create", "shop-db", "--site", "main")
+	if !strings.Contains(out, "couldn't read the connection result — check with: ghayma connections") {
+		t.Errorf("missing the check line:\n%s", out)
+	}
+}
+
+// olderServerWarning is what a create says when the server sent no
+// connections: it predates the choice and may have connected on its own.
+func olderServerWarning(kind string) string {
+	return "⚠️  this server didn't report connections — it may have connected the " + kind + " to the project's main site; check with: ghayma connections\n"
+}
+
+// --no-connect against a server that predates the choice: that server may
+// still have connected the database, so the create never implies otherwise.
+func TestDBCreate_NoConnectOnAnOlderServerSaysItMayHaveConnected(t *testing.T) {
+	forceStdin(t, true)
+	noSiteQuestions(t)
+	stub := createStub(t, shopSites, dbCreated(""))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "db", "create", "shop-db", "--no-connect")
+	if got := stub.sentSites(); got != `[]` {
+		t.Errorf("connect_site_ids = %s; want []", got)
+	}
+	if !strings.Contains(out, olderServerWarning("database")) {
+		t.Errorf("missing the warning:\n%s", out)
+	}
+}

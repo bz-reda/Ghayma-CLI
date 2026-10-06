@@ -72,6 +72,22 @@ func TestPickLiveSite_ByIDThenSlugThenName(t *testing.T) {
 	}
 }
 
+// A config's slug names the site with that slug, even when an earlier site's
+// display name is the same word; a value naming no site still falls back to
+// the only site.
+func TestPickLiveSite_SlugWinsOverAnotherSitesName(t *testing.T) {
+	sites := []api.Site{
+		{ID: "s1", Name: "admin", Slug: "main"},
+		{ID: "s2", Name: "Admin Console", Slug: "admin"},
+	}
+	if s, err := pickLiveSite(sites, SiteEntry{SiteSlug: "admin"}); err != nil || s.ID != "s2" {
+		t.Errorf("pickLiveSite(slug admin) = %v, %v; want s2, the site whose slug is admin", s, err)
+	}
+	if s, err := pickLiveSite(sites[:1], SiteEntry{SiteSlug: "gone"}); err != nil || s.ID != "s1" {
+		t.Errorf("unmatched slug, one site = %v, %v; want that site", s, err)
+	}
+}
+
 func TestPickLiveSite_StaleIDErrors(t *testing.T) {
 	_, err := pickLiveSite(liveSites(), SiteEntry{SiteID: "id-gone", SiteSlug: "main"})
 	if err == nil || !strings.Contains(err.Error(), "ghayma link") {

@@ -87,9 +87,10 @@ func kindRank(kind string) int {
 }
 
 // pickLiveSite maps the linked site (what the config names) onto the project's
-// live site list: by id, then slug, then name, then "the only site". The
-// config may carry a name with no id — init writes `site_name: main` before
-// the backend materialises main — so the live list decides.
+// live site list: by id, then slug, then name, then "the only site". Slug and
+// name go through matchSite, so a display name never wins over another site's
+// slug. The config may carry a name with no id — init writes `site_name: main`
+// before the backend materialises main — so the live list decides.
 func pickLiveSite(sites []api.Site, entry SiteEntry) (*api.Site, error) {
 	if entry.SiteID != "" {
 		for i := range sites {
@@ -103,10 +104,8 @@ func pickLiveSite(sites []api.Site, entry SiteEntry) (*api.Site, error) {
 		if want == "" {
 			continue
 		}
-		for i := range sites {
-			if strings.EqualFold(sites[i].Slug, want) || strings.EqualFold(sites[i].Name, want) {
-				return &sites[i], nil
-			}
+		if site, err := matchSite(sites, want); err == nil {
+			return site, nil
 		}
 	}
 	switch len(sites) {
@@ -230,19 +229,14 @@ func renderConnectionsTable(rows []api.Connection) string {
 }
 
 // liveSiteFor picks a site from the live list when the config names none:
-// --site by slug, name or id, else the only site, else an error naming the
-// choices. No sites at all is the site-less project.
+// --site by slug, name or id (matchSite), else the only site, else an error
+// naming the choices. No sites at all is the site-less project.
 func liveSiteFor(sites []api.Site, siteFlag string) (*api.Site, error) {
 	if len(sites) == 0 {
 		return nil, errNoSite
 	}
 	if siteFlag != "" {
-		for i := range sites {
-			if strings.EqualFold(sites[i].Slug, siteFlag) || strings.EqualFold(sites[i].Name, siteFlag) || strings.EqualFold(sites[i].ID, siteFlag) {
-				return &sites[i], nil
-			}
-		}
-		return nil, fmt.Errorf("site %q not found in this project (available: %s)", siteFlag, strings.Join(siteSlugs(sites), ", "))
+		return matchSite(sites, siteFlag)
 	}
 	if len(sites) == 1 {
 		return &sites[0], nil

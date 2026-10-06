@@ -24,6 +24,8 @@ var dbCreateReplicaSet bool
 var dbCreateTier string
 var dbCreateDiskGB int
 var dbCreateBackup string
+var dbCreateSites []string
+var dbCreateNoConnect bool
 
 var dbResizeTier string
 var dbResizeDiskGB int
@@ -67,6 +69,12 @@ var dbCreateCmd = &cobra.Command{
 
 		client := api.NewClient(cfg)
 
+		siteIDs, sites, note, err := resolveSiteChoice(client, projectID, dbCreateSites, dbCreateNoConnect, "database", args[0])
+		if err != nil {
+			reportSiteChoiceError(err)
+			return
+		}
+
 		tier := dbCreateTier
 		diskGB := dbCreateDiskGB
 		backup := dbCreateBackup
@@ -101,7 +109,7 @@ var dbCreateCmd = &cobra.Command{
 			printReservePreview(client, cat, projectID, dbCreateType, tier, diskGB, backup)
 		}
 
-		db, err := client.CreateDatabase(args[0], dbCreateType, projectID, replicaSet, tier, diskGB, backup)
+		db, outcome, err := client.CreateDatabase(args[0], dbCreateType, projectID, replicaSet, tier, diskGB, backup, siteIDs)
 		if err != nil {
 			fmt.Printf("❌ Failed to create database: %s\n", formatMarketplaceError(err))
 			return
@@ -115,6 +123,7 @@ var dbCreateCmd = &cobra.Command{
 		if db.Type == "mongodb" {
 			fmt.Printf("   Mode:    %s\n", mongoModeLabel(db.ReplicaSet))
 		}
+		printConnectOutcome(outcome, siteIDs, sites, note, "database", args[0])
 	},
 }
 
@@ -607,6 +616,8 @@ func init() {
 	dbCreateCmd.Flags().StringVar(&dbCreateTier, "tier", "", "Database tier (e.g. xs, s, m, l, xl). MongoDB needs a larger tier — the picker lists only the Mongo-capable ones. Interactive picker when omitted; server default if no catalog.")
 	dbCreateCmd.Flags().IntVar(&dbCreateDiskGB, "disk-gb", 0, "Persistent disk in GB, priced in points. Server default (from size) when omitted.")
 	dbCreateCmd.Flags().StringVar(&dbCreateBackup, "backup", "", "Backup schedule: weekly, daily, sixhourly. Interactive picker when omitted; weekly default if no catalog.")
+	dbCreateCmd.Flags().StringArrayVar(&dbCreateSites, "site", nil, "Connect the new database to this site (slug); repeat for several. Asked interactively when omitted.")
+	dbCreateCmd.Flags().BoolVar(&dbCreateNoConnect, "no-connect", false, "Connect the new database to no site, without asking.")
 
 	dbResizeCmd.Flags().StringVar(&dbResizeTier, "tier", "", "New database tier (e.g. xs, s, m, l)")
 	dbResizeCmd.Flags().IntVar(&dbResizeDiskGB, "disk-gb", 0, "New disk size in GB. Larger grows it online; smaller shrinks it, stopping the database for about a minute")

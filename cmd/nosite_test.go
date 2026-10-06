@@ -560,13 +560,16 @@ func TestProjectScopedCommands_WorkOnSiteLessConfig(t *testing.T) {
 
 // TestDeploy_SiteLessConfigSaysItCreatesMain: deploy keeps working — the
 // platform materializes main — but the notice has to come before the upload,
-// because nothing in the config ever mentioned a site.
+// because nothing in the config ever mentioned a site. The check for services
+// no site uses (here the server has no such route, so it says so) follows the
+// notice: its question names the site the notice announces.
 func TestDeploy_SiteLessConfigSaysItCreatesMain(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound) // stop at the deploy call; the notice is what matters
 	}))
 	t.Cleanup(ts.Close)
 	cliHome(t, ts.URL)
+	forceStdin(t, false)
 	noPrompt(t)
 
 	out := runCLI(t, siteLessDir(t), "deploy")
@@ -576,6 +579,10 @@ func TestDeploy_SiteLessConfigSaysItCreatesMain(t *testing.T) {
 	}
 	if i, j := strings.Index(out, notice), strings.Index(out, "🚀 Deploying"); i < 0 || j < 0 || i > j {
 		t.Errorf("the notice must come before the deploy headline:\n%s", out)
+	}
+	i, k, j := strings.Index(out, notice), strings.Index(out, "this server doesn't list unconnected services yet"), strings.Index(out, "🚀 Deploying")
+	if k < 0 || k < i || k > j {
+		t.Errorf("the services check must come after the notice and before the headline:\n%s", out)
 	}
 	if lastExitCode != 0 {
 		t.Errorf("exit code = %d; deploy on a site-less project is not the refusal case", lastExitCode)

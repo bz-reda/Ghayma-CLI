@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -238,6 +239,67 @@ func TestRotateSiteConnection_CarriesStatusAndMessage(t *testing.T) {
 		}
 		if apiErr.Status != tc.status || apiErr.Message != tc.want {
 			t.Errorf("%d: APIError = %+v; want status %d and %q", tc.status, apiErr, tc.status, tc.want)
+		}
+	}
+}
+
+func TestListUnconnected_DecodesTheList(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/projects/p1/connections/unconnected" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		io.WriteString(w, `{"unconnected":[{"kind":"database","resource_id":"d1","resource_name":"shop-db","default_level":"connect"},{"kind":"auth_app","resource_id":"a1","resource_name":"shop-auth","default_level":"client"}]}`)
+	}))
+	defer ts.Close()
+
+	got, err := newTestClient(ts.URL).ListUnconnected("p1")
+	if err != nil {
+		t.Fatalf("ListUnconnected: %v", err)
+	}
+	want := []Unconnected{
+		{Kind: "database", ResourceID: "d1", ResourceName: "shop-db", DefaultLevel: "connect"},
+		{Kind: "auth_app", ResourceID: "a1", ResourceName: "shop-auth", DefaultLevel: "client"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("unconnected = %+v; want %+v", got, want)
+	}
+}
+
+// TestListUnconnected_SurfacesHTTPErrors: a deploy warns and carries on when
+// the list cannot be read, so a refusal must come back as an error — never as
+// an empty list that says nothing needs connecting.
+func TestListUnconnected_SurfacesHTTPErrors(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{http.StatusForbidden, `{"error":"insufficient role"}`, "insufficient role"},
+		{http.StatusInternalServerError, `{"error":"could not list the services"}`, "could not list the services"},
+		{http.StatusNotFound, `404 page not found`, "404"},
+	} {
+		ts := jsonStatusServer(t, tc.status, tc.body)
+		got, err := newTestClient(ts.URL).ListUnconnected("p1")
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%d: got %v, %v; want an error carrying %q", tc.status, got, err, tc.want)
+		}
+		if got != nil {
+			t.Errorf("%d: result = %#v; want nil beside the error", tc.status, got)
+		}
+	}
+}
+
+// TestListUnconnected_NothingIsAnEmptyList: a project whose services all have a
+// site reads as an empty list, never nil, whether the server sends [] or no key.
+func TestListUnconnected_NothingIsAnEmptyList(t *testing.T) {
+	for _, body := range []string{`{"unconnected":[]}`, `{}`} {
+		ts := jsonStatusServer(t, http.StatusOK, body)
+		got, err := newTestClient(ts.URL).ListUnconnected("p1")
+		if err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if got == nil || len(got) != 0 {
+			t.Errorf("%s: unconnected = %#v; want a non-nil empty slice", body, got)
 		}
 	}
 }

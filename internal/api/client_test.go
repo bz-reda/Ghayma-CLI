@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -278,5 +279,289 @@ func TestRegister_SurfacesGateRefusal(t *testing.T) {
 	}
 	if !strings.Contains(apiErr.Message, "private beta") {
 		t.Errorf("message %q lost the server's text", apiErr.Message)
+	}
+}
+
+// createWithChoice is one of the three creates that take the sites to connect
+// the new service to.
+type createWithChoice struct {
+	kind     string
+	path     string
+	resource string // the resource half of the 201 body
+	id       string
+	create   func(c *Client, siteIDs []string) (string, *ConnectChoice, error)
+}
+
+var createsWithChoice = []createWithChoice{
+	{"database", "/api/v1/databases", `"database":{"id":"d1","name":"shop-db","type":"postgres"}`, "d1",
+		func(c *Client, siteIDs []string) (string, *ConnectChoice, error) {
+			db, choice, err := c.CreateDatabase("shop-db", "postgres", "p1", nil, "", 0, "", siteIDs)
+			if err != nil {
+				return "", choice, err
+			}
+			return db.ID, choice, nil
+		}},
+	{"bucket", "/api/v1/storage", `"bucket":{"id":"b1","name":"media"}`, "b1",
+		func(c *Client, siteIDs []string) (string, *ConnectChoice, error) {
+			bucket, choice, err := c.CreateBucket("media", "p1", 0, siteIDs)
+			if err != nil {
+				return "", choice, err
+			}
+			return bucket.ID, choice, nil
+		}},
+	{"auth app", "/api/v1/auth-apps", `"auth_app":{"id":"a1","name":"shop-auth","app_id":"shop-auth"}`, "a1",
+		func(c *Client, siteIDs []string) (string, *ConnectChoice, error) {
+			app, choice, err := c.CreateAuthApp("shop-auth", "shop-auth", "p1", "", siteIDs)
+			if err != nil {
+				return "", choice, err
+			}
+			return app.ID, choice, nil
+		}},
+}
+
+// createServer answers a create with a 201 carrying body and records the
+// request body it received.
+func createServer(t *testing.T, path, body string) (*httptest.Server, map[string]json.RawMessage) {
+	t.Helper()
+	sent := map[string]json.RawMessage{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != path {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		json.Unmarshal(raw, &sent)
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(ts.Close)
+	return ts, sent
+}
+
+// TestCreates_SendTheSiteChoice: every create body states which sites to
+// connect; no choice is [] — never null, never a missing key.
+func TestCreates_SendTheSiteChoice(t *testing.T) {
+	for _, tc := range createsWithChoice {
+		for _, choice := range []struct {
+			siteIDs []string
+			want    string
+		}{
+			{[]string{"s1", "s2"}, `["s1","s2"]`},
+			{nil, `[]`},
+		} {
+			ts, sent := createServer(t, tc.path, "{"+tc.resource+"}")
+			if _, _, err := tc.create(newTestClient(ts.URL), choice.siteIDs); err != nil {
+				t.Fatalf("%s: %v", tc.kind, err)
+			}
+			if got := string(sent["connect_site_ids"]); got != choice.want {
+				t.Errorf("%s with %q: connect_site_ids = %s; want %s", tc.kind, choice.siteIDs, got, choice.want)
+			}
+		}
+	}
+}
+
+// TestCreates_DecodeTheConnections: the 201 reports, beside the resource, what
+// became of each chosen site.
+func TestCreates_DecodeTheConnections(t *testing.T) {
+	const connections = `"connections":{"connected":["s1"],"pending":["s2"],"failed":[{"site_id":"s3","error":"could not reach the database"}]}`
+	for _, tc := range createsWithChoice {
+		ts, _ := createServer(t, tc.path, "{"+tc.resource+","+connections+"}")
+		id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1", "s2", "s3"})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.kind, err)
+		}
+		if id != tc.id {
+			t.Errorf("%s: id = %q; want %q", tc.kind, id, tc.id)
+		}
+		if choice == nil {
+			t.Fatalf("%s: choice = nil; want the reported connections", tc.kind)
+		}
+		if !reflect.DeepEqual(choice.Connected, []string{"s1"}) || !reflect.DeepEqual(choice.Pending, []string{"s2"}) {
+			t.Errorf("%s: connected %v, pending %v; want [s1], [s2]", tc.kind, choice.Connected, choice.Pending)
+		}
+		if want := []SiteConnectFailure{{SiteID: "s3", Error: "could not reach the database"}}; !reflect.DeepEqual(choice.Failed, want) {
+			t.Errorf("%s: failed = %+v; want %+v", tc.kind, choice.Failed, want)
+		}
+	}
+}
+
+// TestCreates_WithoutConnectionsIsNil: a server that predates the field
+// answers without it and may still connect on its own, so the create succeeds
+// with no choice at all — never an empty one, which reads as "connected
+// nothing". A server that sends the field, even empty, has answered.
+func TestCreates_WithoutConnectionsIsNil(t *testing.T) {
+	for _, tc := range createsWithChoice {
+		ts, _ := createServer(t, tc.path, "{"+tc.resource+"}")
+		id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1"})
+		if err != nil || id != tc.id {
+			t.Fatalf("%s: id, err = %q, %v; want %q", tc.kind, id, err, tc.id)
+		}
+		if choice != nil {
+			t.Errorf("%s: choice = %+v; want nil", tc.kind, *choice)
+		}
+
+		ts, _ = createServer(t, tc.path, "{"+tc.resource+`,"connections":{"connected":[],"pending":[],"failed":[]}}`)
+		if _, choice, err = tc.create(newTestClient(ts.URL), nil); err != nil || choice == nil {
+			t.Errorf("%s: choice, err = %v, %v; want an empty choice, not nil", tc.kind, choice, err)
+		}
+	}
+}
+
+// TestCreates_UnreadableConnectionsAreEmptyNotNil: a server that sends the
+// field has answered, so connections this CLI cannot read come back as an
+// empty choice, which accounts for no chosen site — never nil, which reads as
+// a server that predates the field, nor half-read. The resource exists once
+// the server answers 201, so they never fail the create.
+func TestCreates_UnreadableConnectionsAreEmptyNotNil(t *testing.T) {
+	for _, tc := range createsWithChoice {
+		for _, connections := range []string{
+			`"connections":42`,
+			`"connections":{"connected":"s1","pending":["s2"]}`,
+		} {
+			ts, _ := createServer(t, tc.path, "{"+tc.resource+","+connections+"}")
+			id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1", "s2"})
+			if err != nil || id != tc.id {
+				t.Fatalf("%s: id, err = %q, %v; want %q and no error", tc.kind, id, err, tc.id)
+			}
+			if choice == nil {
+				t.Errorf("%s with %s: choice = nil; want an empty choice", tc.kind, connections)
+				continue
+			}
+			if !reflect.DeepEqual(*choice, ConnectChoice{}) {
+				t.Errorf("%s with %s: choice = %+v; want an empty one, not half-read", tc.kind, connections, *choice)
+			}
+		}
+	}
+}
+
+// TestCreates_ConnectionsSurviveTheResourceHalf: the connections are read on
+// their own, so a resource half this CLI cannot fully read — a field of
+// another type, or a timestamp that stops the decoder before it reaches them
+// — never costs them, and the resource still comes back as far as it reads.
+func TestCreates_ConnectionsSurviveTheResourceHalf(t *testing.T) {
+	const connections = `"connections":{"connected":["s1"],"pending":[],"failed":[]}`
+	misread := map[string][]string{
+		"database": {
+			`"database":{"id":"d1","name":"shop-db","type":"postgres","port":"5432"}`,
+			`"database":{"id":"d1","name":"shop-db","resize":{"direction":"grow","started_at":"soon"}}`,
+		},
+		"bucket":   {`"bucket":{"id":"b1","name":"media","storage_limit_bytes":"1 GB"}`},
+		"auth app": {`"auth_app":{"id":"a1","name":"shop-auth","app_id":"shop-auth","allowed_origins":"*"}`},
+	}
+	for _, tc := range createsWithChoice {
+		if len(misread[tc.kind]) == 0 {
+			t.Fatalf("%s: no misread resource half to try", tc.kind)
+		}
+		for _, resource := range misread[tc.kind] {
+			ts, _ := createServer(t, tc.path, "{"+resource+","+connections+"}")
+			id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1"})
+			if err != nil || id != tc.id {
+				t.Fatalf("%s: id, err = %q, %v; want %q and no error", tc.kind, id, err, tc.id)
+			}
+			if choice == nil || !reflect.DeepEqual(choice.Connected, []string{"s1"}) {
+				t.Errorf("%s with %s: choice = %+v; want connected [s1]", tc.kind, resource, choice)
+			}
+		}
+	}
+}
+
+// uploadServer answers the deploy upload with a 201 carrying body and records
+// the connect_resources form values (none when the upload carried no field).
+func uploadServer(t *testing.T, body string) (*httptest.Server, *[]string) {
+	t.Helper()
+	var connect []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/deploy/upload" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			t.Errorf("upload is not a multipart form: %v", err)
+			return
+		}
+		connect = r.MultipartForm.Value["connect_resources"]
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(ts.Close)
+	return ts, &connect
+}
+
+func testDeploy(t *testing.T, url string, connect []ConnectionItem) (*DeployResponse, error) {
+	return newTestClient(url).Deploy("p1", "s1", t.TempDir(), "CLI deploy", false, "", "", DeployBuildConfig{}, nil, connect)
+}
+
+// TestDeploy_SendsConnectResourcesOnlyWhenChosen: the chosen services ride on
+// the upload as one JSON array; with none the field is left out, so a server
+// that predates it never sees it.
+func TestDeploy_SendsConnectResourcesOnlyWhenChosen(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		connect []ConnectionItem
+		want    []string
+	}{
+		{"nil", nil, nil},
+		{"empty", []ConnectionItem{}, nil},
+		{"two services", []ConnectionItem{{Kind: "database", ResourceID: "d1"}, {Kind: "bucket", ResourceID: "b1"}},
+			[]string{`[{"kind":"database","resource_id":"d1"},{"kind":"bucket","resource_id":"b1"}]`}},
+	} {
+		ts, sent := uploadServer(t, `{"deployment_id":"dep-1","status":"queued"}`)
+		if _, err := testDeploy(t, ts.URL, tc.connect); err != nil {
+			t.Fatalf("%s: Deploy: %v", tc.name, err)
+		}
+		if !reflect.DeepEqual(*sent, tc.want) {
+			t.Errorf("%s: connect_resources = %q; want %q", tc.name, *sent, tc.want)
+		}
+	}
+}
+
+// TestDeploy_DecodesTheConnections: the upload answers with the site it
+// deploys and, keyed by resource, what became of each chosen service; a server
+// that predates a field leaves it empty.
+func TestDeploy_DecodesTheConnections(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want DeployResponse
+	}{
+		{
+			name: "connected, pending and failed",
+			body: `{"deployment_id":"dep-1","status":"queued","site_id":"s1","connections":{"connected":[{"kind":"bucket","resource_id":"b1"}],"pending":[{"kind":"database","resource_id":"d1"}],"failed":[]}}`,
+			want: DeployResponse{
+				DeploymentID: "dep-1",
+				Status:       "queued",
+				SiteID:       "s1",
+				Connections: DeployConnections{
+					Connected: []ConnectionItem{{Kind: "bucket", ResourceID: "b1"}},
+					Pending:   []ConnectionItem{{Kind: "database", ResourceID: "d1"}},
+					Failed:    []DeployConnectFailure{},
+				},
+			},
+		},
+		{
+			name: "connected and failed, without pending",
+			body: `{"deployment_id":"dep-1","status":"queued","site_id":"s1","connections":{"connected":[{"kind":"database","resource_id":"d1"}],"failed":[{"kind":"bucket","resource_id":"b1","error":"bucket 'media' could not be connected"}]}}`,
+			want: DeployResponse{
+				DeploymentID: "dep-1",
+				Status:       "queued",
+				SiteID:       "s1",
+				Connections: DeployConnections{
+					Connected: []ConnectionItem{{Kind: "database", ResourceID: "d1"}},
+					Failed:    []DeployConnectFailure{{Kind: "bucket", ResourceID: "b1", Error: "bucket 'media' could not be connected"}},
+				},
+			},
+		},
+		{
+			name: "older server",
+			body: `{"deployment_id":"dep-1","status":"queued"}`,
+			want: DeployResponse{DeploymentID: "dep-1", Status: "queued"},
+		},
+	} {
+		ts, _ := uploadServer(t, tc.body)
+		resp, err := testDeploy(t, ts.URL, []ConnectionItem{{Kind: "database", ResourceID: "d1"}, {Kind: "bucket", ResourceID: "b1"}})
+		if err != nil {
+			t.Fatalf("%s: Deploy: %v", tc.name, err)
+		}
+		if !reflect.DeepEqual(*resp, tc.want) {
+			t.Errorf("%s: response = %+v; want %+v", tc.name, *resp, tc.want)
+		}
 	}
 }

@@ -16,6 +16,8 @@ var storageCmd = &cobra.Command{
 }
 
 var storageCreateQuotaGB int
+var storageCreateSites []string
+var storageCreateNoConnect bool
 
 var storageCreateCmd = &cobra.Command{
 	Use:   "create [name]",
@@ -44,6 +46,12 @@ var storageCreateCmd = &cobra.Command{
 		}
 
 		client := api.NewClient(cfg)
+
+		siteIDs, sites, note, err := resolveSiteChoice(client, projectID, storageCreateSites, storageCreateNoConnect, "bucket", args[0])
+		if err != nil {
+			reportSiteChoiceError(err)
+			return
+		}
 
 		quotaGB := storageCreateQuotaGB
 
@@ -75,7 +83,7 @@ var storageCreateCmd = &cobra.Command{
 
 		// --quota-gb is whole GB; the backend field is size_mb (no quota_gb).
 		sizeMB := quotaGB * 1024
-		bucket, err := client.CreateBucket(args[0], projectID, sizeMB)
+		bucket, outcome, err := client.CreateBucket(args[0], projectID, sizeMB, siteIDs)
 		if err != nil {
 			fmt.Printf("❌ Failed to create bucket: %s\n", formatMarketplaceError(err))
 			return
@@ -86,6 +94,7 @@ var storageCreateCmd = &cobra.Command{
 		fmt.Printf("   Bucket:   %s\n", bucket.GarageBucket)
 		fmt.Printf("   Limit:    %s\n", formatBytes(bucket.StorageLimitBytes))
 		fmt.Printf("   Status:   %s\n", bucket.Status)
+		printConnectOutcome(outcome, siteIDs, sites, note, "bucket", args[0])
 	},
 }
 
@@ -354,6 +363,8 @@ func formatBytes(b int64) string {
 
 func init() {
 	storageCreateCmd.Flags().IntVar(&storageCreateQuotaGB, "quota-gb", 0, "Per-bucket storage quota in GB, priced in points (stepped by the catalog's obj_block_gb). Interactive picker when omitted; plan default if no catalog.")
+	storageCreateCmd.Flags().StringArrayVar(&storageCreateSites, "site", nil, "Connect the new bucket to this site (slug); repeat for several. Asked interactively when omitted.")
+	storageCreateCmd.Flags().BoolVar(&storageCreateNoConnect, "no-connect", false, "Connect the new bucket to no site, without asking.")
 
 	storageCmd.AddCommand(storageCreateCmd)
 	storageCmd.AddCommand(storageListCmd)

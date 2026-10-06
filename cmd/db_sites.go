@@ -22,8 +22,11 @@ var dbSitesCmd = &cobra.Command{
 	Long: `View or set which of a project's sites may reach a managed database.
 
 Each managed database enforces a per-database network policy: only the granted
-sites can open a connection to it. A newly linked database grants its project's
-main site by default; secondary sites must be granted explicitly.
+sites can open a connection to it. A database reaches only the sites connected
+to it — chosen at create (--site), at deploy, or with
+'ghayma connect database <name> --site <slug>'. A site marked ⏳ is connecting
+once the database accepts connections; --add and --remove of other sites keep
+it; --remove <that site> cancels it.
 
 With no flag, prints the current access table (SITE = slug, NAME, ACCESS where
 ✓ = allowed, - = blocked). The three mutation flags are mutually exclusive:
@@ -102,7 +105,7 @@ func runDBSites(cmd *cobra.Command, args []string) {
 	if op == "" {
 		fmt.Printf("🗄️  Site access for '%s':\n\n", args[0])
 		printDBSitesTable(current)
-		fmt.Println("\n   ✓ = allowed   - = blocked")
+		fmt.Println("\n   ✓ = allowed   ⏳ = connecting once the database accepts connections   - = blocked")
 		return
 	}
 
@@ -114,10 +117,13 @@ func runDBSites(cmd *cobra.Command, args []string) {
 
 	// Idempotent-friendly: name each slug that was already in the target state.
 	for _, sl := range noops {
-		if op == "add" {
-			fmt.Printf("ℹ️  '%s' already has access — no change.\n", sl)
-		} else {
+		switch {
+		case op == "remove":
 			fmt.Printf("ℹ️  '%s' already has no access — no change.\n", sl)
+		case pendingSlug(current, sl):
+			fmt.Printf("ℹ️  '%s' is already connecting — no change.\n", sl)
+		default:
+			fmt.Printf("ℹ️  '%s' already has access — no change.\n", sl)
 		}
 	}
 
@@ -140,24 +146,40 @@ func runDBSites(cmd *cobra.Command, args []string) {
 	fmt.Println("\n⏳ Network policy converges in ~2 minutes.")
 }
 
-// printDBSitesTable renders the SITE / NAME / ACCESS table. ACCESS is ✓ when the
-// site may reach the database, - when it's blocked.
+// printDBSitesTable renders the SITE / NAME / ACCESS table. ACCESS is ⏳ while
+// the site waits for the database to accept connections, ✓ when it may reach
+// the database, - when it's blocked.
 func printDBSitesTable(sites []api.DatabaseSiteAccess) {
 	fmt.Printf("   %-20s  %-20s  %s\n", "SITE", "NAME", "ACCESS")
 	for _, s := range sites {
 		access := "-"
-		if s.HasAccess {
+		switch {
+		case s.Pending:
+			access = "⏳"
+		case s.HasAccess:
 			access = "✓"
 		}
 		fmt.Printf("   %-20s  %-20s  %s\n", s.Slug, s.Name, access)
 	}
 }
 
+// pendingSlug reports whether the site with this slug is still connecting.
+func pendingSlug(current []api.DatabaseSiteAccess, slug string) bool {
+	for _, s := range current {
+		if s.Slug == slug {
+			return s.Pending
+		}
+	}
+	return false
+}
+
 // computeDesiredSites computes the FULL desired set of site IDs to PUT for a
 // `db sites` mutation. current is every project site with its has_access flag
 // (the GET response, which carries the whole project so slugs resolve to IDs
-// without another endpoint). op is "add", "remove", or "set". slugs are the
-// user-supplied site slugs (already split + trimmed). It returns:
+// without another endpoint); a pending site counts as granted, so --add and
+// --remove never drop a connection still waiting for the database. op is
+// "add", "remove", or "set". slugs are the user-supplied site slugs (already
+// split + trimmed). It returns:
 //   - desired: the site IDs to send, ordered by project order (deterministic)
 //   - noops:   slugs that changed nothing (already granted for add / already
 //     ungranted for remove); always nil for set
@@ -186,7 +208,7 @@ func computeDesiredSites(current []api.DatabaseSiteAccess, op string, slugs []st
 
 	granted := make(map[string]bool)
 	for _, s := range current {
-		if s.HasAccess {
+		if s.HasAccess || s.Pending {
 			granted[s.SiteID] = true
 		}
 	}
@@ -243,11 +265,12 @@ func idsInProjectOrder(current []api.DatabaseSiteAccess, want map[string]bool) [
 	return out
 }
 
-// grantedIDs returns the site IDs whose has_access flag is set, in project order.
+// grantedIDs returns the site IDs that are granted or still connecting, in
+// project order.
 func grantedIDs(current []api.DatabaseSiteAccess) []string {
 	out := make([]string, 0, len(current))
 	for _, s := range current {
-		if s.HasAccess {
+		if s.HasAccess || s.Pending {
 			out = append(out, s.SiteID)
 		}
 	}

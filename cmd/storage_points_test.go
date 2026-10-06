@@ -95,3 +95,75 @@ func TestPromptStorageQuota_CancelPropagates(t *testing.T) {
 		t.Fatal("expected a cancel error; nil would fall through to a create")
 	}
 }
+
+// bucketCreated is the create's 201 for media; connections is the
+// `,"connections":{...}` tail, or "" for a server that predates it.
+func bucketCreated(connections string) string {
+	return `{"bucket":{"id":"b1","name":"media","garage_bucket":"media-p1","storage_limit_bytes":1073741824,"status":"active"}` + connections + `}`
+}
+
+func TestStorageCreate_NoConnectSendsAnEmptyChoice(t *testing.T) {
+	forceStdin(t, true)
+	noSiteQuestions(t)
+	stub := createStub(t, shopSites, bucketCreated(`,"connections":{"connected":[],"pending":[],"failed":[]}`))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "storage", "create", "media", "--no-connect")
+	if got := stub.sentSites(); got != `[]` {
+		t.Errorf("connect_site_ids = %s; want []", got)
+	}
+	if !strings.Contains(out, "Created storage bucket 'media'") || strings.Contains(out, "Not connected") || strings.Contains(out, "couldn't read") {
+		t.Errorf("--no-connect creates quietly:\n%s", out)
+	}
+}
+
+func TestStorageCreate_NotATerminalSendsNothingAndSaysHow(t *testing.T) {
+	forceStdin(t, false)
+	noSiteQuestions(t)
+	stub := createStub(t, shopSites, bucketCreated(`,"connections":{"connected":[],"pending":[],"failed":[]}`))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "storage", "create", "media")
+	if got := stub.sentSites(); got != `[]` {
+		t.Errorf("connect_site_ids = %s; want []", got)
+	}
+	if !strings.Contains(out, "Not connected. Connect it with: ghayma connect bucket media --site main") {
+		t.Errorf("missing the hint:\n%s", out)
+	}
+}
+
+func TestStorageCreate_OneSiteQuestionConnectsIt(t *testing.T) {
+	forceStdin(t, true)
+	asked := answerSiteQuestions(t, true)
+	stub := createStub(t, oneSite, bucketCreated(`,"connections":{"connected":["s1"]}`))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "storage", "create", "media")
+	if got := stub.sentSites(); got != `["s1"]` {
+		t.Errorf("connect_site_ids = %s; want [\"s1\"]", got)
+	}
+	if want := (siteQuestion{"Connect bucket 'media' to site 'main'?", true}); len(*asked) != 1 || (*asked)[0] != want {
+		t.Errorf("asked %+v; want %+v", *asked, want)
+	}
+	if !strings.Contains(out, "Connected to 'main'") {
+		t.Errorf("missing the connected line:\n%s", out)
+	}
+}
+
+// A script's create against a server that predates the choice: no "not
+// connected", since that server may have connected the bucket, but still the
+// command that connects it.
+func TestStorageCreate_NotATerminalOnAnOlderServerKeepsTheHint(t *testing.T) {
+	forceStdin(t, false)
+	noSiteQuestions(t)
+	stub := createStub(t, shopSites, bucketCreated(""))
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "storage", "create", "media")
+	if !strings.Contains(out, olderServerWarning("bucket")) {
+		t.Errorf("missing the warning:\n%s", out)
+	}
+	if !strings.Contains(out, "ℹ️  Connect it with: ghayma connect bucket media --site ") || strings.Contains(out, "Not connected") {
+		t.Errorf("want the hint without \"Not connected\":\n%s", out)
+	}
+}

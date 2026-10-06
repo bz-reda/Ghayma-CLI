@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	deployProd  bool
-	deploySite  string
-	deployImage string
+	deployProd      bool
+	deploySite      string
+	deployImage     string
+	deployNoConnect bool
 )
 
 type projectConfig struct {
@@ -172,9 +173,17 @@ not interactive.
 of uploading this directory: nothing is built, the image is checked and rolled
 out as it is. Name a tag, or a sha256: digest for one exact image.
 
+A database, bucket or auth app that no site uses yet is offered to the site
+being deployed, one question each on a terminal, and connected before the
+build starts (a database still starting connects once it accepts connections).
+Without a terminal, or with --no-connect, nothing is connected
+and the deploy prints the command that connects each one. The offer and
+--no-connect apply to source deploys only, not to --image.
+
 Examples:
   ghayma deploy
   ghayma deploy --site admin
+  ghayma deploy --no-connect
   ghayma deploy --image v1
   ghayma deploy --image sha256:0a1b2c…`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -275,15 +284,15 @@ Examples:
 			ctx.NoSite = false
 		}
 
-		// A site-less project still deploys — the platform materializes `main`
+		// The live site list names the site the upload lands on (below). A
+		// site-less project still deploys — the platform materializes `main`
 		// on the first one — but say so, because nothing in the config or the
 		// init flow ever mentioned a site. A config naming no site on a
 		// project that already has one gets no such notice; when the list
 		// cannot be read the notice still prints, as before.
-		if ctx.NoSite {
-			if none, err := projectHasNoSites(client, ctx.ProjectID); err != nil || none {
-				fmt.Println("ℹ️  This project has no site yet; deploying creates the site 'main'.")
-			}
+		sites, sitesErr := client.ListSites(ctx.ProjectID)
+		if ctx.NoSite && (sitesErr != nil || len(sites) == 0) {
+			fmt.Println("ℹ️  This project has no site yet; deploying creates the site 'main'.")
 		}
 
 		// --prod is a no-op since Environments (design D6): the target site's
@@ -292,6 +301,20 @@ Examples:
 		if deployProd {
 			slug, environment := bestEffortSiteKind(client, ctx, deploySite)
 			fmt.Println(prodFlagNotice(slug, environment))
+		}
+
+		// Services no site uses are offered to the site the upload lands on,
+		// with every answer in before the upload starts; the choice rides on
+		// the upload. When the server has no site for it — several sites, none
+		// default or main, or a linked site since deleted — it refuses the
+		// upload, so nothing is offered.
+		var chosen []api.Unconnected
+		target, known := deployTargetSite(ctx, sites, sitesErr == nil)
+		if known {
+			if chosen, err = chooseDeployConnections(client, ctx.ProjectID, target, stdinIsTerminalFn(), deployNoConnect); err != nil {
+				fmt.Println("❌ Cancelled")
+				return
+			}
 		}
 
 		fmt.Println(deployHeadline(ctx))
@@ -320,12 +343,13 @@ Examples:
 			Port:            ctx.Site.Port,
 			Crons:           cronsFormField(ctx.Site.Crons),
 		}
-		resp, err := client.Deploy(ctx.ProjectID, ctx.Site.SiteID, ctx.SourceDir, "CLI deploy", deployProd, ctx.RootDirectory, filepath.ToSlash(ctx.Site.DockerfilePath), bc, rules)
+		resp, err := client.Deploy(ctx.ProjectID, ctx.Site.SiteID, ctx.SourceDir, "CLI deploy", deployProd, ctx.RootDirectory, filepath.ToSlash(ctx.Site.DockerfilePath), bc, rules, connectionItems(chosen))
 		if err != nil {
 			fmt.Printf("❌ Deploy failed: %v\n", err)
 			return
 		}
 
+		printDeployConnections(resp.Connections, chosen, deployedSiteSlug(sites, resp.SiteID, target))
 		fmt.Printf("📦 Build queued (deployment: %s)\n", resp.DeploymentID)
 		fmt.Println("⏳ Waiting for build...")
 		waitForDeployment(client, resp.DeploymentID)
@@ -480,6 +504,7 @@ func init() {
 	deployCmd.Flags().BoolVarP(&deployProd, "prod", "p", false, "(no longer needed) a deploy is production when the target site is a production site")
 	deployCmd.Flags().StringVar(&deploySite, "site", "", "Site to deploy (slug, name or id); picks the project's site when this directory's config names none, and replaces the picker at a workspace root")
 	deployCmd.Flags().StringVar(&deployImage, "image", "", "Deploy an image already pushed with 'ghayma docker push' (tag, or sha256: digest) instead of uploading this directory")
+	deployCmd.Flags().BoolVar(&deployNoConnect, "no-connect", false, "Leave services no site uses unconnected, without asking")
 	rootCmd.AddCommand(deployCmd)
 }
 
