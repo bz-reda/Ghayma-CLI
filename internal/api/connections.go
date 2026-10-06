@@ -97,9 +97,12 @@ func siteChoice(siteIDs []string) []string {
 }
 
 // DeployConnections is what a deploy did with the services chosen to connect
-// to its site, keyed by resource since the site is the deploy's own.
+// to its site, keyed by resource since the site is the deploy's own. Pending
+// ones, a database not ready yet, connect once they accept connections; a
+// server that predates the field leaves it empty.
 type DeployConnections struct {
 	Connected []ConnectionItem       `json:"connected"`
+	Pending   []ConnectionItem       `json:"pending"`
 	Failed    []DeployConnectFailure `json:"failed"`
 }
 

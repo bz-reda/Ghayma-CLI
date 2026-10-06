@@ -178,10 +178,11 @@ func connectionItems(chosen []api.Unconnected) []api.ConnectionItem {
 	return items
 }
 
-// printDeployConnections says what the upload did with the chosen services,
-// named as the listing named them (by id otherwise), each failure followed by
-// the command that retries it. An answer accounting for none of them — an
-// older server — says where to look instead.
+// printDeployConnections says what the upload did with the chosen services —
+// connected, connecting once ready, or failed — named as the listing named
+// them (by id otherwise), each failure followed by the command that retries
+// it. An answer accounting for none of them — an older server — says where to
+// look instead.
 func printDeployConnections(outcome api.DeployConnections, chosen []api.Unconnected, site string) {
 	if len(chosen) == 0 {
 		return
@@ -199,6 +200,9 @@ func printDeployConnections(outcome api.DeployConnections, chosen []api.Unconnec
 	for _, c := range outcome.Connected {
 		fmt.Printf("🔗 Connected %s '%s' to '%s'\n", kindLabel(c.Kind), nameOf(c.ResourceID), site)
 	}
+	for _, p := range outcome.Pending {
+		fmt.Printf("⏳ Connecting %s '%s' to '%s' once it is ready to accept connections\n", kindLabel(p.Kind), nameOf(p.ResourceID), site)
+	}
 	for _, f := range outcome.Failed {
 		fmt.Printf("⚠️  Couldn't connect %s '%s': %s\n", kindLabel(f.Kind), nameOf(f.ResourceID), f.Error)
 		fmt.Printf("   Retry with: %s\n", connectCommand(f.Kind, nameOf(f.ResourceID), site))
@@ -213,6 +217,11 @@ func printDeployConnections(outcome api.DeployConnections, chosen []api.Unconnec
 func deployOutcomeMentions(outcome api.DeployConnections, chosen map[string]string) bool {
 	for _, c := range outcome.Connected {
 		if _, ok := chosen[c.ResourceID]; ok {
+			return true
+		}
+	}
+	for _, p := range outcome.Pending {
+		if _, ok := chosen[p.ResourceID]; ok {
 			return true
 		}
 	}

@@ -494,6 +494,31 @@ func TestDeployPrintsWhatTheUploadConnected(t *testing.T) {
 	}
 }
 
+// A database not ready yet is queued, not failed: the deploy says it connects
+// once it accepts connections, with nothing to retry and nothing to doubt.
+func TestDeployPrintsWhatTheUploadQueued(t *testing.T) {
+	deploySetup(t, true)
+	stub := (&deployAPI{
+		sites:    `[]`,
+		listBody: unconnectedBody(t, shopServices[:1]),
+		uploadReply: `{"deployment_id":"dep-1","status":"queued","site_id":"s1","connections":{` +
+			`"connected":[],"pending":[{"kind":"database","resource_id":"d1"}],"failed":[]}}`,
+	}).start(t)
+	answerDeployQuestions(t, stub, true)
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, siteLessDir(t), "deploy")
+
+	if !strings.Contains(out, "⏳ Connecting database 'shop-db' to 'main' once it is ready to accept connections\n") {
+		t.Errorf("missing the pending line:\n%s", out)
+	}
+	for _, line := range []string{"couldn't read the connection result", "Retry with:"} {
+		if strings.Contains(out, line) {
+			t.Errorf("a pending service is accounted for and has nothing to retry, got %q:\n%s", line, out)
+		}
+	}
+}
+
 // A server that predates the field connects nothing and says nothing: the
 // deploy says where to look rather than claiming either way.
 func TestDeployOlderBackendSaysWhereToCheck(t *testing.T) {
@@ -534,6 +559,7 @@ func TestPrintDeployConnections(t *testing.T) {
 		{"only another service", api.DeployConnections{Connected: []api.ConnectionItem{{Kind: "database", ResourceID: "d9"}}}, chosen, []string{"🔗 Connected database 'd9' to 'main'"}, true},
 		{"nothing chosen", api.DeployConnections{}, nil, nil, false},
 		{"failed counts", api.DeployConnections{Failed: []api.DeployConnectFailure{{Kind: "database", ResourceID: "d1", Error: "x"}}}, chosen, []string{"⚠️  Couldn't connect database 'shop-db': x\n   Retry with: ghayma connect database shop-db --site main"}, false},
+		{"pending counts", api.DeployConnections{Pending: []api.ConnectionItem{{Kind: "database", ResourceID: "d1"}}}, chosen, []string{"⏳ Connecting database 'shop-db' to 'main' once it is ready to accept connections"}, false},
 	} {
 		out := captureStdout(t, func() { printDeployConnections(tc.outcome, tc.chosen, "main") })
 		for _, line := range tc.lines {
@@ -543,6 +569,9 @@ func TestPrintDeployConnections(t *testing.T) {
 		}
 		if got := strings.Contains(out, unreadable); got != tc.unreadable {
 			t.Errorf("%s: unreadable line printed = %v; want %v:\n%s", tc.name, got, tc.unreadable, out)
+		}
+		if got := strings.Contains(out, "Retry with:"); got != (len(tc.outcome.Failed) > 0) {
+			t.Errorf("%s: retry line printed = %v; want one only after a failure:\n%s", tc.name, got, out)
 		}
 		if tc.chosen == nil && out != "" {
 			t.Errorf("%s: nothing chosen prints nothing, got:\n%s", tc.name, out)

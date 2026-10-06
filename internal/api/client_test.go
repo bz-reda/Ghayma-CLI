@@ -515,7 +515,7 @@ func TestDeploy_SendsConnectResourcesOnlyWhenChosen(t *testing.T) {
 
 // TestDeploy_DecodesTheConnections: the upload answers with the site it
 // deploys and, keyed by resource, what became of each chosen service; a server
-// that predates the fields leaves both empty.
+// that predates a field leaves it empty.
 func TestDeploy_DecodesTheConnections(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -523,7 +523,21 @@ func TestDeploy_DecodesTheConnections(t *testing.T) {
 		want DeployResponse
 	}{
 		{
-			name: "connected and failed",
+			name: "connected, pending and failed",
+			body: `{"deployment_id":"dep-1","status":"queued","site_id":"s1","connections":{"connected":[{"kind":"bucket","resource_id":"b1"}],"pending":[{"kind":"database","resource_id":"d1"}],"failed":[]}}`,
+			want: DeployResponse{
+				DeploymentID: "dep-1",
+				Status:       "queued",
+				SiteID:       "s1",
+				Connections: DeployConnections{
+					Connected: []ConnectionItem{{Kind: "bucket", ResourceID: "b1"}},
+					Pending:   []ConnectionItem{{Kind: "database", ResourceID: "d1"}},
+					Failed:    []DeployConnectFailure{},
+				},
+			},
+		},
+		{
+			name: "connected and failed, without pending",
 			body: `{"deployment_id":"dep-1","status":"queued","site_id":"s1","connections":{"connected":[{"kind":"database","resource_id":"d1"}],"failed":[{"kind":"bucket","resource_id":"b1","error":"bucket 'media' could not be connected"}]}}`,
 			want: DeployResponse{
 				DeploymentID: "dep-1",
