@@ -58,11 +58,26 @@ type ConnectionItem struct {
 // service: connected, pending until the engine accepts logins (Postgres), or
 // failed with the reason. A create returns it as nil when the server sent none
 // — one older than 2026-10-02, which may still connect the service on its own
-// — or sent one this CLI cannot read; the resource exists either way.
+// — and empty when it sent one this CLI cannot read; the resource exists
+// either way.
 type ConnectChoice struct {
 	Connected []string             `json:"connected"`
 	Pending   []string             `json:"pending"`
 	Failed    []SiteConnectFailure `json:"failed"`
+}
+
+// readConnectChoice reads a create's connections on their own, so nothing in
+// the resource half costs them: nil when the server sent none, and an empty
+// choice, never a half-read one, when it sent one this CLI cannot read.
+func readConnectChoice(raw json.RawMessage) *ConnectChoice {
+	if len(raw) == 0 {
+		return nil
+	}
+	var choice *ConnectChoice
+	if json.Unmarshal(raw, &choice) != nil {
+		return &ConnectChoice{}
+	}
+	return choice
 }
 
 // SiteConnectFailure is a chosen site the new service could not be connected

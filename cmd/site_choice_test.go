@@ -427,6 +427,33 @@ func TestPrintConnectOutcome_OlderServerMayHaveConnected(t *testing.T) {
 	}
 }
 
+// Connections this CLI cannot read still come from a server that sent them:
+// each create says it couldn't read the result, never that the server
+// predates the choice.
+func TestCreates_UnreadableConnectionsAreNoOlderServer(t *testing.T) {
+	forceStdin(t, false)
+	noSiteQuestions(t)
+	for _, tc := range []struct {
+		created string
+		args    []string
+	}{
+		{dbCreated(`,"connections":42`), []string{"db", "create", "shop-db", "--site", "main"}},
+		{bucketCreated(`,"connections":42`), []string{"storage", "create", "media", "--site", "main"}},
+		{authCreated(`,"connections":42`), []string{"auth", "create", "Shop Auth", "--app-id", "shop", "--site", "main"}},
+	} {
+		stub := createStub(t, shopSites, tc.created)
+		cliHome(t, stub.URL)
+
+		out := runCLI(t, linkedDir(t), tc.args...)
+		if !strings.Contains(out, unreadableConnectResult+"\n") || lastExitCode != 0 {
+			t.Errorf("%s create: want the check line and exit 0, got %d:\n%s", tc.args[0], lastExitCode, out)
+		}
+		if strings.Contains(out, "didn't report connections") {
+			t.Errorf("%s create: a server that sent connections is no older server:\n%s", tc.args[0], out)
+		}
+	}
+}
+
 // A display name never wins over another site's slug: every slug is tried
 // before any name, and names before ids — for create's --site and for the
 // live pick alike.

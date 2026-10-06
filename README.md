@@ -73,7 +73,7 @@ GHAYMA_CONFIG=~/.ghayma-staging.json ghayma whoami
 | `ghayma project transfer` | Transfer project ownership (also: `project status`, `project cancel`, `project accept`) |
 | `ghayma deploy` | Deploy the current project — production when the target site is a production site |
 | `ghayma deploy --prod` | Accepted, but no longer changes anything: the target site's environment decides |
-| `ghayma deploy --no-connect` | Deploy without connecting the services no site uses yet; prints the `ghayma connect` command for each. Without it, a terminal deploy offers each one to the site it deploys |
+| `ghayma deploy --no-connect` | Deploy without connecting the services no site uses yet; prints the `ghayma connect` command for each. Without it, a terminal deploy offers each one to the site it deploys. The offer and `--no-connect` apply to source deploys only, not to `--image` |
 | `ghayma promote --from <site>` | Ship the image a site already runs onto another site (default target: the project's default site) |
 | `ghayma deploy --image <tag>` | Deploy an image already pushed with `ghayma docker push` instead of uploading source |
 | `ghayma status` | List your projects |

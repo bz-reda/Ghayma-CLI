@@ -1202,15 +1202,15 @@ func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool
 		return nil, nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
+	// Created all the same: each half is read on its own, as far as it reads.
 	var result struct {
-		Database    DatabaseInfo   `json:"database"`
-		Connections *ConnectChoice `json:"connections"`
+		Database    json.RawMessage `json:"database"`
+		Connections json.RawMessage `json:"connections"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		// Created all the same; connections this CLI cannot read are unknown.
-		return &result.Database, nil, nil
-	}
-	return &result.Database, result.Connections, nil
+	json.NewDecoder(resp.Body).Decode(&result)
+	var db DatabaseInfo
+	json.Unmarshal(result.Database, &db)
+	return &db, readConnectChoice(result.Connections), nil
 }
 
 // RetierDatabase changes a database's tier, disk, and/or backup schedule via
@@ -1445,15 +1445,15 @@ func (c *Client) CreateBucket(name, projectID string, sizeMB int, connectSiteIDs
 		return nil, nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
+	// Created all the same: each half is read on its own, as far as it reads.
 	var result struct {
-		Bucket      BucketInfo     `json:"bucket"`
-		Connections *ConnectChoice `json:"connections"`
+		Bucket      json.RawMessage `json:"bucket"`
+		Connections json.RawMessage `json:"connections"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		// Created all the same; connections this CLI cannot read are unknown.
-		return &result.Bucket, nil, nil
-	}
-	return &result.Bucket, result.Connections, nil
+	json.NewDecoder(resp.Body).Decode(&result)
+	var bucket BucketInfo
+	json.Unmarshal(result.Bucket, &bucket)
+	return &bucket, readConnectChoice(result.Connections), nil
 }
 
 func (c *Client) ListBuckets() ([]BucketInfo, error) {
@@ -1622,15 +1622,15 @@ func (c *Client) CreateAuthApp(name, appID, projectID, authTierSlug string, conn
 		return nil, nil, classifyAPIError(resp.StatusCode, respBody)
 	}
 
+	// Created all the same: each half is read on its own, as far as it reads.
 	var result struct {
-		AuthApp     AuthAppInfo    `json:"auth_app"`
-		Connections *ConnectChoice `json:"connections"`
+		AuthApp     json.RawMessage `json:"auth_app"`
+		Connections json.RawMessage `json:"connections"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		// Created all the same; connections this CLI cannot read are unknown.
-		return &result.AuthApp, nil, nil
-	}
-	return &result.AuthApp, result.Connections, nil
+	json.NewDecoder(resp.Body).Decode(&result)
+	var app AuthAppInfo
+	json.Unmarshal(result.AuthApp, &app)
+	return &app, readConnectChoice(result.Connections), nil
 }
 
 func (c *Client) ListAuthApps() ([]AuthAppInfo, error) {

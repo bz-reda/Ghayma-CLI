@@ -25,7 +25,8 @@ Each managed database enforces a per-database network policy: only the granted
 sites can open a connection to it. A database reaches only the sites connected
 to it — chosen at create (--site), at deploy, or with
 'ghayma connect database <name> --site <slug>'. A site marked ⏳ is connecting
-once the database accepts connections; --add and --remove keep it.
+once the database accepts connections; --add and --remove of other sites keep
+it; --remove <that site> cancels it.
 
 With no flag, prints the current access table (SITE = slug, NAME, ACCESS where
 ✓ = allowed, - = blocked). The three mutation flags are mutually exclusive:

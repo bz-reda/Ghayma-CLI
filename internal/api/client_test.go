@@ -406,18 +406,60 @@ func TestCreates_WithoutConnectionsIsNil(t *testing.T) {
 	}
 }
 
-// TestCreates_UnreadableConnectionsAreUnknown: the resource exists once the
-// server answers 201, so connections this CLI cannot read leave the choice
-// unknown (nil) rather than half-read, and never fail the create.
-func TestCreates_UnreadableConnectionsAreUnknown(t *testing.T) {
+// TestCreates_UnreadableConnectionsAreEmptyNotNil: a server that sends the
+// field has answered, so connections this CLI cannot read come back as an
+// empty choice, which accounts for no chosen site — never nil, which reads as
+// a server that predates the field, nor half-read. The resource exists once
+// the server answers 201, so they never fail the create.
+func TestCreates_UnreadableConnectionsAreEmptyNotNil(t *testing.T) {
 	for _, tc := range createsWithChoice {
-		ts, _ := createServer(t, tc.path, "{"+tc.resource+`,"connections":{"connected":"s1"}}`)
-		id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1"})
-		if err != nil || id != tc.id {
-			t.Fatalf("%s: id, err = %q, %v; want %q and no error", tc.kind, id, err, tc.id)
+		for _, connections := range []string{
+			`"connections":42`,
+			`"connections":{"connected":"s1","pending":["s2"]}`,
+		} {
+			ts, _ := createServer(t, tc.path, "{"+tc.resource+","+connections+"}")
+			id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1", "s2"})
+			if err != nil || id != tc.id {
+				t.Fatalf("%s: id, err = %q, %v; want %q and no error", tc.kind, id, err, tc.id)
+			}
+			if choice == nil {
+				t.Errorf("%s with %s: choice = nil; want an empty choice", tc.kind, connections)
+				continue
+			}
+			if !reflect.DeepEqual(*choice, ConnectChoice{}) {
+				t.Errorf("%s with %s: choice = %+v; want an empty one, not half-read", tc.kind, connections, *choice)
+			}
 		}
-		if choice != nil {
-			t.Errorf("%s: choice = %+v; want nil", tc.kind, *choice)
+	}
+}
+
+// TestCreates_ConnectionsSurviveTheResourceHalf: the connections are read on
+// their own, so a resource half this CLI cannot fully read — a field of
+// another type, or a timestamp that stops the decoder before it reaches them
+// — never costs them, and the resource still comes back as far as it reads.
+func TestCreates_ConnectionsSurviveTheResourceHalf(t *testing.T) {
+	const connections = `"connections":{"connected":["s1"],"pending":[],"failed":[]}`
+	misread := map[string][]string{
+		"database": {
+			`"database":{"id":"d1","name":"shop-db","type":"postgres","port":"5432"}`,
+			`"database":{"id":"d1","name":"shop-db","resize":{"direction":"grow","started_at":"soon"}}`,
+		},
+		"bucket":   {`"bucket":{"id":"b1","name":"media","storage_limit_bytes":"1 GB"}`},
+		"auth app": {`"auth_app":{"id":"a1","name":"shop-auth","app_id":"shop-auth","allowed_origins":"*"}`},
+	}
+	for _, tc := range createsWithChoice {
+		if len(misread[tc.kind]) == 0 {
+			t.Fatalf("%s: no misread resource half to try", tc.kind)
+		}
+		for _, resource := range misread[tc.kind] {
+			ts, _ := createServer(t, tc.path, "{"+resource+","+connections+"}")
+			id, choice, err := tc.create(newTestClient(ts.URL), []string{"s1"})
+			if err != nil || id != tc.id {
+				t.Fatalf("%s: id, err = %q, %v; want %q and no error", tc.kind, id, err, tc.id)
+			}
+			if choice == nil || !reflect.DeepEqual(choice.Connected, []string{"s1"}) {
+				t.Errorf("%s with %s: choice = %+v; want connected [s1]", tc.kind, resource, choice)
+			}
 		}
 	}
 }

@@ -248,7 +248,7 @@ func TestDBSitesHelp(t *testing.T) {
 	}
 	for _, want := range []string{
 		"A database reaches only the sites connected to it",
-		"A site marked ⏳ is connecting once the database accepts connections; --add and --remove keep it.",
+		"A site marked ⏳ is connecting once the database accepts connections; --add and --remove of other sites keep it; --remove <that site> cancels it.",
 	} {
 		if !strings.Contains(strings.Join(strings.Fields(dbSitesCmd.Long), " "), want) {
 			t.Errorf("help lacks %q:\n%s", want, dbSitesCmd.Long)
