@@ -13,7 +13,8 @@ import (
 // Ask before connecting, at deploy (2026-10-02). A service no site holds is
 // offered to the site being deployed, one question each on a terminal, before
 // the upload starts; the answers ride on the upload, so the first build already
-// has the variables. A script, --no-connect or a No is told how to connect it.
+// has the variables (a database still starting connects once it is ready). A
+// script, --no-connect or a No is told how to connect it.
 
 // promptDeployConnectFn is indirected so tests can answer the questions
 // without a TTY.

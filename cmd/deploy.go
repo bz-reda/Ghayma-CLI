@@ -175,7 +175,8 @@ out as it is. Name a tag, or a sha256: digest for one exact image.
 
 A database, bucket or auth app that no site uses yet is offered to the site
 being deployed, one question each on a terminal, and connected before the
-build starts. Without a terminal, or with --no-connect, nothing is connected
+build starts (a database still starting connects once it accepts connections).
+Without a terminal, or with --no-connect, nothing is connected
 and the deploy prints the command that connects each one. The offer and
 --no-connect apply to source deploys only, not to --image.
 
