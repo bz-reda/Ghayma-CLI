@@ -18,6 +18,7 @@ const (
 	dbStatusRunning  = "running"
 	dbStatusResizing = "resizing"
 	dbStatusError    = "error"
+	dbStatusStopped  = "stopped"
 )
 
 // Vars so tests need not sit out real polls.

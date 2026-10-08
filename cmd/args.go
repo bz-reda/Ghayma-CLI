@@ -25,6 +25,24 @@ func requireAtLeastOneArg(argName, listCmd string) cobra.PositionalArgs {
 	return argChecker(argName, listCmd, 1, -1)
 }
 
+// requireTwoArgs requires exactly two positional arguments and names both when
+// one is missing: "ghayma db mode requires a name and a mode (cache or store)."
+func requireTwoArgs(first, second, listCmd string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == 2 {
+			return nil
+		}
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+		hint := buildArgHint(cmd, listCmd)
+		if len(args) < 2 {
+			return fmt.Errorf("%s requires a %s and a %s.\n%s", cmd.CommandPath(), first, second, hint)
+		}
+		return fmt.Errorf("%s accepts at most 2 arguments (a %s and a %s), got %d.\n%s",
+			cmd.CommandPath(), first, second, len(args), hint)
+	}
+}
+
 // argChecker enforces a [min, max] positional-arg count (max == -1 means
 // unlimited). All error output goes to stderr (cobra default when the Args
 // func returns error — we silence usage/errors so only our message prints).

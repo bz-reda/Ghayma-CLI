@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -21,7 +20,7 @@ var dbModeCmd = &cobra.Command{
 
 The database restarts into the new mode: a few seconds of downtime. Moving to
 store first writes the append-only file, which takes longer on a large dataset.`,
-	Args: argChecker("argument", "db list", 2, 2),
+	Args: requireTwoArgs("name", "mode (cache or store)", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		name, mode := args[0], args[1]
 		if mode != "cache" && mode != "store" {
@@ -49,11 +48,22 @@ store first writes the append-only file, which takes longer on a large dataset.`
 			fmt.Printf("ℹ️  %s is already in %s mode.\n", name, mode)
 			return
 		}
+		if db.Status != dbStatusRunning {
+			failf("%s", modeBlocked(name, db.Status))
+			return
+		}
 
 		fmt.Printf("⏳ Switching %s to %s mode. It restarts: a few seconds of downtime...\n", name, mode)
 		updated, err := client.SetValkeyMode(db.ID, mode)
 		if err != nil {
-			failf("%s", modeFailure(name, err))
+			// It stopped or changed state since it was read: say what it is now.
+			status := ""
+			if hasAPICode(err, api.CodeDatabaseNotRunning) {
+				if now, getErr := client.GetDatabase(db.ID); getErr == nil {
+					status = now.Status
+				}
+			}
+			failf("%s", modeFailure(name, status, err))
 			return
 		}
 		got := updated.ValkeyMode
@@ -64,12 +74,25 @@ store first writes the append-only file, which takes longer on a large dataset.`
 	},
 }
 
+// modeBlocked says why a database that is not running cannot switch mode. An
+// unknown status (or a stale "running") keeps the generic sentence.
+func modeBlocked(name, status string) string {
+	switch status {
+	case dbStatusStopped:
+		return fmt.Sprintf("%s is stopped, so its mode cannot change. Start it first: ghayma db start %s", name, name)
+	case "", dbStatusRunning:
+		return fmt.Sprintf("%s is not running, so its mode cannot change. Start it first: ghayma db start %s", name, name)
+	case dbStatusError:
+		status = "in error"
+	}
+	return fmt.Sprintf("%s is %s, so its mode cannot change now. Try again once ghayma db info %s shows running.", name, status, name)
+}
+
 // modeFailure words a refused mode switch; the server's not-running sentence
 // speaks of disks, so it is replaced.
-func modeFailure(name string, err error) string {
-	var apiErr *api.APIError
-	if errors.As(err, &apiErr) && apiErr.Code == api.CodeDatabaseNotRunning {
-		return fmt.Sprintf("%s is not running, so its mode cannot change. Start it first: ghayma db start %s", name, name)
+func modeFailure(name, status string, err error) string {
+	if hasAPICode(err, api.CodeDatabaseNotRunning) {
+		return modeBlocked(name, status)
 	}
 	return fmt.Sprintf("Mode switch failed: %v", err)
 }

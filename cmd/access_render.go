@@ -53,6 +53,8 @@ type accessTarget struct {
 	Kind         string
 	ResourceID   string
 	ResourceName string
+	// Engine is a database's engine (postgres, mongodb, valkey); empty for a bucket.
+	Engine string
 }
 
 // resourceHint names the command that creates a resource of the kind.
@@ -300,6 +302,10 @@ func printAccessListing(target *accessTarget, conns []api.Connection, rows []api
 	}
 
 	fmt.Println("\n   External principals")
+	if len(rows) == 0 && target.Engine == dbTypeValkey {
+		fmt.Println("   " + valkeyNoPublicAccess)
+		return
+	}
 	if len(rows) == 0 {
 		fmt.Printf("   none — add one with: ghayma access add %s %s --name <principal>\n", target.Kind, target.ResourceName)
 		return
@@ -358,6 +364,10 @@ func accessFailure(err error, verb string) string {
 	var apiErr *api.APIError
 	if !errors.As(err, &apiErr) {
 		return fmt.Sprintf("Failed to %s: %v", verb, err)
+	}
+	if apiErr.Code == api.CodePublicAccessUnavailable {
+		return messageOr(apiErr, "public access is not available for this database yet") +
+			"\n   Reach it from your machine with: ghayma connect --local"
 	}
 	switch apiErr.Status {
 	case http.StatusBadRequest:

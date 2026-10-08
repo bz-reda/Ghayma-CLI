@@ -136,6 +136,10 @@ func runDBSites(cmd *cobra.Command, args []string) {
 	}
 
 	updated, err := client.SetDatabaseSites(db.ID, desired)
+	if hasAPICode(err, api.CodeDatabaseNotRunning) {
+		failf("%s", notRunningToConnect(args[0]))
+		return
+	}
 	if err != nil {
 		fmt.Printf("❌ Failed to update site access: %v\n", err)
 		return

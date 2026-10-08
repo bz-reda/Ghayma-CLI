@@ -197,9 +197,9 @@ var dbResizeCmd = &cobra.Command{
 	Short: "Change a database's tier, disk size, or backup schedule",
 	Long: "Change a database's tier, disk size, or backup schedule.\n\n" +
 		"A larger disk grows online. A smaller one stops the database for about a minute\n" +
-		"while its data moves to the smaller disk; 'ghayma db info' shows the smallest disk\n" +
-		"it can shrink to. The command waits for a disk change to finish unless --no-wait\n" +
-		"is given.",
+		"while its data moves to the smaller disk; for Postgres and MongoDB, 'ghayma db info'\n" +
+		"shows the smallest disk it can shrink to. A Valkey disk cannot shrink yet.\n" +
+		"The command waits for a disk change to finish unless --no-wait is given.",
 	Args: requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
@@ -227,9 +227,18 @@ var dbResizeCmd = &cobra.Command{
 			failf("%v", err)
 			return
 		}
+		if db.Type == dbTypeValkey && diskGB > 0 && diskGB < db.DiskGB {
+			failf("%s", valkeyNoShrink(db.Name, db.DiskGB))
+			return
+		}
 
 		updated, err := client.RetierDatabase(db.ID, tier, diskGB, backup)
 		if err != nil {
+			var de *api.DiskChangeError
+			if errors.As(err, &de) && de.Code == api.CodeShrinkUnsupported {
+				failf("%s", valkeyNoShrink(db.Name, db.DiskGB))
+				return
+			}
 			failf("Failed to resize database: %s", resizeErrorText(err, db.DiskGB))
 			return
 		}
@@ -550,6 +559,13 @@ var dbCredentialsCmd = &cobra.Command{
 			fmt.Printf("❌ %v\n", err)
 			return
 		}
+		if db.Type == dbTypeValkey {
+			fmt.Printf("ℹ️  %s is a Valkey database: it has no shared credential. Each connected app has its own user in REDIS_URL / VALKEY_URL.\n", db.Name)
+			fmt.Println("   See which apps are connected:  ghayma connections")
+			fmt.Println("   Read an app's variables:       ghayma env pull")
+			fmt.Println("   Reach it from this machine:    ghayma connect --local")
+			return
+		}
 
 		creds, err := client.GetDatabaseCredentials(db.ID)
 		if err != nil {
@@ -648,6 +664,10 @@ var dbRotateCmd = &cobra.Command{
 			fmt.Printf("❌ %v\n", err)
 			return
 		}
+		if db.Type == dbTypeValkey {
+			failf("%s is a Valkey database: there is no shared password to rotate. Rotate one app's user with: ghayma connections rotate database %s --site <site>", db.Name, db.Name)
+			return
+		}
 
 		fmt.Printf("⚠️  This will change the password for '%s'. Connected clients will need to reconnect. Continue? (y/n): ", args[0])
 		var confirm string
@@ -683,7 +703,7 @@ func init() {
 	dbCreateCmd.Flags().BoolVar(&dbCreateNoConnect, "no-connect", false, "Connect the new database to no site, without asking.")
 
 	dbResizeCmd.Flags().StringVar(&dbResizeTier, "tier", "", "New database tier (e.g. xs, s, m, l)")
-	dbResizeCmd.Flags().IntVar(&dbResizeDiskGB, "disk-gb", 0, "New disk size in GB. Larger grows it online; smaller shrinks it, stopping the database for about a minute")
+	dbResizeCmd.Flags().IntVar(&dbResizeDiskGB, "disk-gb", 0, "New disk size in GB. Larger grows it online; smaller shrinks it, stopping the database for about a minute (a Valkey disk cannot shrink yet)")
 	dbResizeCmd.Flags().StringVar(&dbResizeBackup, "backup", "", "New backup schedule: weekly, daily, sixhourly")
 	dbResizeCmd.Flags().BoolVar(&dbResizeNoWait, "no-wait", false, "Return once a disk change has started instead of waiting for it to finish")
 

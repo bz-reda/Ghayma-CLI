@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -39,7 +38,7 @@ var dbLogsCmd = &cobra.Command{
 
 --follow keeps printing new lines until Ctrl-C; the platform ends a follow
 after 10 minutes, so run it again to keep watching.`,
-	Args: argChecker("argument", "db list", 1, 1),
+	Args: requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
 		lines := min(max(dbLogsLines, 1), 1000)
@@ -68,7 +67,7 @@ after 10 minutes, so run it again to keep watching.`,
 			if ctx.Err() != nil {
 				return
 			}
-			failf("%s", logsFailure(name, err))
+			failf("%s", logsFailure(name, db.Status, err))
 			return
 		}
 		defer rc.Close()
@@ -78,14 +77,17 @@ after 10 minutes, so run it again to keep watching.`,
 		case err != nil:
 			failf("The log stream broke: %v", err)
 		case dbLogsFollow:
-			fmt.Println("ℹ️  The stream ended (10-minute limit). Run the command again to keep following.")
+			fmt.Println("ℹ️  The stream ended (the platform ends a follow after 10 minutes, or when the database restarts). Run the command again to keep following.")
 		}
 	},
 }
 
-func logsFailure(name string, err error) string {
-	var apiErr *api.APIError
-	if errors.As(err, &apiErr) && apiErr.Code == api.CodeNoPod {
+// logsFailure words a refused log read; status is the database's known status.
+func logsFailure(name, status string, err error) string {
+	if hasAPICode(err, api.CodeNoPod) {
+		if status == dbStatusStopped {
+			return fmt.Sprintf("%s is stopped, so it has no running log. Start it with: ghayma db start %s", name, name)
+		}
 		return fmt.Sprintf("%s is not running yet, so it has no log. Check: ghayma db info %s", name, name)
 	}
 	return fmt.Sprintf("Could not read the log: %v", err)
