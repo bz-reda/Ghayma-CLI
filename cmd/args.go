@@ -38,7 +38,7 @@ func requireTwoArgs(first, second, listCmd string) cobra.PositionalArgs {
 		if len(args) < 2 {
 			return fmt.Errorf("%s requires a %s and a %s.\n%s", cmd.CommandPath(), first, second, hint)
 		}
-		return fmt.Errorf("%s accepts at most 2 arguments (a %s and a %s), got %d.\n%s",
+		return fmt.Errorf("%s accepts at most 2 arguments: a %s and a %s; got %d.\n%s",
 			cmd.CommandPath(), first, second, len(args), hint)
 	}
 }

@@ -43,7 +43,8 @@ Engines (--type):
   postgres  PostgreSQL (default)
   mongodb   MongoDB (needs a larger tier)
   valkey    Valkey 9.1, Redis-compatible: every Redis client works with it.
-            Connected apps receive REDIS_URL and VALKEY_URL.
+            Connected apps receive REDIS_URL and VALKEY_URL at runtime
+            (not during builds).
 
 Valkey modes (--mode, Valkey only):
   cache  (default) evicts the least-recently-used keys when memory is full;
@@ -149,7 +150,7 @@ reach it from your machine with ghayma connect --local.`,
 		}
 		if db.Type == dbTypeValkey {
 			fmt.Printf("   Mode:    %s — %s\n", db.ValkeyMode, valkeyModeMeaning(db.ValkeyMode))
-			fmt.Println("   Connected apps receive REDIS_URL and VALKEY_URL.")
+			fmt.Println("   Connected apps receive REDIS_URL and VALKEY_URL at runtime (not during builds).")
 		}
 		printConnectOutcome(outcome, siteIDs, sites, note, "database", args[0])
 	},
@@ -228,7 +229,7 @@ var dbResizeCmd = &cobra.Command{
 			return
 		}
 		if db.Type == dbTypeValkey && diskGB > 0 && diskGB < db.DiskGB {
-			failf("%s", valkeyNoShrink(db.Name, db.DiskGB))
+			failf("%s", valkeyKeepsDisk(db.Name, db.DiskGB))
 			return
 		}
 
@@ -236,7 +237,7 @@ var dbResizeCmd = &cobra.Command{
 		if err != nil {
 			var de *api.DiskChangeError
 			if errors.As(err, &de) && de.Code == api.CodeShrinkUnsupported {
-				failf("%s", valkeyNoShrink(db.Name, db.DiskGB))
+				failf("%s", valkeyNoShrink)
 				return
 			}
 			failf("Failed to resize database: %s", resizeErrorText(err, db.DiskGB))

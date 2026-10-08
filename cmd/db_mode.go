@@ -63,7 +63,7 @@ store first writes the append-only file, which takes longer on a large dataset.`
 					status = now.Status
 				}
 			}
-			failf("%s", modeFailure(name, status, err))
+			failf("%s", modeFailure(name, mode, status, err))
 			return
 		}
 		got := updated.ValkeyMode
@@ -75,12 +75,12 @@ store first writes the append-only file, which takes longer on a large dataset.`
 }
 
 // modeBlocked says why a database that is not running cannot switch mode. An
-// unknown status (or a stale "running") keeps the generic sentence.
+// unknown status keeps the generic sentence.
 func modeBlocked(name, status string) string {
 	switch status {
 	case dbStatusStopped:
 		return fmt.Sprintf("%s is stopped, so its mode cannot change. Start it first: ghayma db start %s", name, name)
-	case "", dbStatusRunning:
+	case "":
 		return fmt.Sprintf("%s is not running, so its mode cannot change. Start it first: ghayma db start %s", name, name)
 	case dbStatusError:
 		status = "in error"
@@ -89,10 +89,14 @@ func modeBlocked(name, status string) string {
 }
 
 // modeFailure words a refused mode switch; the server's not-running sentence
-// speaks of disks, so it is replaced.
-func modeFailure(name, status string, err error) string {
-	if hasAPICode(err, api.CodeDatabaseNotRunning) {
-		return modeBlocked(name, status)
+// speaks of disks, so it is replaced. status is the one read back after the
+// refusal: "running" again means it was only briefly down.
+func modeFailure(name, mode, status string, err error) string {
+	if !hasAPICode(err, api.CodeDatabaseNotRunning) {
+		return fmt.Sprintf("Mode switch failed: %v", err)
 	}
-	return fmt.Sprintf("Mode switch failed: %v", err)
+	if status == dbStatusRunning {
+		return fmt.Sprintf("%s was not running a moment ago. Try again: ghayma db mode %s %s", name, name, mode)
+	}
+	return modeBlocked(name, status)
 }

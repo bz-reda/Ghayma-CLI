@@ -60,7 +60,7 @@ func TestDBCreate_ValkeySendsModeAndPrintsIt(t *testing.T) {
 	}
 	for _, want := range []string{
 		"   Mode:    store — never evicts; writes fail when memory is full. Snapshot plus append-only file every second.\n",
-		"   Connected apps receive REDIS_URL and VALKEY_URL.\n",
+		"   Connected apps receive REDIS_URL and VALKEY_URL at runtime (not during builds).\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)

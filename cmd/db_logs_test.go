@@ -59,12 +59,12 @@ func TestDBLogs_ClampsLinesAndSendsFollow(t *testing.T) {
 	quietLogsSignals(t)
 	ts := newLogsStub(t, 200, "", &q)
 	cliHome(t, ts.URL)
-	out := runCLI(t, linkedDir(t), "db", "logs", "main", "-n", "5000", "-f")
+	errOut := captureStderr(t, func() { runCLI(t, linkedDir(t), "db", "logs", "main", "-n", "5000", "-f") })
 	if q != "follow=1&tail=1000" {
 		t.Fatalf("q=%q", q)
 	}
-	if !strings.Contains(out, "Run the command again to keep following") || lastExitCode != 0 {
-		t.Fatalf("a follow the server ended must say so: exit=%d out=%s", lastExitCode, out)
+	if !strings.Contains(errOut, "Run the command again to keep following") || lastExitCode != 0 {
+		t.Fatalf("a follow the server ended must say so on stderr: exit=%d stderr=%s", lastExitCode, errOut)
 	}
 }
 
@@ -113,9 +113,13 @@ func TestDBLogs_InterruptEndsFollowQuietly(t *testing.T) {
 				return func() {}
 			}
 			cliHome(t, ts.URL)
-			out := runCLI(t, linkedDir(t), "db", "logs", "main", "-f")
-			if strings.Contains(out, "❌") || strings.Contains(out, "stream ended") || lastExitCode != 0 {
-				t.Fatalf("exit=%d out=%s", lastExitCode, out)
+			var out string
+			errOut := captureStderr(t, func() { out = runCLI(t, linkedDir(t), "db", "logs", "main", "-f") })
+			if strings.Contains(out, "❌") || strings.Contains(out+errOut, "stream ended") || lastExitCode != 0 {
+				t.Fatalf("exit=%d out=%s stderr=%s", lastExitCode, out, errOut)
+			}
+			if opened && !strings.Contains(out, "checkpoint complete") {
+				t.Fatalf("the line sent before Ctrl-C must be printed: out=%q", out)
 			}
 		})
 	}

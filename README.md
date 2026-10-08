@@ -174,21 +174,21 @@ The allowlist is enforced at the front door, before any authentication, so it ca
 |---|---|
 | `ghayma db create [name]` | Create a managed database |
 | `ghayma db create [name] --type mongodb` | Create with specific type (postgres, mongodb, valkey) |
-| `ghayma db create [name] --type valkey --mode <cache\|store>` | Create a Valkey (Redis-compatible: every Redis client works with it). `cache` (default) evicts the least-recently-used keys when memory is full; `store` never evicts and keeps an append-only file. Connected apps receive `REDIS_URL` and `VALKEY_URL` |
+| `ghayma db create [name] --type valkey --mode <cache\|store>` | Create a Valkey (Redis-compatible: every Redis client works with it). `cache` (default) evicts the least-recently-used keys when memory is full; `store` never evicts and keeps an append-only file. Connected apps receive `REDIS_URL` and `VALKEY_URL` at runtime (not during builds) |
 | `ghayma db create [name] --tier <tier> --disk-gb <gb> --backup <schedule>` | Create with a specific compute tier, disk size, and backup schedule (weekly, daily, sixhourly); interactive pickers appear when you pass none of these |
 | `ghayma db create [name] --site <slug>` | Connect the new database to a site; repeat `--site` for several. Without it, a terminal asks about each site |
 | `ghayma db create [name] --no-connect` | Connect the new database to no site, without asking |
 | `ghayma db resize [name] --tier <tier>` | Change a database's compute tier |
-| `ghayma db resize [name] --disk-gb <gb>` | Grow or shrink a database's disk. A grow stays online; a shrink stops the database for about a minute while its data moves to the smaller disk. Waits for the change to finish; `--no-wait` returns once it has started |
+| `ghayma db resize [name] --disk-gb <gb>` | Grow or shrink a database's disk. A grow stays online; a shrink stops the database for about a minute while its data moves to the smaller disk. A Valkey disk can grow but cannot shrink yet. Waits for the change to finish; `--no-wait` returns once it has started |
 | `ghayma db resize [name] --backup <schedule>` | Change the backup schedule (weekly, daily, sixhourly) |
 | `ghayma db list` | List your databases, with any disk change in progress |
 | `ghayma db info [name]` | Show database details, including disk used and, for Postgres and MongoDB, the smallest disk it can shrink to |
 | `ghayma db mode [name] <cache\|store>` | Switch a Valkey between `cache` (evicts the least-recently-used keys when memory is full) and `store` (never evicts; keeps an append-only file). Switching restarts the database: a few seconds of downtime |
 | `ghayma db logs [name] [-n <lines>] [-f]` | Show a database's engine log (any engine). `-n/--lines` sets how many recent lines (1-1000, default 200); `-f/--follow` keeps printing new lines until Ctrl-C, and the platform ends a follow after 10 minutes |
-| `ghayma db credentials [name]` | Show connection credentials |
+| `ghayma db credentials [name]` | Show connection credentials. A Valkey has no shared credential: each connected app has its own user in `REDIS_URL` / `VALKEY_URL` |
 | `ghayma db stop [name]` | Stop database (preserves data) |
 | `ghayma db start [name]` | Start a stopped database |
-| `ghayma db rotate [name]` | Rotate database password |
+| `ghayma db rotate [name]` | Rotate database password. A Valkey has no shared password: rotate one app's user with `ghayma connections rotate database <name> --site <site>` |
 | `ghayma db delete [name]` | Delete database and all its data |
 
 Reaching a database from outside Ghayma is a named principal with its own credential — see [External access](#external-access) above.

@@ -137,7 +137,7 @@ func runDBSites(cmd *cobra.Command, args []string) {
 
 	updated, err := client.SetDatabaseSites(db.ID, desired)
 	if hasAPICode(err, api.CodeDatabaseNotRunning) {
-		failf("%s", notRunningToConnect(args[0]))
+		failf("%s", sitesNotRunning(args[0], db.Status))
 		return
 	}
 	if err != nil {

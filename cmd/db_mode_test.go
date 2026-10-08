@@ -58,15 +58,29 @@ func TestDBMode_NoChangeAndWrongEngine(t *testing.T) {
 	ts, s := newModeStub(t, valkeyRow+`,{"id":"d2","name":"pg","type":"postgres","status":"running"}`, 200, `{}`)
 	cliHome(t, ts.URL)
 	out := runCLI(t, linkedDir(t), "db", "mode", "cache", "cache")
-	if s.patch != nil || !strings.Contains(out, "already") {
-		t.Fatalf("patch=%v out=%s", s.patch, out)
+	if s.patch != nil || !strings.Contains(out, "already") || lastExitCode != 0 {
+		t.Fatalf("exit=%d patch=%v out=%s", lastExitCode, s.patch, out)
 	}
 	out = runCLI(t, linkedDir(t), "db", "mode", "pg", "store")
 	if s.patch != nil || lastExitCode != 1 || !strings.Contains(out, "Valkey") {
 		t.Fatalf("exit=%d out=%s", lastExitCode, out)
 	}
+	before := len(s.calls)
 	out = runCLI(t, linkedDir(t), "db", "mode", "cache", "persist")
 	if s.patch != nil || lastExitCode != 1 || !strings.Contains(out, "cache or store") {
+		t.Fatalf("exit=%d out=%s", lastExitCode, out)
+	}
+	if len(s.calls) != before {
+		t.Fatalf("a bad mode is refused before any request, got %v", s.calls[before:])
+	}
+}
+
+// A reply without valkey_mode reports the mode that was asked for.
+func TestDBMode_ReplyWithoutModeFallsBackToTheRequest(t *testing.T) {
+	ts, _ := newModeStub(t, valkeyRow, 200, `{"database":{"id":"d1","name":"cache","type":"valkey","status":"running"}}`)
+	cliHome(t, ts.URL)
+	out := runCLI(t, linkedDir(t), "db", "mode", "cache", "store")
+	if lastExitCode != 0 || !strings.Contains(out, "✅ cache is in store mode: never evicts") {
 		t.Fatalf("exit=%d out=%s", lastExitCode, out)
 	}
 }

@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -71,22 +73,46 @@ after 10 minutes, so run it again to keep watching.`,
 			return
 		}
 		defer rc.Close()
-		_, err = io.Copy(os.Stdout, rc)
+		err = copyLogLines(os.Stdout, rc)
 		switch {
 		case ctx.Err() != nil:
 		case err != nil:
 			failf("The log stream broke: %v", err)
 		case dbLogsFollow:
-			fmt.Println("ℹ️  The stream ended (the platform ends a follow after 10 minutes, or when the database restarts). Run the command again to keep following.")
+			// Stderr, so `db logs -f > file` captures only log lines.
+			fmt.Fprintln(os.Stderr, "ℹ️  The stream ended (the platform ends a follow after 10 minutes, or when the database restarts). Run the command again to keep following.")
 		}
 	},
+}
+
+// copyLogLines copies the log line by line, dropping the blank lines the
+// server sends as a follow heartbeat; every real line starts with a timestamp.
+func copyLogLines(w io.Writer, r io.Reader) error {
+	br := bufio.NewReader(r)
+	for {
+		line, err := br.ReadString('\n')
+		if strings.TrimRight(strings.TrimSuffix(line, "\n"), "\r") != "" {
+			if _, werr := io.WriteString(w, line); werr != nil {
+				return werr
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 // logsFailure words a refused log read; status is the database's known status.
 func logsFailure(name, status string, err error) string {
 	if hasAPICode(err, api.CodeNoPod) {
-		if status == dbStatusStopped {
+		switch status {
+		case dbStatusStopped:
 			return fmt.Sprintf("%s is stopped, so it has no running log. Start it with: ghayma db start %s", name, name)
+		case dbStatusError:
+			return fmt.Sprintf("%s did not start, so it has no log yet. See why: ghayma db info %s", name, name)
 		}
 		return fmt.Sprintf("%s is not running yet, so it has no log. Check: ghayma db info %s", name, name)
 	}
