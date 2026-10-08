@@ -28,7 +28,7 @@ func notRunningToConnect(name string) string {
 // sitesNotRunning is the same refusal for db sites, which knows the status.
 func sitesNotRunning(name, status string) string {
 	if status == dbStatusStopped {
-		return fmt.Sprintf("%s is stopped. Start it with: ghayma db start %s, then run this again.", name, name)
+		return fmt.Sprintf("%s is stopped. Start it, then run this again: ghayma db start %s", name, name)
 	}
 	return fmt.Sprintf("%s is not running yet, so no app can connect to it. Wait until ghayma db info %s shows running, then run this again.", name, name)
 }

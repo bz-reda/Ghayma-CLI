@@ -184,7 +184,7 @@ func TestConnectDatabase_ValkeyNotRunning(t *testing.T) {
 func TestDBSitesAdd_ValkeyNotRunning(t *testing.T) {
 	cases := map[string]string{
 		"provisioning": "cache is not running yet, so no app can connect to it. Wait until ghayma db info cache shows running, then run this again.",
-		"stopped":      "cache is stopped. Start it with: ghayma db start cache, then run this again.",
+		"stopped":      "cache is stopped. Start it, then run this again: ghayma db start cache",
 	}
 	for status, want := range cases {
 		t.Run(status, func(t *testing.T) {
