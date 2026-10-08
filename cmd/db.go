@@ -687,6 +687,9 @@ func init() {
 	dbResizeCmd.Flags().StringVar(&dbResizeBackup, "backup", "", "New backup schedule: weekly, daily, sixhourly")
 	dbResizeCmd.Flags().BoolVar(&dbResizeNoWait, "no-wait", false, "Return once a disk change has started instead of waiting for it to finish")
 
+	dbLogsCmd.Flags().IntVarP(&dbLogsLines, "lines", "n", 200, "Number of lines to show (1-1000)")
+	dbLogsCmd.Flags().BoolVarP(&dbLogsFollow, "follow", "f", false, "Keep printing new lines until Ctrl-C (up to 10 minutes)")
+
 	dbCmd.AddCommand(dbCreateCmd)
 	dbCmd.AddCommand(dbListCmd)
 	dbCmd.AddCommand(dbInfoCmd)
@@ -697,4 +700,6 @@ func init() {
 	dbCmd.AddCommand(dbStartCmd)
 	dbCmd.AddCommand(dbRotateCmd)
 	dbCmd.AddCommand(dbResizeCmd)
+	dbCmd.AddCommand(dbModeCmd)
+	dbCmd.AddCommand(dbLogsCmd)
 }

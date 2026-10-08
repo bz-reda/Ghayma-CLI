@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCreateDatabase_SendsModeOnlyForValkey(t *testing.T) {
@@ -103,6 +105,65 @@ func TestStreamDatabaseLogs(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "Valkey is starting") {
 		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestStreamDatabaseLogs_NoFollowLeavesItOut(t *testing.T) {
+	var query string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+	}))
+	defer ts.Close()
+	rc, err := newTestClient(ts.URL).StreamDatabaseLogs(context.Background(), "d1", 200, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.Close()
+	if query != "tail=200" {
+		t.Fatalf("query = %q", query)
+	}
+}
+
+// Cancelling ctx ends a follow the server holds open: Ctrl-C must not leave
+// the CLI blocked on a stream that runs up to 10 minutes.
+func TestStreamDatabaseLogs_CancelEndsFollow(t *testing.T) {
+	release := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "first line\n")
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer ts.Close()
+	defer close(release)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rc, err := newTestClient(ts.URL).StreamDatabaseLogs(ctx, "d1", 200, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	br := bufio.NewReader(rc)
+	if line, err := br.ReadString('\n'); err != nil || line != "first line\n" {
+		t.Fatalf("line = %q, err = %v", line, err)
+	}
+
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := br.ReadByte()
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("read after cancel returned no error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelling ctx did not end the stream")
 	}
 }
 

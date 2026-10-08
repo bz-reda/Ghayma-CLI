@@ -183,8 +183,8 @@ The allowlist is enforced at the front door, before any authentication, so it ca
 | `ghayma db resize [name] --backup <schedule>` | Change the backup schedule (weekly, daily, sixhourly) |
 | `ghayma db list` | List your databases, with any disk change in progress |
 | `ghayma db info [name]` | Show database details, including disk used and, for Postgres and MongoDB, the smallest disk it can shrink to |
-| `ghayma db mode [name] <cache\|store>` | Switch a Valkey between cache and store; the database restarts (a few seconds of downtime) |
-| `ghayma db logs [name]` | Show a database's recent log lines |
+| `ghayma db mode [name] <cache\|store>` | Switch a Valkey between `cache` (evicts the least-recently-used keys when memory is full) and `store` (never evicts; keeps an append-only file). Switching restarts the database: a few seconds of downtime |
+| `ghayma db logs [name] [-n <lines>] [-f]` | Show a database's engine log (any engine). `-n/--lines` sets how many recent lines (1-1000, default 200); `-f/--follow` keeps printing new lines until Ctrl-C, and the platform ends a follow after 10 minutes |
 | `ghayma db credentials [name]` | Show connection credentials |
 | `ghayma db stop [name]` | Stop database (preserves data) |
 | `ghayma db start [name]` | Start a stopped database |

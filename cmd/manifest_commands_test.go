@@ -67,6 +67,7 @@ func resetCommandFlags() {
 	}
 	dbCreateSites, dbCreateNoConnect = nil, false
 	dbCreateType, dbCreateMode = "postgres", ""
+	dbLogsLines, dbLogsFollow = 200, false
 	storageCreateSites, storageCreateNoConnect = nil, false
 	authCreateSites, authCreateNoConnect = nil, false
 	authProject, authAppSlug = "", ""
