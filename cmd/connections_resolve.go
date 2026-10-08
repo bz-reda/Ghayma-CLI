@@ -92,21 +92,11 @@ func kindRank(kind string) int {
 // slug. The config may carry a name with no id — init writes `site_name: main`
 // before the backend materialises main — so the live list decides.
 func pickLiveSite(sites []api.Site, entry SiteEntry) (*api.Site, error) {
-	if entry.SiteID != "" {
-		for i := range sites {
-			if sites[i].ID == entry.SiteID {
-				return &sites[i], nil
-			}
-		}
-		return nil, fmt.Errorf("the linked site is no longer in this project — run 'ghayma link' to relink")
+	if site := configuredLiveSite(sites, entry); site != nil {
+		return site, nil
 	}
-	for _, want := range []string{entry.SiteSlug, entry.SiteName} {
-		if want == "" {
-			continue
-		}
-		if site, err := matchSite(sites, want); err == nil {
-			return site, nil
-		}
+	if entry.SiteID != "" {
+		return nil, fmt.Errorf("the linked site is no longer in this project — run 'ghayma link' to relink")
 	}
 	switch len(sites) {
 	case 0:
@@ -117,12 +107,35 @@ func pickLiveSite(sites []api.Site, entry SiteEntry) (*api.Site, error) {
 	return nil, fmt.Errorf("several sites in this project — pass --site <slug> (available: %s)", strings.Join(siteSlugs(sites), ", "))
 }
 
+// configuredLiveSite is the live site the config itself names: by id when it
+// carries one, else by slug, then name. nil when none of them matches.
+func configuredLiveSite(sites []api.Site, entry SiteEntry) *api.Site {
+	if entry.SiteID != "" {
+		for i := range sites {
+			if sites[i].ID == entry.SiteID {
+				return &sites[i]
+			}
+		}
+		return nil
+	}
+	for _, want := range []string{entry.SiteSlug, entry.SiteName} {
+		if want == "" {
+			continue
+		}
+		if site, err := matchSite(sites, want); err == nil {
+			return site
+		}
+	}
+	return nil
+}
+
 // linkedSiteNamed returns the live site --site names when it is the site the
-// config links (pickLiveSite), else nil. matchSite's precedence holds, so a
-// value that is another site's slug never passes as the linked site's name.
+// config names (configuredLiveSite), else nil. Strict on purpose: no "only
+// site" fallback, since the flag path can deploy to production. matchSite's
+// precedence holds, so another site's slug never passes as the linked name.
 func linkedSiteNamed(sites []api.Site, entry SiteEntry, siteFlag string) *api.Site {
-	linked, err := pickLiveSite(sites, entry)
-	if err != nil {
+	linked := configuredLiveSite(sites, entry)
+	if linked == nil {
 		return nil
 	}
 	named, err := matchSite(sites, siteFlag)

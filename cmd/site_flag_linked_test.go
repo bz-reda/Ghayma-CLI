@@ -37,9 +37,9 @@ func linkedByIDDir(t *testing.T) string {
 	return dir
 }
 
-// linkedStub serves the site list (or fails it with sitesStatus) plus the
-// given routes, recording each request with its body's site_id (bodySiteID).
-// A matched POST answers 201.
+// linkedStub serves the site list (linkedAndOther unless routes names another,
+// or fails it with sitesStatus) plus the given routes, recording each request
+// with its body's site_id (bodySiteID). A matched POST answers 201.
 func linkedStub(t *testing.T, sitesStatus int, routes map[string]string) (*httptest.Server, *[]string) {
 	t.Helper()
 	var seen []string
@@ -51,7 +51,11 @@ func linkedStub(t *testing.T, sitesStatus int, routes map[string]string) (*httpt
 		if route == "GET /api/v1/projects/p1/sites" {
 			w.WriteHeader(sitesStatus)
 			if sitesStatus == http.StatusOK {
-				io.WriteString(w, linkedAndOther)
+				sites, ok := routes[route]
+				if !ok {
+					sites = linkedAndOther
+				}
+				io.WriteString(w, sites)
 			}
 			return
 		}
@@ -166,6 +170,56 @@ func TestConnectionsRotate_UnreadableSiteListKeepsTheRefusal(t *testing.T) {
 	if want := linkedRefusal("rotate a credential for"); !strings.Contains(out, want) {
 		t.Errorf("output = %q; want today's refusal %q", out, want)
 	}
+	if lastExitCode != 1 {
+		t.Errorf("exit code = %d; want 1", lastExitCode)
+	}
+}
+
+// An expired session is not a mismatch: the user is told to log in again.
+func TestConnectionsRotate_ExpiredSessionShowsTheLoginHint(t *testing.T) {
+	ts, seen := linkedStub(t, http.StatusUnauthorized, rotateRoutes())
+	cliHome(t, ts.URL)
+	noPrompt(t)
+
+	out := runCLI(t, linkedByIDDir(t), "connections", "rotate", "database", "pg-main", "--site", "main", "--yes")
+
+	if rotated(*seen) {
+		t.Errorf("requests = %v; an expired session must not rotate", *seen)
+	}
+	if !strings.Contains(out, "run: ghayma login") {
+		t.Errorf("output = %q; want the login hint", out)
+	}
+	if strings.Contains(out, "linked to site") {
+		t.Errorf("output = %q; an expired session is not another site", out)
+	}
+	if lastExitCode == 0 {
+		t.Error("exit code = 0; want non-zero")
+	}
+}
+
+// A config naming a site the project no longer has is not settled by "the
+// only site": --site is strict, deploys hit production.
+func TestConnectionsRotate_StaleSlugIsNotSettledByTheOnlySite(t *testing.T) {
+	routes := rotateRoutes()
+	routes["GET /api/v1/projects/p1/sites"] = `[{"id":"s1","name":"storefront","slug":"main"}]`
+	ts, seen := linkedStub(t, http.StatusOK, routes)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{projectConfigName: `{"project_id":"p1","name":"shop","slug":"shop","site_slug":"web"}`})
+
+	out := runCLI(t, dir, "connections", "rotate", "database", "pg-main", "--site", "main", "--yes")
+
+	if rotated(*seen) {
+		t.Errorf("requests = %v; a stale link must not rotate the only site", *seen)
+	}
+	want := `this directory is linked to site "web"; run from the workspace root (or without --site) to rotate a credential for another site`
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q; want today's refusal %q", out, want)
+	}
+	if lastExitCode != 1 {
+		t.Errorf("exit code = %d; want 1", lastExitCode)
+	}
 }
 
 // --- the other commands behind the same guard --------------------------------
@@ -261,15 +315,10 @@ func TestDeploy_SiteFlagNamingAnotherSiteUploadsNothing(t *testing.T) {
 	}
 }
 
-// An app directory of a workspace manifest is pinned the same way: its entry
-// names the site by id only, and --site by slug must reach it.
-func TestEnvList_ManifestEntrySiteFlagNamingTheLinkedSite(t *testing.T) {
-	routes := map[string]string{
-		"GET /api/v1/projects/p1/sites/s1/env": `{"env_vars":{"API_URL":"https://example.test"},"build_time_keys":[]}`,
-	}
-	ts, seen := linkedStub(t, http.StatusOK, routes)
-	cliHome(t, ts.URL)
-	noPrompt(t)
+// idOnlyManifestApp is apps/web of a workspace manifest whose entries name
+// their sites by id only.
+func idOnlyManifestApp(t *testing.T) string {
+	t.Helper()
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{
 		"pnpm-workspace.yaml":     realPnpmWorkspaceYAML,
@@ -279,11 +328,40 @@ func TestEnvList_ManifestEntrySiteFlagNamingTheLinkedSite(t *testing.T) {
 			{"site_id":"s1","root_directory":"apps/web","upload":"app"},
 			{"site_id":"s2","root_directory":"apps/admin","upload":"app"}]}`,
 	})
+	return filepath.Join(root, "apps", "web")
+}
 
-	out := runCLI(t, filepath.Join(root, "apps", "web"), "env", "list", "--site", "main")
+// An app directory of a workspace manifest is pinned the same way: its entry
+// names the site by id only, and --site by slug must reach it.
+func TestEnvList_ManifestEntrySiteFlagNamingTheLinkedSite(t *testing.T) {
+	routes := map[string]string{
+		"GET /api/v1/projects/p1/sites/s1/env": `{"env_vars":{"API_URL":"https://example.test"},"build_time_keys":[]}`,
+	}
+	ts, seen := linkedStub(t, http.StatusOK, routes)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+
+	out := runCLI(t, idOnlyManifestApp(t), "env", "list", "--site", "main")
 
 	if !containsPath(*seen, "GET /api/v1/projects/p1/sites/s1/env") {
 		t.Errorf("requests = %v; want the entry's site env\n%s", *seen, out)
+	}
+}
+
+func TestEnvList_ManifestEntrySiteFlagNamingAnotherSiteIsRefused(t *testing.T) {
+	ts, seen := linkedStub(t, http.StatusOK, nil)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+
+	out := runCLI(t, idOnlyManifestApp(t), "env", "list", "--site", "admin")
+
+	if want := linkedRefusal("list env vars for"); !strings.Contains(out, want) {
+		t.Errorf("output = %q; want today's refusal %q", out, want)
+	}
+	for _, s := range *seen {
+		if strings.HasSuffix(s, "/env") {
+			t.Errorf("requests = %v; another site's --site must not read env", *seen)
+		}
 	}
 }
 
@@ -344,6 +422,7 @@ func TestLinkedSiteNamed(t *testing.T) {
 		{"unknown", SiteEntry{SiteID: "s1"}, "nope", ""},
 		{"linked site deleted", SiteEntry{SiteID: "gone"}, "main", ""},
 		{"linked by slug only", SiteEntry{SiteSlug: "main"}, "s1", "s1"},
+		{"linked by name only", SiteEntry{SiteName: "dashboard"}, "s2", "s2"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -355,6 +434,12 @@ func TestLinkedSiteNamed(t *testing.T) {
 				t.Errorf("linkedSiteNamed = %v; want %s", got, tc.want)
 			}
 		})
+	}
+
+	// pickLiveSite would take the only site for a stale slug; the flag path must not.
+	only := []api.Site{{ID: "s1", Name: "storefront", Slug: "main"}}
+	if got := linkedSiteNamed(only, SiteEntry{SiteSlug: "web"}, "main"); got != nil {
+		t.Errorf("linkedSiteNamed = %s; a stale slug must not settle on the only site", got.ID)
 	}
 }
 
