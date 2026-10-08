@@ -99,23 +99,34 @@ func dbTierSlugs(cat *api.MarketplaceCatalog) []string {
 	return slugs
 }
 
-// dbTypeMongoDB is the --type value for the engine gated per tier by the
-// catalog's mongo_enabled.
-const dbTypeMongoDB = "mongodb"
+// dbTypeMongoDB and dbTypeValkey are the --type values for the engines the
+// catalog gates per tier (mongo_enabled, valkey_enabled).
+const (
+	dbTypeMongoDB = "mongodb"
+	dbTypeValkey  = "valkey"
+)
+
+// engineAllows reports whether a tier may run the engine: Mongo and Valkey are
+// gated per tier, Postgres runs on every tier.
+func engineAllows(t api.CatalogDBTier, dbType string) bool {
+	switch dbType {
+	case dbTypeMongoDB:
+		return t.MongoAllowed()
+	case dbTypeValkey:
+		return t.ValkeyAllowed()
+	}
+	return true
+}
 
 // dbTiersForEngine returns the catalog's DB tiers, ordered by Position, that can
-// run the given engine. Every tier runs every engine except MongoDB, which the
-// catalog gates per tier. Fail-soft: a catalog with no mongo-enabled tier at all
-// degrades to the full ladder rather than an empty picker, leaving the server
-// the final word.
+// run the given engine. Fail-soft: a catalog with no enabled tier at all for a
+// gated engine degrades to the full ladder rather than an empty picker, leaving
+// the server the final word.
 func dbTiersForEngine(cat *api.MarketplaceCatalog, dbType string) []api.CatalogDBTier {
 	tiers := sortedDBTiers(cat)
-	if dbType != dbTypeMongoDB {
-		return tiers
-	}
 	allowed := make([]api.CatalogDBTier, 0, len(tiers))
 	for _, t := range tiers {
-		if t.MongoAllowed() {
+		if engineAllows(t, dbType) {
 			allowed = append(allowed, t)
 		}
 	}
@@ -125,10 +136,10 @@ func dbTiersForEngine(cat *api.MarketplaceCatalog, dbType string) []api.CatalogD
 	return allowed
 }
 
-// smallestMongoTier returns the lowest-Position tier that can run MongoDB.
-func smallestMongoTier(cat *api.MarketplaceCatalog) (api.CatalogDBTier, bool) {
+// smallestTierForEngine returns the lowest-Position tier that can run the engine.
+func smallestTierForEngine(cat *api.MarketplaceCatalog, dbType string) (api.CatalogDBTier, bool) {
 	for _, t := range sortedDBTiers(cat) {
-		if t.MongoAllowed() {
+		if engineAllows(t, dbType) {
 			return t, true
 		}
 	}
@@ -139,7 +150,7 @@ func smallestMongoTier(cat *api.MarketplaceCatalog) (api.CatalogDBTier, bool) {
 // (paas-api internal/databases/mongo_tier_gate.go) so the CLI-side rejection
 // reads exactly like the 400 the server would have returned.
 func mongoTierDisabledError(cat *api.MarketplaceCatalog, requested string) error {
-	smallest, ok := smallestMongoTier(cat)
+	smallest, ok := smallestTierForEngine(cat, dbTypeMongoDB)
 	if !ok {
 		return fmt.Errorf("the %q tier is too small to run MongoDB reliably; choose a larger tier", requested)
 	}
@@ -149,8 +160,8 @@ func mongoTierDisabledError(cat *api.MarketplaceCatalog, requested string) error
 
 // validateDBTier guards the --tier flag→slug value against the catalog (mirrors
 // validateAuthBracket). A blank value (server default) and a known slug pass; an
-// unknown slug errors, listing the available tiers, and a known-but-mongo-
-// disabled tier errors when the engine is mongodb. Only called when the catalog
+// unknown slug errors, listing the available tiers, and a known tier the engine
+// may not run on errors with the backend's wording. Only called when the catalog
 // is present — a missing catalog fails soft and defers to the backend.
 func validateDBTier(cat *api.MarketplaceCatalog, slug, dbType string) error {
 	if slug == "" {
@@ -160,10 +171,13 @@ func validateDBTier(cat *api.MarketplaceCatalog, slug, dbType string) error {
 	if !ok {
 		return fmt.Errorf("unknown tier %q; choose one of: %s", slug, strings.Join(dbTierSlugs(cat), ", "))
 	}
-	if dbType == dbTypeMongoDB && !tier.MongoAllowed() {
+	switch {
+	case engineAllows(tier, dbType):
+		return nil
+	case dbType == dbTypeMongoDB:
 		return mongoTierDisabledError(cat, slug)
 	}
-	return nil
+	return fmt.Errorf("valkey is not offered on this tier: choose a tier other than %q", slug)
 }
 
 // defaultDBTier / defaultBackupTier return the lowest-Position row — the
@@ -196,13 +210,11 @@ func defaultBackupTier(cat *api.MarketplaceCatalog) (api.CatalogBackupTier, bool
 }
 
 // defaultDBTierForEngine is the tier the server applies when none is given: the
-// smallest tier that can run the engine. MongoDB's floor sits above the
-// ladder's, so the preview must not quote the smallest tier overall.
+// smallest tier that can run the engine. A gated engine's floor can sit above
+// the ladder's, so the preview must not quote the smallest tier overall.
 func defaultDBTierForEngine(cat *api.MarketplaceCatalog, dbType string) (api.CatalogDBTier, bool) {
-	if dbType == dbTypeMongoDB {
-		if t, ok := smallestMongoTier(cat); ok {
-			return t, true
-		}
+	if t, ok := smallestTierForEngine(cat, dbType); ok {
+		return t, true
 	}
 	return defaultDBTier(cat)
 }

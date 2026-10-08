@@ -173,7 +173,8 @@ The allowlist is enforced at the front door, before any authentication, so it ca
 | Command | Description |
 |---|---|
 | `ghayma db create [name]` | Create a managed database |
-| `ghayma db create [name] --type mongodb` | Create with specific type (postgres, mongodb) |
+| `ghayma db create [name] --type mongodb` | Create with specific type (postgres, mongodb, valkey) |
+| `ghayma db create [name] --type valkey --mode <cache\|store>` | Create a Valkey (Redis-compatible: every Redis client works with it). `cache` (default) evicts the least-recently-used keys when memory is full; `store` never evicts and keeps an append-only file. Connected apps receive `REDIS_URL` and `VALKEY_URL` |
 | `ghayma db create [name] --tier <tier> --disk-gb <gb> --backup <schedule>` | Create with a specific compute tier, disk size, and backup schedule (weekly, daily, sixhourly); interactive pickers appear when you pass none of these |
 | `ghayma db create [name] --site <slug>` | Connect the new database to a site; repeat `--site` for several. Without it, a terminal asks about each site |
 | `ghayma db create [name] --no-connect` | Connect the new database to no site, without asking |
@@ -182,6 +183,8 @@ The allowlist is enforced at the front door, before any authentication, so it ca
 | `ghayma db resize [name] --backup <schedule>` | Change the backup schedule (weekly, daily, sixhourly) |
 | `ghayma db list` | List your databases, with any disk change in progress |
 | `ghayma db info [name]` | Show database details, including disk used and the smallest disk it can shrink to |
+| `ghayma db mode [name] <cache\|store>` | Switch a Valkey between cache and store; the database restarts (a few seconds of downtime) |
+| `ghayma db logs [name]` | Show a database's recent log lines |
 | `ghayma db credentials [name]` | Show connection credentials |
 | `ghayma db stop [name]` | Stop database (preserves data) |
 | `ghayma db start [name]` | Start a stopped database |

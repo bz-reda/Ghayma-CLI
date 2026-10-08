@@ -14,10 +14,11 @@ func TestPlanListeners_NumbersFromEachKindsBase(t *testing.T) {
 		{ID: "t1", Kind: "postgres", Name: "pg-one", Host: "pg-one.databases.svc.cluster.local", Port: 5432},
 		{ID: "t2", Kind: "mongodb", Name: "mg", Host: "mg.databases.svc.cluster.local", Port: 27017},
 		{ID: "t3", Kind: "postgres", Name: "pg-two", Host: "pg-two.databases.svc.cluster.local", Port: 5432},
+		{ID: "t4", Kind: "valkey", Name: "vk", Host: "vk-vk-d9.pdb-p.svc.cluster.local", Port: 6379},
 	}
 
 	got := planListeners(targets, allPortsFree)
-	want := []string{"127.0.0.1:15432", "127.0.0.1:15017", "127.0.0.1:15433"}
+	want := []string{"127.0.0.1:15432", "127.0.0.1:15017", "127.0.0.1:15433", "127.0.0.1:16379"}
 	if len(got) != len(want) {
 		t.Fatalf("planListeners returned %d listeners; want %d", len(got), len(want))
 	}

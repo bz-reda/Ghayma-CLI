@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -20,6 +21,7 @@ var dbCmd = &cobra.Command{
 }
 
 var dbCreateType string
+var dbCreateMode string
 var dbCreateReplicaSet bool
 var dbCreateTier string
 var dbCreateDiskGB int
@@ -35,8 +37,30 @@ var dbResizeNoWait bool
 var dbCreateCmd = &cobra.Command{
 	Use:   "create [name]",
 	Short: "Create a managed database",
-	Args:  requireOneArg("name", ""),
+	Long: `Create a managed database in the linked project.
+
+Engines (--type):
+  postgres  PostgreSQL (default)
+  mongodb   MongoDB (needs a larger tier)
+  valkey    Valkey 9.1, Redis-compatible: every Redis client works with it.
+            Connected apps receive REDIS_URL and VALKEY_URL.
+
+Valkey modes (--mode, Valkey only):
+  cache  (default) evicts the least-recently-used keys when memory is full;
+         snapshots only. For caches and sessions you can rebuild.
+  store  never evicts: writes fail when memory is full; a snapshot plus an
+         append-only file synced every second. For data you keep.
+  Change it later with: ghayma db mode <name> cache|store
+
+A Valkey disk grows but cannot shrink yet. Valkey has no public access yet:
+reach it from your machine with ghayma connect --local.`,
+	Args: requireOneArg("name", ""),
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := validateCreateEngine(dbCreateType, dbCreateMode); err != nil {
+			failf("%v", err)
+			return
+		}
+
 		cfg := config.Load()
 		if !cfg.LoggedIn() {
 			fmt.Println("❌ Please login first: ghayma login")
@@ -109,7 +133,7 @@ var dbCreateCmd = &cobra.Command{
 			printReservePreview(client, cat, projectID, dbCreateType, tier, diskGB, backup)
 		}
 
-		db, outcome, err := client.CreateDatabase(args[0], dbCreateType, projectID, replicaSet, tier, diskGB, backup, siteIDs, "")
+		db, outcome, err := client.CreateDatabase(args[0], dbCreateType, projectID, replicaSet, tier, diskGB, backup, siteIDs, dbCreateMode)
 		if err != nil {
 			fmt.Printf("❌ Failed to create database: %s\n", formatMarketplaceError(err))
 			return
@@ -123,8 +147,42 @@ var dbCreateCmd = &cobra.Command{
 		if db.Type == "mongodb" {
 			fmt.Printf("   Mode:    %s\n", mongoModeLabel(db.ReplicaSet))
 		}
+		if db.Type == dbTypeValkey {
+			fmt.Printf("   Mode:    %s — %s\n", db.ValkeyMode, valkeyModeMeaning(db.ValkeyMode))
+			fmt.Println("   Apps connect once it is running; they receive REDIS_URL and VALKEY_URL.")
+		}
 		printConnectOutcome(outcome, siteIDs, sites, note, "database", args[0])
 	},
+}
+
+// validateCreateEngine refuses, before any request, an engine the API would
+// refuse and a mode that cannot apply.
+func validateCreateEngine(dbType, mode string) error {
+	switch dbType {
+	case "postgres", dbTypeMongoDB, dbTypeValkey:
+	case "redis":
+		return errors.New("Redis is not offered. Create a Valkey database instead (--type valkey): it speaks the Redis protocol, so every Redis client works with it.")
+	default:
+		return fmt.Errorf("unknown database type %q: use postgres, mongodb or valkey", dbType)
+	}
+	if mode == "" {
+		return nil
+	}
+	if dbType != dbTypeValkey {
+		return errors.New("--mode applies to Valkey only")
+	}
+	if mode != "cache" && mode != "store" {
+		return fmt.Errorf("--mode must be cache or store, not %q", mode)
+	}
+	return nil
+}
+
+// valkeyModeMeaning is the one-line meaning of a Valkey mode.
+func valkeyModeMeaning(mode string) string {
+	if mode == "store" {
+		return "never evicts; writes fail when memory is full. Snapshot plus append-only file every second."
+	}
+	return "evicts the least-recently-used keys when memory is full. Snapshots only."
 }
 
 func mongoModeLabel(replicaSet bool) string {
@@ -398,7 +456,11 @@ var dbInfoCmd = &cobra.Command{
 		fmt.Printf("   Status:     %s\n", dbStatusText(*db))
 		fmt.Printf("   Host:       %s\n", db.Host)
 		fmt.Printf("   Port:       %d\n", db.Port)
-		if db.DBName != "" {
+		if db.Type == dbTypeValkey {
+			// The engine's own user is the platform's; each app has its own.
+			fmt.Printf("   Mode:       %s — %s\n", db.ValkeyMode, valkeyModeMeaning(db.ValkeyMode))
+			fmt.Println("   Connections: each connected app has its own user (REDIS_URL / VALKEY_URL)")
+		} else if db.DBName != "" {
 			fmt.Printf("   Database:   %s\n", db.DBName)
 			fmt.Printf("   Username:   %s\n", db.Username)
 		}
@@ -608,12 +670,12 @@ var dbRotateCmd = &cobra.Command{
 }
 
 func init() {
-	// Redis was withdrawn as a managed product on 2026-07-27 and the API
-	// rejects it at create; the flag is passed through unvalidated, so listing
-	// it here only buys the user a server-side failure.
-	dbCreateCmd.Flags().StringVarP(&dbCreateType, "type", "t", "postgres", "Database type: postgres, mongodb")
+	// Redis was withdrawn as a managed product on 2026-07-27; the create refuses
+	// it locally and points at Valkey, so it is never offered here.
+	dbCreateCmd.Flags().StringVarP(&dbCreateType, "type", "t", "postgres", "Database type: postgres, mongodb, valkey")
+	dbCreateCmd.Flags().StringVar(&dbCreateMode, "mode", "", "Valkey only: cache (default) or store")
 	dbCreateCmd.Flags().BoolVar(&dbCreateReplicaSet, "replica-set", true, "MongoDB only: run as a single-node replica set (rs0). Default true so multi-document transactions work. Pass --replica-set=false for a standalone mongod.")
-	dbCreateCmd.Flags().StringVar(&dbCreateTier, "tier", "", "Database tier (e.g. xs, s, m, l, xl). MongoDB needs a larger tier — the picker lists only the Mongo-capable ones. Interactive picker when omitted; server default if no catalog.")
+	dbCreateCmd.Flags().StringVar(&dbCreateTier, "tier", "", "Database tier (e.g. xs, s, m, l, xl). MongoDB and Valkey run only on the tiers that allow them — the picker lists only those. Interactive picker when omitted; server default if no catalog.")
 	dbCreateCmd.Flags().IntVar(&dbCreateDiskGB, "disk-gb", 0, "Persistent disk in GB, priced in points. Server default (from size) when omitted.")
 	dbCreateCmd.Flags().StringVar(&dbCreateBackup, "backup", "", "Backup schedule: weekly, daily, sixhourly. Interactive picker when omitted; weekly default if no catalog.")
 	dbCreateCmd.Flags().StringArrayVar(&dbCreateSites, "site", nil, "Connect the new database to this site (slug); repeat for several. Asked interactively when omitted.")

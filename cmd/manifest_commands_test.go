@@ -66,6 +66,7 @@ func resetCommandFlags() {
 		}
 	}
 	dbCreateSites, dbCreateNoConnect = nil, false
+	dbCreateType, dbCreateMode = "postgres", ""
 	storageCreateSites, storageCreateNoConnect = nil, false
 	authCreateSites, authCreateNoConnect = nil, false
 	authProject, authAppSlug = "", ""
@@ -75,6 +76,12 @@ func resetCommandFlags() {
 			if f := c.Flags().Lookup(name); f != nil {
 				f.Changed = false
 			}
+		}
+	}
+	// `db create`'s engine and Valkey mode.
+	for _, name := range []string{"type", "mode"} {
+		if f := dbCreateCmd.Flags().Lookup(name); f != nil {
+			f.Changed = false
 		}
 	}
 	// `auth create` requires --app-id, which cobra checks through Changed.

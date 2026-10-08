@@ -21,7 +21,7 @@ func TestDBCreateTypeHelp_NoRetiredEngines(t *testing.T) {
 	if strings.Contains(strings.ToLower(f.Usage), "redis") {
 		t.Errorf("--type help still offers redis, withdrawn 2026-07-27 and rejected by the API: %q", f.Usage)
 	}
-	for _, engine := range []string{"postgres", "mongodb"} {
+	for _, engine := range []string{"postgres", "mongodb", "valkey"} {
 		if !strings.Contains(f.Usage, engine) {
 			t.Errorf("--type help must still list %q; it is creatable today: %q", engine, f.Usage)
 		}

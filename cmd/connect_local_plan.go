@@ -30,6 +30,8 @@ func listenerBase(kind string) int {
 		return 15017
 	case "postgres":
 		return 15432
+	case "valkey":
+		return 16379
 	default:
 		return 15100
 	}
