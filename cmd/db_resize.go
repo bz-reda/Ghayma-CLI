@@ -18,6 +18,7 @@ const (
 	dbStatusRunning  = "running"
 	dbStatusResizing = "resizing"
 	dbStatusError    = "error"
+	dbStatusStopped  = "stopped"
 )
 
 // Vars so tests need not sit out real polls.
@@ -66,11 +67,13 @@ func diskChangeHeadline(change api.DatabaseResize) string {
 	return fmt.Sprintf("Growing to %d GB: the database stays online.", change.TargetDiskGB)
 }
 
-// dbStatusText is a database's status with its disk change: the target and
-// phase while it runs, the error once one failed.
+// dbStatusText is a database's status with why it is in error, or with its disk
+// change: the target and phase while it runs, the error once one failed.
 func dbStatusText(db api.DatabaseInfo) string {
 	r := db.Resize
 	switch {
+	case db.Status == "error" && db.StatusMessage != "":
+		return fmt.Sprintf("%s · %s", db.Status, oneLine(db.StatusMessage))
 	case r != nil && r.Error != "":
 		return fmt.Sprintf("%s · disk change to %d GB failed: %s", db.Status, r.TargetDiskGB, oneLine(r.Error))
 	case r != nil && db.Status == dbStatusResizing:

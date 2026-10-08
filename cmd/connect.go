@@ -211,6 +211,10 @@ func runConnect(cmd *cobra.Command, args []string) {
 	}
 
 	row, err := client.AddSiteConnection(target.ProjectID, target.Site.ID, plan.Item)
+	if hasAPICode(err, api.CodeDatabaseNotRunning) {
+		failf("%s", notRunningToConnect(args[1]))
+		return
+	}
 	if err != nil {
 		failf("Failed to connect: %v", err)
 		return

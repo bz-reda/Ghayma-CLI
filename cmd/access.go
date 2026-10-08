@@ -156,7 +156,7 @@ func resolveAccessTarget(client *api.Client, kindArg, name string) (*accessTarge
 	if err != nil {
 		return nil, err
 	}
-	ids, names, err := projectResources(client, projectID, kind)
+	ids, names, engines, err := projectResources(client, projectID, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -164,37 +164,40 @@ func resolveAccessTarget(client *api.Client, kindArg, name string) (*accessTarge
 	if err != nil {
 		return nil, err
 	}
-	return &accessTarget{ProjectID: projectID, ProjectName: projectName, Kind: kind, ResourceID: id, ResourceName: resolved}, nil
+	return &accessTarget{ProjectID: projectID, ProjectName: projectName, Kind: kind, ResourceID: id, ResourceName: resolved, Engine: engines[id]}, nil
 }
 
 // projectResources lists one kind's resources IN THIS PROJECT. The listings are
 // account-wide, so they are filtered by project here: a name is only unique
 // inside a project, and acting on a same-named resource of another one would be
-// the worst possible way to be wrong.
-func projectResources(client *api.Client, projectID, kind string) ([]string, []string, error) {
+// the worst possible way to be wrong. engines maps a database's id to its
+// engine; it is nil for buckets.
+func projectResources(client *api.Client, projectID, kind string) ([]string, []string, map[string]string, error) {
 	var ids, names []string
 	if kind == "bucket" {
 		buckets, err := client.ListBuckets()
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to list buckets: %v", err)
+			return nil, nil, nil, fmt.Errorf("failed to list buckets: %v", err)
 		}
 		for _, b := range buckets {
 			if b.ProjectID == projectID {
 				ids, names = append(ids, b.ID), append(names, b.Name)
 			}
 		}
-		return ids, names, nil
+		return ids, names, nil, nil
 	}
 	databases, err := client.ListDatabases()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to list databases: %v", err)
+		return nil, nil, nil, fmt.Errorf("failed to list databases: %v", err)
 	}
+	engines := map[string]string{}
 	for _, db := range databases {
 		if db.ProjectID == projectID {
 			ids, names = append(ids, db.ID), append(names, db.Name)
+			engines[db.ID] = db.Type
 		}
 	}
-	return ids, names, nil
+	return ids, names, engines, nil
 }
 
 // resolvePrincipal is the second resolution every mutating command does: the

@@ -145,6 +145,30 @@ func TestAddSiteConnection_SurfacesServerError(t *testing.T) {
 	}
 }
 
+// A Valkey that is not running yet refuses a connection with a code the
+// command branches on; the sentence stays what it prints.
+func TestConnectionRefusalsKeepCode(t *testing.T) {
+	const msg = "the Valkey database is not running yet; connect the site once it is running"
+	ts := jsonStatusServer(t, http.StatusConflict, `{"error":"`+msg+`","code":"database_not_running"}`)
+	c := newTestClient(ts.URL)
+	for name, call := range map[string]func() error{
+		"add": func() error {
+			_, err := c.AddSiteConnection("p1", "s1", ConnectionItem{Kind: "database", ResourceID: "d1"})
+			return err
+		},
+		"sites": func() error { _, err := c.SetDatabaseSites("d1", []string{"s1"}); return err },
+	} {
+		var apiErr *APIError
+		err := call()
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict || apiErr.Code != CodeDatabaseNotRunning {
+			t.Errorf("%s: err = %#v", name, err)
+		}
+		if err != nil && err.Error() != msg {
+			t.Errorf("%s: message = %q", name, err.Error())
+		}
+	}
+}
+
 func TestRemoveSiteConnection_ReportsRemoved(t *testing.T) {
 	for _, removed := range []bool{true, false} {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

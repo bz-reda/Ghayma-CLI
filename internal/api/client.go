@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1095,6 +1096,12 @@ type DatabaseInfo struct {
 	// Resize is the disk change in progress (status "resizing") or the last
 	// one that failed.
 	Resize *DatabaseResize `json:"resize,omitempty"`
+	// ValkeyMode is "cache" or "store" on a Valkey, empty for other engines.
+	ValkeyMode string `json:"valkey_mode,omitempty"`
+	// StatusMessage says why the database is in "error".
+	StatusMessage string `json:"status_message,omitempty"`
+	// PendingConnections are the site ids that connect once the engine is ready.
+	PendingConnections []string `json:"pending_connections,omitempty"`
 }
 
 // DatabaseResize is a database's disk change. Error is set once a change
@@ -1114,6 +1121,18 @@ const (
 	CodeResizeInProgress   = "resize_in_progress"
 	CodeDatabaseNotRunning = "database_not_running"
 	CodeStorageCapacity    = "storage_capacity"
+)
+
+// Valkey and database-log refusal codes.
+const (
+	CodeShrinkUnsupported       = "shrink_unsupported"
+	CodeNoSharedCredential      = "no_shared_credential"
+	CodePublicAccessUnavailable = "public_access_unavailable"
+	CodeUseValkey               = "use_valkey"
+	CodeValkeyDisabled          = "valkey_disabled"
+	CodeInvalidMode             = "invalid_mode"
+	CodeNotValkey               = "not_valkey"
+	CodeNoPod                   = "no_pod"
 )
 
 // DiskChangeError is a refused disk change, carrying the server's code and
@@ -1149,7 +1168,7 @@ func diskChangeError(status int, body []byte) *DiskChangeError {
 		return nil
 	}
 	switch r.Code {
-	case CodeDiskTooSmall, CodeResizeInProgress, CodeDatabaseNotRunning, CodeStorageCapacity:
+	case CodeDiskTooSmall, CodeResizeInProgress, CodeDatabaseNotRunning, CodeStorageCapacity, CodeShrinkUnsupported:
 		return &DiskChangeError{
 			Status:        status,
 			Code:          r.Code,
@@ -1176,7 +1195,9 @@ func diskChangeError(status int, body []byte) *DiskChangeError {
 // connectSiteIDs are the sites to connect the new database to (none when
 // empty); the returned ConnectChoice says what became of each, nil when the
 // server reported none (see ConnectChoice).
-func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool, tierSlug string, diskGB int, backupSlug string, connectSiteIDs []string) (*DatabaseInfo, *ConnectChoice, error) {
+//
+// mode is the Valkey mode, sent only when set.
+func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool, tierSlug string, diskGB int, backupSlug string, connectSiteIDs []string, mode string) (*DatabaseInfo, *ConnectChoice, error) {
 	payload := map[string]interface{}{"name": name, "type": dbType, "project_id": projectID, "connect_site_ids": siteChoice(connectSiteIDs)}
 	if replicaSet != nil {
 		payload["replica_set"] = *replicaSet
@@ -1189,6 +1210,9 @@ func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool
 	}
 	if backupSlug != "" {
 		payload["backup_tier_slug"] = backupSlug
+	}
+	if mode != "" {
+		payload["mode"] = mode
 	}
 	body, _ := json.Marshal(payload)
 	resp, err := c.authRequest("POST", "/api/v1/databases", bytes.NewReader(body))
@@ -1298,7 +1322,11 @@ func (c *Client) DeleteDatabase(id string) error {
 // Helpers
 
 func (c *Client) authRequest(method, path string, body io.Reader) (*http.Response, error) {
-	req, err := http.NewRequest(method, c.cfg.APIHost+path, body)
+	return c.authRequestContext(context.Background(), method, path, body)
+}
+
+func (c *Client) authRequestContext(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.cfg.APIHost+path, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1353,9 +1381,8 @@ func (c *Client) GetDatabaseCredentials(id string) (map[string]interface{}, erro
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s", result["error"])
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -1366,13 +1393,7 @@ func (c *Client) StopDatabase(id string) error {
 		return err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return fmt.Errorf("%s", errResp["error"])
-	}
-	return nil
+	return c.decodeJSON(resp, nil)
 }
 
 func (c *Client) StartDatabase(id string) error {
@@ -1381,13 +1402,7 @@ func (c *Client) StartDatabase(id string) error {
 		return err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return fmt.Errorf("%s", errResp["error"])
-	}
-	return nil
+	return c.decodeJSON(resp, nil)
 }
 
 func (c *Client) RotatePassword(id string) (map[string]interface{}, error) {
@@ -1398,9 +1413,8 @@ func (c *Client) RotatePassword(id string) (map[string]interface{}, error) {
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s", result["error"])
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

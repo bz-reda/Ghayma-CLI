@@ -172,3 +172,79 @@ func TestPromptDBSelections_PassesEngineToTierPicker(t *testing.T) {
 		t.Errorf("preselected tier = %q; want the smallest mongo-capable tier m", tier)
 	}
 }
+
+// Valkey is gated per tier by valkey_enabled, through the same picker, guard
+// and preview as MongoDB. Any tier can be off, so there is no "starts at" floor.
+
+// valkeyGatedCatalog is fixtureCatalog with Valkey off on the xs tier.
+func valkeyGatedCatalog() *api.MarketplaceCatalog {
+	cat := fixtureCatalog()
+	cat.DBTiers[0].ValkeyEnabled = boolPtr(false)
+	return cat
+}
+
+func noValkeyCatalog() *api.MarketplaceCatalog {
+	cat := fixtureCatalog()
+	for i := range cat.DBTiers {
+		cat.DBTiers[i].ValkeyEnabled = boolPtr(false)
+	}
+	return cat
+}
+
+func TestDBTiersForEngine_Valkey(t *testing.T) {
+	cases := []struct {
+		name   string
+		cat    *api.MarketplaceCatalog
+		dbType string
+		want   []string
+	}{
+		{"valkey sees only valkey-enabled tiers", valkeyGatedCatalog(), dbTypeValkey, []string{"s", "m"}},
+		{"postgres keeps the gated tier", valkeyGatedCatalog(), "postgres", []string{"xs", "s", "m"}},
+		{"absent flag means allowed", fixtureCatalog(), dbTypeValkey, []string{"xs", "s", "m"}},
+		{"no enabled tier degrades to the full ladder", noValkeyCatalog(), dbTypeValkey, []string{"xs", "s", "m"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := tierSlugsOf(dbTiersForEngine(c.cat, c.dbType))
+			if strings.Join(got, ",") != strings.Join(c.want, ",") {
+				t.Errorf("dbTiersForEngine = %v; want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestValidateDBTier_ValkeyGate(t *testing.T) {
+	err := validateDBTier(valkeyGatedCatalog(), "xs", dbTypeValkey)
+	if err == nil || !strings.Contains(err.Error(), "valkey is not offered on this tier") || !strings.Contains(err.Error(), `"xs"`) {
+		t.Errorf("valkey on a disabled tier: err = %v", err)
+	}
+	if err := validateDBTier(valkeyGatedCatalog(), "s", dbTypeValkey); err != nil {
+		t.Errorf("valkey on an enabled tier: %v", err)
+	}
+	if err := validateDBTier(fixtureCatalog(), "xs", dbTypeValkey); err != nil {
+		t.Errorf("absent flag means allowed: %v", err)
+	}
+	if err := validateDBTier(valkeyGatedCatalog(), "xs", dbTypeMongoDB); err != nil {
+		t.Errorf("the valkey flag must not gate mongo: %v", err)
+	}
+}
+
+func TestDefaultDBTierForEngine_Valkey(t *testing.T) {
+	cases := []struct {
+		name string
+		cat  *api.MarketplaceCatalog
+		want string
+	}{
+		{"smallest valkey-enabled tier", valkeyGatedCatalog(), "s"},
+		{"absent flag defaults to the smallest tier", fixtureCatalog(), "xs"},
+		{"no enabled tier falls back to the smallest tier", noValkeyCatalog(), "xs"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tier, ok := defaultDBTierForEngine(c.cat, dbTypeValkey)
+			if !ok || tier.Slug != c.want {
+				t.Errorf("defaultDBTierForEngine(valkey) = %q, %v; want %q", tier.Slug, ok, c.want)
+			}
+		})
+	}
+}

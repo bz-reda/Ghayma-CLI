@@ -60,7 +60,9 @@ func serviceRotateHint(kind, name string) string {
 }
 
 // rotateFailure turns the server's refusal into the sentence that names the
-// way out. 409 is a connection served by the service's shared credential
+// way out. A database_not_running code is a Valkey that is not running; it is
+// checked first because it is also a 409. A code-less 409 is a
+// connection served by the service's shared credential
 // (standalone MongoDB, engines from before per-connection credentials): there
 // is nothing of its own to rotate, so the service-level command is the one to
 // run. 503 is an engine that cannot be reached right now — a stopped database
@@ -69,6 +71,9 @@ func serviceRotateHint(kind, name string) string {
 func rotateFailure(err error, kind, name string) string {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
+		if apiErr.Code == api.CodeDatabaseNotRunning {
+			return fmt.Sprintf("%s is not running, so this app's password cannot be rotated now. Start it if it is stopped, or wait until ghayma db info %s shows running.", name, name)
+		}
 		switch apiErr.Status {
 		case http.StatusConflict:
 			return fmt.Sprintf("This connection uses the %s's shared credential — it has nothing of its own to rotate.\n   Rotate that credential with: %s", kindLabel(kind), serviceRotateHint(kind, name))
