@@ -24,10 +24,12 @@ func runDomainCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	client := api.NewClient(cfg)
+
 	// A domain is attached to ONE site, so this resolves the same way deploy
 	// does: the app directory pins it, a workspace root asks or takes --site.
 	cwd, _ := os.Getwd()
-	ctx, err := resolveSiteContext(cwd, domainSite, "attach the domain to")
+	ctx, err := resolveSiteContextLive(client, cwd, domainSite, "attach the domain to")
 	if err != nil {
 		switch {
 		case errors.Is(err, errAttachCancelled):
@@ -40,7 +42,6 @@ func runDomainCreate(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	client := api.NewClient(cfg)
 	domain := args[0]
 
 	// A domain is served by a site. A config naming none is either a site-less

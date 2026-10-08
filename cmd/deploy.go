@@ -194,11 +194,12 @@ Examples:
 		}
 
 		cwd, _ := os.Getwd()
+		client := api.NewClient(cfg)
 
 		// One resolver decides which site this deploy targets: the per-app
 		// config in CWD, the workspace manifest (--site, the only site, or a
 		// question), or this directory's entry in an ancestor manifest.
-		ctx, err := resolveSiteContext(cwd, deploySite, "deploy")
+		ctx, err := resolveSiteContextLive(client, cwd, deploySite, "deploy")
 		if err != nil {
 			if errors.Is(err, errAttachCancelled) {
 				fmt.Println("❌ Cancelled")
@@ -250,14 +251,12 @@ Examples:
 
 			// Re-enter the resolver at the chosen app dir so the upload plan
 			// is derived in exactly one place.
-			ctx, err = resolveSiteContext(selected.Dir, deploySite, "deploy")
+			ctx, err = resolveSiteContextLive(client, selected.Dir, deploySite, "deploy")
 			if err != nil {
 				fmt.Printf("❌ %v\n", err)
 				return
 			}
 		}
-
-		client := api.NewClient(cfg)
 
 		// An image deploy ships what was already pushed to the registry, so it
 		// branches out before every line of the upload path below: no tarball,

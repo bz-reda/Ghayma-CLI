@@ -117,6 +117,21 @@ func pickLiveSite(sites []api.Site, entry SiteEntry) (*api.Site, error) {
 	return nil, fmt.Errorf("several sites in this project — pass --site <slug> (available: %s)", strings.Join(siteSlugs(sites), ", "))
 }
 
+// linkedSiteNamed returns the live site --site names when it is the site the
+// config links (pickLiveSite), else nil. matchSite's precedence holds, so a
+// value that is another site's slug never passes as the linked site's name.
+func linkedSiteNamed(sites []api.Site, entry SiteEntry, siteFlag string) *api.Site {
+	linked, err := pickLiveSite(sites, entry)
+	if err != nil {
+		return nil
+	}
+	named, err := matchSite(sites, siteFlag)
+	if err != nil || named.ID != linked.ID {
+		return nil
+	}
+	return named
+}
+
 func siteSlugs(sites []api.Site) []string {
 	out := make([]string, len(sites))
 	for i, s := range sites {

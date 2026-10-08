@@ -70,7 +70,7 @@ func envSiteContext(client *api.Client, verb string) (projectID, siteID, name st
 		return "", "", "", err
 	}
 
-	ctx, err := resolveSiteContext(cwd, envSite, verb)
+	ctx, err := resolveSiteContextLive(client, cwd, envSite, verb)
 	switch {
 	case errors.Is(err, errAttachCancelled):
 		return "", "", "", errors.New("Cancelled")
