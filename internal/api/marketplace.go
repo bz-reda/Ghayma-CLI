@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 )
@@ -36,12 +35,21 @@ type CatalogDBTier struct {
 	// older backend that omits the field reads as "allowed" rather than
 	// filtering every tier out.
 	MongoEnabled *bool `json:"mongo_enabled"`
+	// ValkeyEnabled gates whether Valkey may run on this tier. A pointer so an
+	// older backend that omits the field reads as "allowed".
+	ValkeyEnabled *bool `json:"valkey_enabled"`
 }
 
 // MongoAllowed reports whether MongoDB may run on this tier. An absent
 // mongo_enabled (pre-gate backend) means allowed.
 func (t CatalogDBTier) MongoAllowed() bool {
 	return t.MongoEnabled == nil || *t.MongoEnabled
+}
+
+// ValkeyAllowed reports whether Valkey may run on this tier. An absent
+// valkey_enabled (pre-gate backend) means allowed.
+func (t CatalogDBTier) ValkeyAllowed() bool {
+	return t.ValkeyEnabled == nil || *t.ValkeyEnabled
 }
 
 // CatalogAuthTier is one auth-tier row. SMS pricing is deliberately absent: the
@@ -179,8 +187,8 @@ func (e *MarketplaceError) Error() string { return e.Message }
 // classifyAPIError maps a (status, body) pair to a typed error. A 409/503 that
 // matches a known marketplace class becomes a *MarketplaceError with the
 // matching Kind; any other 409/503 becomes a *MarketplaceError with Kind
-// "other" (so callers can still show Message); everything else falls back to a
-// plain error carrying the server message.
+// "other" (so callers can still show Message); everything else falls back to an
+// *APIError carrying the server message and code.
 //
 // Classification is by (status, message substring), verified against the live
 // handlers (internal/sites/handler.go, internal/databases/handler.go):
@@ -214,7 +222,7 @@ func classifyAPIError(status int, body []byte) error {
 		}
 		return &MarketplaceError{Kind: "other", Message: msg}
 	default:
-		return fmt.Errorf("%s", msg)
+		return &APIError{Status: status, Message: msg, Code: errorCodeFromBody(body)}
 	}
 }
 
@@ -228,4 +236,13 @@ func errorMessageFromBody(body []byte) string {
 		return errResp.Error
 	}
 	return string(body)
+}
+
+// errorCodeFromBody is the `code` of an error body, empty when it has none.
+func errorCodeFromBody(body []byte) string {
+	var r struct {
+		Code string `json:"code"`
+	}
+	json.Unmarshal(body, &r)
+	return r.Code
 }

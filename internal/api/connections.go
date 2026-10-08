@@ -191,7 +191,9 @@ func (c *Client) GetSiteConnections(projectID, siteID string) (*SiteConnections,
 }
 
 // AddSiteConnection connects one resource, or changes its level when it is
-// already connected (POST …/sites/:siteId/connections → 201 with the row).
+// already connected (POST …/sites/:siteId/connections → 201 with the row). A
+// refusal is *APIError with the server's code (database_not_running for a
+// Valkey still starting).
 func (c *Client) AddSiteConnection(projectID, siteID string, item ConnectionItem) (*Connection, error) {
 	body, _ := json.Marshal(item)
 	resp, err := c.authRequest("POST", "/api/v1/projects/"+projectID+"/sites/"+siteID+"/connections", bytes.NewReader(body))
@@ -200,7 +202,7 @@ func (c *Client) AddSiteConnection(projectID, siteID string, item ConnectionItem
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, decodeAPIError(resp)
+		return nil, c.decodeJSON(resp, nil)
 	}
 	var row Connection
 	if err := json.NewDecoder(resp.Body).Decode(&row); err != nil {

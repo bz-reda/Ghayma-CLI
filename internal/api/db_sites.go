@@ -55,7 +55,8 @@ func (c *Client) ListDatabaseSites(dbID string) ([]DatabaseSiteAccess, error) {
 // slice is normalized to [] so the wire body is {"site_ids":[]}, never null (the
 // backend reads null differently from an explicit empty set). It returns the
 // same shape as ListDatabaseSites; a non-2xx (e.g. 400 unlinked /
-// site-not-in-project) surfaces the server's message via decodeAPIError.
+// site-not-in-project, 409 database_not_running) is *APIError carrying the
+// server's message and code.
 func (c *Client) SetDatabaseSites(dbID string, siteIDs []string) ([]DatabaseSiteAccess, error) {
 	if siteIDs == nil {
 		siteIDs = []string{}
@@ -68,7 +69,7 @@ func (c *Client) SetDatabaseSites(dbID string, siteIDs []string) ([]DatabaseSite
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, decodeAPIError(resp)
+		return nil, c.decodeJSON(resp, nil)
 	}
 
 	var out struct {

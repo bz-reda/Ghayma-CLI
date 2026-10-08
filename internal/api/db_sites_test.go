@@ -120,7 +120,7 @@ func TestSetDatabaseSites_EmptyDenyAll(t *testing.T) {
 	}
 }
 
-// A non-2xx PUT surfaces the server's {"error":...} message via decodeAPIError.
+// A non-2xx PUT surfaces the server's {"error":...} message.
 func TestSetDatabaseSites_ErrorPassthrough(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
