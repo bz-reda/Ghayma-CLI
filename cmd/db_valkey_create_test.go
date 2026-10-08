@@ -60,7 +60,7 @@ func TestDBCreate_ValkeySendsModeAndPrintsIt(t *testing.T) {
 	}
 	for _, want := range []string{
 		"   Mode:    store — never evicts; writes fail when memory is full. Snapshot plus append-only file every second.\n",
-		"   Apps connect once it is running; they receive REDIS_URL and VALKEY_URL.\n",
+		"   Connected apps receive REDIS_URL and VALKEY_URL.\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
@@ -101,10 +101,10 @@ func TestDBCreate_RefusesRedisAndStrayModeLocally(t *testing.T) {
 	}
 }
 
-// A Valkey's info shows its mode and never the platform user; postgres keeps
-// its database and username lines.
+// A Valkey's info shows its mode and never the platform user nor a shrink
+// target (its disk cannot shrink); postgres keeps its database and username lines.
 func TestDBInfo_ValkeyShowsModeNotThePlatformUser(t *testing.T) {
-	valkey := `{"id":"d9","name":"cache","type":"valkey","version":"9.1","status":"running","valkey_mode":"store","host":"vk-cache-d9.pdb-p.svc.cluster.local","port":6379,"db_name":"0","username":"ghayma","storage_mb":1024,"cpu_limit":"500m","memory_limit":"512Mi","project_id":"p1"}`
+	valkey := `{"id":"d9","name":"cache","type":"valkey","version":"9.1","status":"running","valkey_mode":"store","host":"vk-cache-d9.pdb-p.svc.cluster.local","port":6379,"db_name":"0","username":"ghayma","storage_mb":1024,"disk_used_bytes":1288490188,"min_disk_gb":2,"cpu_limit":"500m","memory_limit":"512Mi","project_id":"p1"}`
 	ts, _ := newDBStub(t, valkey+","+pgRow("running", 10, ""), 200, "")
 	cliHome(t, ts.URL)
 
@@ -112,20 +112,21 @@ func TestDBInfo_ValkeyShowsModeNotThePlatformUser(t *testing.T) {
 	for _, want := range []string{
 		"   Type:       valkey 9.1\n",
 		"   Mode:       store — never evicts; writes fail when memory is full. Snapshot plus append-only file every second.\n",
-		"   Connections: each connected app has its own user (REDIS_URL / VALKEY_URL)\n",
+		"   Users:      each connected app has its own user (REDIS_URL / VALKEY_URL)\n",
+		"   Disk used:  1.2 GB\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
-	for _, never := range []string{"   Username:", "ghayma", "   Database:"} {
+	for _, never := range []string{"   Username:", "ghayma", "   Database:", "smallest disk"} {
 		if strings.Contains(out, never) {
 			t.Errorf("a Valkey's info must not show %q:\n%s", never, out)
 		}
 	}
 
 	out = runCLI(t, t.TempDir(), "db", "info", "pg")
-	if strings.Contains(out, "Mode:") || strings.Contains(out, "Connections:") {
+	if strings.Contains(out, "Mode:") || strings.Contains(out, "Users:") {
 		t.Errorf("postgres info gained Valkey lines:\n%s", out)
 	}
 }

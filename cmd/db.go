@@ -149,7 +149,7 @@ reach it from your machine with ghayma connect --local.`,
 		}
 		if db.Type == dbTypeValkey {
 			fmt.Printf("   Mode:    %s — %s\n", db.ValkeyMode, valkeyModeMeaning(db.ValkeyMode))
-			fmt.Println("   Apps connect once it is running; they receive REDIS_URL and VALKEY_URL.")
+			fmt.Println("   Connected apps receive REDIS_URL and VALKEY_URL.")
 		}
 		printConnectOutcome(outcome, siteIDs, sites, note, "database", args[0])
 	},
@@ -459,7 +459,7 @@ var dbInfoCmd = &cobra.Command{
 		if db.Type == dbTypeValkey {
 			// The engine's own user is the platform's; each app has its own.
 			fmt.Printf("   Mode:       %s — %s\n", db.ValkeyMode, valkeyModeMeaning(db.ValkeyMode))
-			fmt.Println("   Connections: each connected app has its own user (REDIS_URL / VALKEY_URL)")
+			fmt.Println("   Users:      each connected app has its own user (REDIS_URL / VALKEY_URL)")
 		} else if db.DBName != "" {
 			fmt.Printf("   Database:   %s\n", db.DBName)
 			fmt.Printf("   Username:   %s\n", db.Username)
@@ -467,7 +467,8 @@ var dbInfoCmd = &cobra.Command{
 		fmt.Printf("   Storage:    %d MB\n", db.StorageMB)
 		if db.DiskUsedBytes > 0 {
 			used := formatBytes(db.DiskUsedBytes)
-			if db.MinDiskGB != nil {
+			// A Valkey disk cannot shrink, so it has no shrink target to show.
+			if db.MinDiskGB != nil && db.Type != dbTypeValkey {
 				used += fmt.Sprintf(" (smallest disk now: %d GB)", *db.MinDiskGB)
 			}
 			fmt.Printf("   Disk used:  %s\n", used)

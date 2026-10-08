@@ -176,8 +176,10 @@ func validateDBTier(cat *api.MarketplaceCatalog, slug, dbType string) error {
 		return nil
 	case dbType == dbTypeMongoDB:
 		return mongoTierDisabledError(cat, slug)
+	case dbType == dbTypeValkey:
+		return fmt.Errorf("valkey is not offered on this tier: choose a tier other than %q", slug)
 	}
-	return fmt.Errorf("valkey is not offered on this tier: choose a tier other than %q", slug)
+	return nil
 }
 
 // defaultDBTier / defaultBackupTier return the lowest-Position row — the
