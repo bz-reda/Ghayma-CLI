@@ -98,9 +98,12 @@ type SiteContext struct {
 	// (the platform creates main lazily) while every other site-scoped command
 	// says so and stops. See cmd/nosite.go.
 	NoSite bool
-	// siteFlagUnconfirmed records that the --site guard passed on a key the
-	// live list may give to another site; resolveSiteContextLive confirms it.
+	// siteFlagUnconfirmed records that --site matched on a key the live list
+	// may give to another site; resolveSiteContextLive confirms it.
 	siteFlagUnconfirmed bool
+	// workspaceSites is the manifest's entries when --site chose among them at
+	// a workspace root, so a refusal can say what the manifest lists.
+	workspaceSites []SiteEntry
 }
 
 // errNoProjectConfig means nothing here or above describes a site — the signal
@@ -372,7 +375,17 @@ func resolveSiteContext(cwd, siteFlag, verb string) (*SiteContext, error) {
 		if err != nil {
 			return nil, err
 		}
-		return manifestSiteContext(cwd, configPath, manifest, *entry)
+		ctx, err := manifestSiteContext(cwd, configPath, manifest, *entry)
+		if err != nil {
+			return nil, err
+		}
+		// A display name may be the slug of a site the manifest does not
+		// list (2026-10-09), so such a match is confirmed live too.
+		if siteFlagNeedsLiveCheck(*entry, siteFlag) {
+			ctx.siteFlagUnconfirmed = true
+			ctx.workspaceSites = manifest.Sites
+		}
+		return ctx, nil
 	}
 
 	root, manifestPath, manifest, err := findAncestorManifest(cwd)

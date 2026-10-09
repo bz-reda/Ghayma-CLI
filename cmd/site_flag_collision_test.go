@@ -199,3 +199,148 @@ func TestEnvList_ManifestEntrySiteFlagNamingAnotherSitesSlugIsRefused(t *testing
 		}
 	}
 }
+
+// --- at a workspace root ------------------------------------------------------
+
+// rootSites is p1's live list: api (s2) is not in the workspace manifest, and
+// its slug is the display name of the manifest's main entry.
+const rootSites = `[{"id":"s1","name":"api","slug":"main"},{"id":"s2","name":"API","slug":"api"},{"id":"s3","name":"Back Office","slug":"admin"}]`
+
+// collisionRoot is a workspace root whose manifest lists main (named "api")
+// and admin (named "Back Office"), but not the live site api.
+func collisionRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		"pnpm-workspace.yaml":     realPnpmWorkspaceYAML,
+		"apps/web/package.json":   `{}`,
+		"apps/admin/package.json": `{}`,
+		projectConfigName: `{"project_id":"p1","name":"shop","slug":"shop","sites":[
+			{"site_id":"s1","site_slug":"main","site_name":"api","root_directory":"apps/web","upload":"app"},
+			{"site_id":"s3","site_slug":"admin","site_name":"Back Office","root_directory":"apps/admin","upload":"app"}]}`,
+	})
+	return root
+}
+
+func sitesListed(seen []string) int {
+	n := 0
+	for _, s := range seen {
+		if s == sitesRoute {
+			n++
+		}
+	}
+	return n
+}
+
+func TestResolveSiteContextLive_WorkspaceRoot(t *testing.T) {
+	cases := []struct {
+		name      string
+		flag      string
+		wantSlug  string // "" means refused
+		wantError string
+		wantLists int
+	}{
+		{"an unlisted site's slug", "api", "", `--site api names site "api", which this workspace's manifest does not list; the manifest entry named "api" is site "main" — pass --site main for it`, 1},
+		{"the entry's own slug", "main", "main", "", 1},
+		{"a name no live slug shadows", "back office", "admin", "", 1},
+		{"the entry's id", "s3", "admin", "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, seen := linkedStub(t, http.StatusOK, map[string]string{sitesRoute: rootSites})
+			client := api.NewClient(&config.Config{APIHost: ts.URL, Token: "t"})
+
+			ctx, err := resolveSiteContextLive(client, collisionRoot(t), tc.flag, "deploy")
+
+			if tc.wantSlug == "" {
+				if err == nil || err.Error() != tc.wantError {
+					t.Fatalf("err = %v (ctx %+v); want %q", err, ctx, tc.wantError)
+				}
+			} else if err != nil || ctx.Site.SiteSlug != tc.wantSlug {
+				t.Fatalf("ctx = %+v, err = %v; want site %s", ctx, err, tc.wantSlug)
+			}
+			if got := sitesListed(*seen); got != tc.wantLists {
+				t.Errorf("site lists = %d; want %d (requests %v)", got, tc.wantLists, *seen)
+			}
+		})
+	}
+}
+
+// The manifest is out of date when the live site --site names is listed under
+// an entry without its slug, or when the matched entry's own slug is stale:
+// no slug would pick the entry, so the refusal says to relink.
+func TestResolveSiteContextLive_WorkspaceRootStaleManifest(t *testing.T) {
+	for name, entries := range map[string]string{
+		"listed without its slug": `
+			{"site_id":"s1","site_slug":"main","site_name":"api","root_directory":"apps/web","upload":"app"},
+			{"site_id":"s2","root_directory":"apps/api","upload":"app"}`,
+		"entry slug stale": `
+			{"site_id":"s1","site_slug":"web","site_name":"api","root_directory":"apps/web","upload":"app"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFiles(t, root, map[string]string{
+				"pnpm-workspace.yaml":   realPnpmWorkspaceYAML,
+				"apps/web/package.json": `{}`,
+				"apps/api/package.json": `{}`,
+				projectConfigName:       `{"project_id":"p1","name":"shop","slug":"shop","sites":[` + entries + `]}`,
+			})
+			ts, _ := linkedStub(t, http.StatusOK, map[string]string{sitesRoute: rootSites})
+			client := api.NewClient(&config.Config{APIHost: ts.URL, Token: "t"})
+
+			_, err := resolveSiteContextLive(client, root, "api", "deploy")
+
+			want := `--site api names site "api", but this workspace's manifest matches "api" to another of its sites — run 'ghayma link' from the workspace root to refresh it`
+			if err == nil || err.Error() != want {
+				t.Errorf("err = %v; want %q", err, want)
+			}
+		})
+	}
+}
+
+func TestResolveSiteContextLive_WorkspaceRootListFailures(t *testing.T) {
+	ts, _ := linkedStub(t, http.StatusUnauthorized, nil)
+	client := api.NewClient(&config.Config{APIHost: ts.URL, Token: "t"})
+	if _, err := resolveSiteContextLive(client, collisionRoot(t), "api", "deploy"); !errors.Is(err, api.ErrUnauthorized) {
+		t.Errorf("401: err = %v; want api.ErrUnauthorized", err)
+	}
+
+	ts, _ = linkedStub(t, http.StatusInternalServerError, nil)
+	client = api.NewClient(&config.Config{APIHost: ts.URL, Token: "t"})
+	ctx, err := resolveSiteContextLive(client, collisionRoot(t), "api", "deploy")
+	if err == nil || !strings.Contains(err.Error(), "could not confirm which site --site api names") {
+		t.Errorf("500: ctx = %+v, err = %v; want the refusal", ctx, err)
+	}
+}
+
+func TestDeploy_WorkspaceRootSiteFlagNamingAnUnlistedSiteUploadsNothing(t *testing.T) {
+	ts, seen, _ := uploadStub(t, rootSites)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	fastPolls(t)
+
+	out := runCLI(t, collisionRoot(t), "deploy", "--site", "api")
+
+	if uploaded(*seen) {
+		t.Errorf("requests = %v; --site api must never deploy main", *seen)
+	}
+	if want := `which this workspace's manifest does not list`; !strings.Contains(out, want) {
+		t.Errorf("output = %q; want the refusal", out)
+	}
+}
+
+func TestDeploy_WorkspaceRootSiteFlagNamingTheEntryDeploysIt(t *testing.T) {
+	ts, seen, siteID := uploadStub(t, rootSites)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	fastPolls(t)
+
+	out := runCLI(t, collisionRoot(t), "deploy", "--site", "main")
+
+	if !uploaded(*seen) {
+		t.Fatalf("requests = %v; want the upload\n%s", *seen, out)
+	}
+	if *siteID != "s1" {
+		t.Errorf("upload site_id = %q; want s1", *siteID)
+	}
+}
