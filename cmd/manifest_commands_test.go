@@ -80,8 +80,9 @@ func resetCommandFlags() {
 			}
 		}
 	}
-	// `db create`'s engine and Valkey mode.
-	for _, name := range []string{"type", "mode"} {
+	// `db create`'s engine, Valkey mode and the hidden --replica-set it refuses.
+	dbCreateReplicaSet = true
+	for _, name := range []string{"type", "mode", "replica-set"} {
 		if f := dbCreateCmd.Flags().Lookup(name); f != nil {
 			f.Changed = false
 		}

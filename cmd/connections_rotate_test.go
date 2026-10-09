@@ -141,21 +141,43 @@ func TestRotateConnection_NotConnectedIsNoChange(t *testing.T) {
 	}
 }
 
-// TestRotateConnection_RendersServerRefusals covers the two answers this route
-// has of its own: a connection with no credential to rotate, and an engine
-// that cannot be reached right now.
+// TestRotateConnection_RendersServerRefusals covers the answers this route has
+// of its own: a connection with no credential of its own yet, an auth-app
+// connection with nothing to rotate, and an engine that cannot be reached now.
 func TestRotateConnection_RendersServerRefusals(t *testing.T) {
-	t.Run("409 shared credential", func(t *testing.T) {
+	t.Run("409 no credential of its own", func(t *testing.T) {
 		code := stubExit(t)
-		ts, _ := rotateStub(t, http.StatusConflict, `{"error":"connection uses the service credential"}`)
+		ts, _ := rotateStub(t, http.StatusConflict, `{"error":"this connection has no credential of its own yet, so there is nothing to rotate"}`)
 		client, target := rotateTarget(ts.URL)
 
 		out := captureStdout(t, func() {
 			rotateConnection(client, target, "database", "pg-main", true, readAnswer)
 		})
 
-		if !strings.Contains(out, "shared credential") || !strings.Contains(out, "ghayma db rotate pg-main") {
-			t.Errorf("output = %q; want the shared-credential sentence and the db rotate hint", out)
+		want := "❌ this connection has no credential of its own yet, so there is nothing to rotate\n" +
+			"   If the database is stopped, start it and run this again; otherwise this app has no credential of its own to rotate yet — the platform gives it one as soon as the service can, or reconnect it: ghayma disconnect database pg-main --site main && ghayma connect database pg-main --site main\n"
+		if out != want {
+			t.Errorf("output = %q; want %q", out, want)
+		}
+		if strings.Contains(out, "ghayma db rotate") || strings.Contains(out, "shared credential") {
+			t.Errorf("output = %q; the service's own credential is never a way out", out)
+		}
+		if *code != 1 {
+			t.Errorf("exit code = %d; want 1", *code)
+		}
+	})
+
+	t.Run("409 nothing to rotate", func(t *testing.T) {
+		code := stubExit(t)
+		ts, _ := rotateStub(t, http.StatusConflict, `{"error":"an auth app connection has no credential of its own to rotate","code":"nothing_to_rotate"}`)
+		client, target := rotateTarget(ts.URL)
+
+		out := captureStdout(t, func() {
+			rotateConnection(client, target, "database", "pg-main", true, readAnswer)
+		})
+
+		if out != "❌ an auth app connection has no credential of its own to rotate\n" {
+			t.Errorf("output = %q; want the server's sentence alone", out)
 		}
 		if *code != 1 {
 			t.Errorf("exit code = %d; want 1", *code)
@@ -184,21 +206,31 @@ func TestRotateConnection_RendersServerRefusals(t *testing.T) {
 }
 
 func TestRotateFailure_MapsStatusesAndFallsBack(t *testing.T) {
-	got := rotateFailure(&api.APIError{Status: http.StatusConflict, Message: "shared"}, "bucket", "uploads")
-	if !strings.Contains(got, "ghayma storage rotate uploads") {
-		t.Errorf("409 for a bucket = %q; want the storage rotate hint", got)
+	got := rotateFailure(&api.APIError{Status: http.StatusConflict}, "bucket", "uploads", "admin")
+	want := "this connection has no credential of its own yet\n   If the bucket is stopped, start it and run this again; otherwise this app has no credential of its own to rotate yet — the platform gives it one as soon as the service can, or reconnect it: ghayma disconnect bucket uploads --site admin && ghayma connect bucket uploads --site admin"
+	if got != want {
+		t.Errorf("409 for a bucket with no body = %q; want %q", got, want)
 	}
-	got = rotateFailure(&api.APIError{Status: http.StatusServiceUnavailable}, "database", "pg-main")
+	if strings.Contains(got, "ghayma storage rotate") {
+		t.Errorf("409 for a bucket = %q; must not point at storage rotate", got)
+	}
+	got = rotateFailure(&api.APIError{Status: http.StatusServiceUnavailable}, "database", "pg-main", "main")
 	if strings.Contains(got, "HTTP 503") || !strings.Contains(got, "could not be reached") {
 		t.Errorf("a 503 with no body = %q; want a sentence, not the bare status", got)
 	}
-	got = rotateFailure(&api.APIError{Status: http.StatusNotFound, Message: "not connected"}, "database", "pg-main")
+	got = rotateFailure(&api.APIError{Status: http.StatusNotFound, Message: "not connected"}, "database", "pg-main", "main")
 	if !strings.Contains(got, "nothing to rotate") {
 		t.Errorf("404 = %q", got)
 	}
-	got = rotateFailure(&api.APIError{Status: http.StatusInternalServerError, Message: "boom"}, "database", "pg-main")
+	got = rotateFailure(&api.APIError{Status: http.StatusInternalServerError, Message: "boom"}, "database", "pg-main", "main")
 	if !strings.Contains(got, "Failed to rotate: boom") {
 		t.Errorf("an unmapped status = %q; want the server's message", got)
+	}
+}
+
+func TestConnectionsRotateHelp_ServiceCredentialIsNeverHandedOut(t *testing.T) {
+	if !strings.Contains(connectionsRotateCmd.Long, "the service's own credential is never handed out") || strings.Contains(connectionsRotateCmd.Long, "shared credential") {
+		t.Fatalf("Long = %q", connectionsRotateCmd.Long)
 	}
 }
 

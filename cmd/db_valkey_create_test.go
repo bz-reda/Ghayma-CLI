@@ -102,7 +102,7 @@ func TestDBCreate_RefusesRedisAndStrayModeLocally(t *testing.T) {
 }
 
 // A Valkey's info shows its mode and never the platform user nor a shrink
-// target (its disk cannot shrink); postgres keeps its database and username lines.
+// target (its disk cannot shrink); postgres keeps its database line.
 func TestDBInfo_ValkeyShowsModeNotThePlatformUser(t *testing.T) {
 	valkey := `{"id":"d9","name":"cache","type":"valkey","version":"9.1","status":"running","valkey_mode":"store","host":"vk-cache-d9.pdb-p.svc.cluster.local","port":6379,"db_name":"0","username":"ghayma","storage_mb":1024,"disk_used_bytes":1288490188,"min_disk_gb":2,"cpu_limit":"500m","memory_limit":"512Mi","project_id":"p1"}`
 	ts, _ := newDBStub(t, valkey+","+pgRow("running", 10, ""), 200, "")

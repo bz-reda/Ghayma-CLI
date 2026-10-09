@@ -61,6 +61,12 @@ reach it from your machine with ghayma connect --local.`,
 			failf("%v", err)
 			return
 		}
+		// A standalone MongoDB cannot give each app its own database user;
+		// other engines ignore the flag.
+		if dbCreateType == dbTypeMongoDB && cmd.Flags().Changed("replica-set") && !dbCreateReplicaSet {
+			failf("MongoDB always runs as a single-node replica set: a standalone instance cannot give each app its own database user. Leave --replica-set out.")
+			return
+		}
 
 		cfg := config.Load()
 		if !cfg.LoggedIn() {
@@ -81,15 +87,6 @@ reach it from your machine with ghayma connect --local.`,
 		if projectID == "" {
 			fmt.Println("❌ No project config found. Run 'ghayma init' first or run this command from a project directory.")
 			return
-		}
-
-		// Only send --replica-set to the server when the user explicitly set
-		// it; otherwise let the server apply its default (true for mongodb,
-		// ignored for other types).
-		var replicaSet *bool
-		if cmd.Flags().Changed("replica-set") {
-			v := dbCreateReplicaSet
-			replicaSet = &v
 		}
 
 		client := api.NewClient(cfg)
@@ -134,7 +131,7 @@ reach it from your machine with ghayma connect --local.`,
 			printReservePreview(client, cat, projectID, dbCreateType, tier, diskGB, backup)
 		}
 
-		db, outcome, err := client.CreateDatabase(args[0], dbCreateType, projectID, replicaSet, tier, diskGB, backup, siteIDs, dbCreateMode)
+		db, outcome, err := client.CreateDatabase(args[0], dbCreateType, projectID, tier, diskGB, backup, siteIDs, dbCreateMode)
 		if err != nil {
 			fmt.Printf("❌ Failed to create database: %s\n", formatMarketplaceError(err))
 			return
@@ -146,7 +143,7 @@ reach it from your machine with ghayma connect --local.`,
 		fmt.Printf("   Port:    %d\n", db.Port)
 		fmt.Printf("   Status:  %s\n", db.Status)
 		if db.Type == "mongodb" {
-			fmt.Printf("   Mode:    %s\n", mongoModeLabel(db.ReplicaSet))
+			fmt.Printf("   Mode:    %s\n", mongoModeLabel)
 		}
 		if db.Type == dbTypeValkey {
 			fmt.Printf("   Mode:    %s — %s\n", db.ValkeyMode, valkeyModeMeaning(db.ValkeyMode))
@@ -186,12 +183,8 @@ func valkeyModeMeaning(mode string) string {
 	return "evicts the least-recently-used keys when memory is full. Snapshots only."
 }
 
-func mongoModeLabel(replicaSet bool) string {
-	if replicaSet {
-		return "replica set (rs0) — transactions supported"
-	}
-	return "standalone — transactions NOT supported"
-}
+// mongoModeLabel is every MongoDB's mode: a single-node replica set.
+const mongoModeLabel = "replica set (rs0) — transactions supported"
 
 var dbResizeCmd = &cobra.Command{
 	Use:   "resize [name]",
@@ -472,7 +465,6 @@ var dbInfoCmd = &cobra.Command{
 			fmt.Println("   Users:      each connected app has its own user (REDIS_URL / VALKEY_URL)")
 		} else if db.DBName != "" {
 			fmt.Printf("   Database:   %s\n", db.DBName)
-			fmt.Printf("   Username:   %s\n", db.Username)
 		}
 		fmt.Printf("   Storage:    %d MB\n", db.StorageMB)
 		if db.DiskUsedBytes > 0 {
@@ -545,49 +537,46 @@ func findDatabaseByName(client *api.Client, name string) (*api.DatabaseInfo, err
 
 var dbCredentialsCmd = &cobra.Command{
 	Use:   "credentials [name]",
-	Short: "Show database connection credentials",
+	Short: "Show connection details and each connected site's variables (no password)",
 	Args:  requireOneArg("name", "db list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
+			failf("Please login first: ghayma login")
 			return
 		}
 
 		client := api.NewClient(cfg)
 		db, err := findDatabaseByName(client, args[0])
 		if err != nil {
-			fmt.Printf("❌ %v\n", err)
+			failf("%v", err)
 			return
 		}
-		if db.Type == dbTypeValkey {
-			fmt.Printf("ℹ️  %s is a Valkey database: it has no shared credential. Each connected app has its own user in REDIS_URL / VALKEY_URL.\n", db.Name)
-			fmt.Println("   See which apps are connected:  ghayma connections")
-			fmt.Println("   Read an app's variables:       ghayma env pull")
-			fmt.Println("   Reach it from this machine:    ghayma connect --local")
+		if db.ProjectID == "" {
+			failf("Database '%s' belongs to no project.", db.Name)
 			return
 		}
-
-		creds, err := client.GetDatabaseCredentials(db.ID)
+		rows, err := serviceConnections(client, db.ProjectID, "database", db.ID)
 		if err != nil {
-			fmt.Printf("❌ Failed to get credentials: %v\n", err)
+			failf("Failed to load connections: %v", err)
 			return
 		}
 
-		fmt.Printf("🔑 Credentials for '%s' (%s)\n\n", args[0], creds["type"])
-		fmt.Printf("   Host:     %v\n", creds["host"])
-		fmt.Printf("   Port:     %v\n", creds["port"])
-		if creds["username"] != nil && creds["username"] != "" {
-			fmt.Printf("   Username: %v\n", creds["username"])
+		fmt.Printf("🔌 Connection details for '%s' (%s)\n\n", db.Name, db.Type)
+		fmt.Printf("   Host:      %s\n", db.Host)
+		fmt.Printf("   Port:      %d\n", db.Port)
+		if db.Type != dbTypeValkey && db.DBName != "" {
+			fmt.Printf("   Database:  %s\n", db.DBName)
 		}
-		if creds["database"] != nil && creds["database"] != "" {
-			fmt.Printf("   Database: %v\n", creds["database"])
+		fmt.Println()
+		printConnectedSites(rows, "database", db.Name)
+		fmt.Println()
+		fmt.Println("   No password is shown: each site has its own credential, delivered in these variables.")
+		fmt.Println("   From your laptop:     ghayma connect --local")
+		// A Valkey refuses access from outside Ghayma.
+		if db.Type != dbTypeValkey {
+			fmt.Printf("   From outside Ghayma:  ghayma access add database %s --name <principal>\n", db.Name)
 		}
-		fmt.Printf("   Password: %v\n", creds["password"])
-		fmt.Printf("\n   Internal URL: %v\n", creds["internal_url"])
-
-		// External reach is per named principal now, not a shared endpoint.
-		fmt.Printf("\n   ℹ️  External access is granted per principal — add one with: ghayma access add database %s --name <principal>\n", args[0])
 	},
 }
 
@@ -648,46 +637,15 @@ var dbStartCmd = &cobra.Command{
 	},
 }
 
+// dbRotateCmd stays, hidden, so a script that still calls it learns where
+// rotation went: a database's own login is never handed out.
 var dbRotateCmd = &cobra.Command{
-	Use:   "rotate [name]",
-	Short: "Rotate database password",
-	Args:  requireOneArg("name", "db list"),
+	Use:    "rotate [name]",
+	Short:  "Removed: use ghayma connections rotate database",
+	Hidden: true,
+	Args:   cobra.ArbitraryArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.Load()
-		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
-			return
-		}
-
-		client := api.NewClient(cfg)
-		db, err := findDatabaseByName(client, args[0])
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
-			return
-		}
-		if db.Type == dbTypeValkey {
-			failf("%s is a Valkey database: there is no shared password to rotate. Rotate one app's user with: ghayma connections rotate database %s --site <site>", db.Name, db.Name)
-			return
-		}
-
-		fmt.Printf("⚠️  This will change the password for '%s'. Connected clients will need to reconnect. Continue? (y/n): ", args[0])
-		var confirm string
-		fmt.Scanln(&confirm)
-		if confirm != "y" && confirm != "Y" {
-			fmt.Println("❌ Cancelled.")
-			return
-		}
-
-		result, err := client.RotatePassword(db.ID)
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
-			return
-		}
-
-		fmt.Printf("✅ Password rotated for '%s'\n", args[0])
-		fmt.Printf("   New password: %v\n", result["new_password"])
-		fmt.Println("\n   ⚠️  Save this password now — it won't be shown again.")
-		fmt.Printf("   Get full connection string: ghayma db credentials %s\n", args[0])
+		failf("'ghayma db rotate' was removed: a database's own login is never handed out. To give one app a new credential: ghayma connections rotate database %s --site <slug>", nameOrPlaceholder(args))
 	},
 }
 
@@ -696,7 +654,9 @@ func init() {
 	// it locally and points at Valkey, so it is never offered here.
 	dbCreateCmd.Flags().StringVarP(&dbCreateType, "type", "t", "postgres", "Database type: postgres, mongodb, valkey")
 	dbCreateCmd.Flags().StringVar(&dbCreateMode, "mode", "", "Valkey only: cache (default) or store")
-	dbCreateCmd.Flags().BoolVar(&dbCreateReplicaSet, "replica-set", true, "MongoDB only: run as a single-node replica set (rs0). Default true so multi-document transactions work. Pass --replica-set=false for a standalone mongod.")
+	// Kept so scripts passing --replica-set still parse; false is refused.
+	dbCreateCmd.Flags().BoolVar(&dbCreateReplicaSet, "replica-set", true, "MongoDB always runs as a single-node replica set (rs0).")
+	dbCreateCmd.Flags().MarkHidden("replica-set")
 	dbCreateCmd.Flags().StringVar(&dbCreateTier, "tier", "", "Database tier (e.g. xs, s, m, l, xl). MongoDB and Valkey run only on the tiers that allow them — the picker lists only those. Interactive picker when omitted; server default if no catalog.")
 	dbCreateCmd.Flags().IntVar(&dbCreateDiskGB, "disk-gb", 0, "Persistent disk in GB, priced in points. Server default (from size) when omitted.")
 	dbCreateCmd.Flags().StringVar(&dbCreateBackup, "backup", "", "Backup schedule: weekly, daily, sixhourly. Interactive picker when omitted; weekly default if no catalog.")

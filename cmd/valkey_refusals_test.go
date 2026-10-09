@@ -59,32 +59,16 @@ func valkeyListStub(t *testing.T, extra map[string]stubReply) (*httptest.Server,
 
 const notRunningBody = `{"error":"the Valkey database is not running yet; connect the site once it is running (database cache is provisioning)","code":"database_not_running"}`
 
-func TestDBCredentials_ValkeyNeedsNoRequest(t *testing.T) {
-	ts, calls := valkeyListStub(t, nil)
-	cliHome(t, ts.URL)
-	out := runCLI(t, linkedDir(t), "db", "credentials", "cache")
-	if strings.Contains(strings.Join(*calls, " "), "/credentials") || lastExitCode != 0 {
-		t.Fatalf("exit=%d calls=%v out=%s", lastExitCode, *calls, out)
-	}
-	for _, want := range []string{
-		"cache is a Valkey database: it has no shared credential. Each connected app has its own user in REDIS_URL / VALKEY_URL.",
-		"ghayma connections", "ghayma env pull", "ghayma connect --local",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("out = %s; want %q", out, want)
-		}
-	}
-}
-
-func TestDBRotate_ValkeyRefusedBeforeThePrompt(t *testing.T) {
+// A Valkey gets the same removal stub as every engine: no request, no prompt.
+func TestDBRotate_ValkeyGetsTheRemovalStub(t *testing.T) {
 	ts, calls := valkeyListStub(t, nil)
 	cliHome(t, ts.URL)
 	forceStdin(t, true)
 	out := runCLI(t, linkedDir(t), "db", "rotate", "cache")
-	if lastExitCode != 1 || strings.Contains(strings.Join(*calls, " "), "/rotate") || strings.Contains(out, "Continue?") {
+	if lastExitCode != 1 || len(*calls) != 0 || strings.Contains(out, "Continue?") {
 		t.Fatalf("exit=%d calls=%v out=%s", lastExitCode, *calls, out)
 	}
-	if !strings.Contains(out, "cache is a Valkey database: there is no shared password to rotate. Rotate one app's user with: ghayma connections rotate database cache --site <site>") {
+	if !strings.Contains(out, "To give one app a new credential: ghayma connections rotate database cache --site <slug>") {
 		t.Fatalf("out = %s", out)
 	}
 }
@@ -124,7 +108,7 @@ func TestDBResize_HelpSaysValkeyCannotShrink(t *testing.T) {
 }
 
 func TestRotateFailure_NotRunningIsNotASharedCredential(t *testing.T) {
-	msg := rotateFailure(&api.APIError{Status: 409, Code: api.CodeDatabaseNotRunning, Message: "the Valkey database is not running yet; connect the site once it is running"}, "database", "cache")
+	msg := rotateFailure(&api.APIError{Status: 409, Code: api.CodeDatabaseNotRunning, Message: "the Valkey database is not running yet; connect the site once it is running"}, "database", "cache", "main")
 	if strings.Contains(msg, "shared credential") || strings.Contains(msg, "ghayma db rotate") ||
 		msg != "cache is not running, so this app's password cannot be rotated now. Start it if it is stopped, or wait until ghayma db info cache shows running." {
 		t.Fatalf("msg = %q", msg)
@@ -319,6 +303,7 @@ func TestCopyLogLines_SkipsBlankAndCRLines(t *testing.T) {
 }
 
 func TestDBLogsAndMode_MissingArgumentsReadNaturally(t *testing.T) {
+	cliHome(t, "http://127.0.0.1:1")
 	cases := map[string][]string{
 		"ghayma db logs requires a name.":                                                        {"db", "logs"},
 		"ghayma db mode requires a name and a mode (cache or store).":                            {"db", "mode", "cache"},

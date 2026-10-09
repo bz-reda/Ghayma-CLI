@@ -1076,12 +1076,10 @@ type DatabaseInfo struct {
 	Host        string `json:"host"`
 	Port        int    `json:"port"`
 	DBName      string `json:"db_name"`
-	Username    string `json:"username"`
 	StorageMB   int    `json:"storage_mb"`
 	CPULimit    string `json:"cpu_limit"`
 	MemoryLimit string `json:"memory_limit"`
 	ProjectID   string `json:"project_id,omitempty"`
-	ReplicaSet  bool   `json:"replica_set,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	// Points-marketplace footprint fields (mirror managed_databases columns).
 	// DiskGB keeps its old value while a disk change runs.
@@ -1181,9 +1179,8 @@ func diskChangeError(status int, body []byte) *DiskChangeError {
 	return nil
 }
 
-// CreateDatabase creates a managed database. replicaSet is only meaningful for
-// MongoDB and is sent only when non-nil so the server's default (true for new
-// MongoDB instances) applies when the caller doesn't override it.
+// CreateDatabase creates a managed database. It never sends replica_set: every
+// MongoDB runs as a single-node replica set.
 //
 // The points-marketplace selectors are sent when set: tierSlug (wire field
 // "tier"), diskGB ("disk_gb", omitted at 0 so the server falls back to
@@ -1197,11 +1194,8 @@ func diskChangeError(status int, body []byte) *DiskChangeError {
 // server reported none (see ConnectChoice).
 //
 // mode is the Valkey mode, sent only when set.
-func (c *Client) CreateDatabase(name, dbType, projectID string, replicaSet *bool, tierSlug string, diskGB int, backupSlug string, connectSiteIDs []string, mode string) (*DatabaseInfo, *ConnectChoice, error) {
+func (c *Client) CreateDatabase(name, dbType, projectID, tierSlug string, diskGB int, backupSlug string, connectSiteIDs []string, mode string) (*DatabaseInfo, *ConnectChoice, error) {
 	payload := map[string]interface{}{"name": name, "type": dbType, "project_id": projectID, "connect_site_ids": siteChoice(connectSiteIDs)}
-	if replicaSet != nil {
-		payload["replica_set"] = *replicaSet
-	}
 	if tierSlug != "" {
 		payload["tier"] = tierSlug
 	}
@@ -1373,20 +1367,6 @@ func (c *Client) decodeJSON(resp *http.Response, out any) error {
 	return nil
 }
 
-func (c *Client) GetDatabaseCredentials(id string) (map[string]interface{}, error) {
-	resp, err := c.authRequest("GET", "/api/v1/databases/"+id+"/credentials", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result map[string]interface{}
-	if err := c.decodeJSON(resp, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
 func (c *Client) StopDatabase(id string) error {
 	resp, err := c.authRequest("POST", "/api/v1/databases/"+id+"/stop", nil)
 	if err != nil {
@@ -1405,20 +1385,6 @@ func (c *Client) StartDatabase(id string) error {
 	return c.decodeJSON(resp, nil)
 }
 
-func (c *Client) RotatePassword(id string) (map[string]interface{}, error) {
-	resp, err := c.authRequest("POST", "/api/v1/databases/"+id+"/rotate", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result map[string]interface{}
-	if err := c.decodeJSON(resp, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
 // Storage
 
 type BucketInfo struct {
@@ -1432,6 +1398,11 @@ type BucketInfo struct {
 	Status            string `json:"status"`
 	ProjectID         string `json:"project_id,omitempty"`
 	CreatedAt         string `json:"created_at"`
+	// Endpoint is the S3 endpoint the server reports for the bucket; empty
+	// from a backend older than 2026-10-08. PublicURL is set for a public
+	// bucket by backends that report it.
+	Endpoint  string `json:"endpoint,omitempty"`
+	PublicURL string `json:"public_url,omitempty"`
 }
 
 // CreateBucket creates an object-storage bucket. sizeMB is the optional
@@ -1517,40 +1488,6 @@ func (c *Client) DeleteBucket(id string) error {
 		return fmt.Errorf("%s", errResp["error"])
 	}
 	return nil
-}
-
-func (c *Client) GetBucketCredentials(id string) (map[string]interface{}, error) {
-	resp, err := c.authRequest("GET", "/api/v1/storage/"+id+"/credentials", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Credentials map[string]interface{} `json:"credentials"`
-	}
-	json.NewDecoder(resp.Body).Decode(&result)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to get credentials")
-	}
-	return result.Credentials, nil
-}
-
-func (c *Client) RotateBucketCredentials(id string) (map[string]interface{}, error) {
-	resp, err := c.authRequest("POST", "/api/v1/storage/"+id+"/rotate", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Credentials map[string]interface{} `json:"credentials"`
-	}
-	json.NewDecoder(resp.Body).Decode(&result)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to rotate credentials")
-	}
-	return result.Credentials, nil
 }
 
 func (c *Client) ExposeBucket(id string) (map[string]interface{}, error) {

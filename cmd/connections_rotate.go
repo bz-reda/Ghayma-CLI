@@ -22,7 +22,7 @@ var connectionsRotateCmd = &cobra.Command{
 	Short: "Replace this app's credential for a database or bucket",
 	Long: `Rotate the credential one app holds for one service. Only this connection
 changes: the other apps using the same database or bucket keep theirs, and
-the service's own shared credential is untouched.
+the service's own credential is never handed out.
 
 The new value reaches the running app immediately — its pods restart with it
 — and every later deploy. A locally pulled .env.local keeps the old value
@@ -50,25 +50,15 @@ func confirmRotate(kind, name, siteSlug string, yes bool, ask func() string) boo
 	return answer == "y" || answer == "Y"
 }
 
-// serviceRotateHint names the command that rotates the service's own shared
-// credential — the way out of the 409.
-func serviceRotateHint(kind, name string) string {
-	if kind == "bucket" {
-		return "ghayma storage rotate " + name
-	}
-	return "ghayma db rotate " + name
-}
-
 // rotateFailure turns the server's refusal into the sentence that names the
-// way out. A database_not_running code is a Valkey that is not running; it is
-// checked first because it is also a 409. A code-less 409 is a
-// connection served by the service's shared credential
-// (standalone MongoDB, engines from before per-connection credentials): there
-// is nothing of its own to rotate, so the service-level command is the one to
-// run. 503 is an engine that cannot be reached right now — a stopped database
-// — or a rotation that did not complete; the server's own text says a retry
-// converges, so it is printed as it came.
-func rotateFailure(err error, kind, name string) string {
+// way out. database_not_running (a Valkey that is not running) is checked
+// first because it is also a 409; nothing_to_rotate (an auth-app connection)
+// is the server's sentence alone. Any other 409 is a connection with no
+// credential of its own yet, and the hint stays neutral: a standalone MongoDB
+// that was recorded rather than converted never gets one. 503 is an engine
+// that cannot be reached right now or a rotation that did not complete; the
+// server's own text says a retry converges, so it is printed as it came.
+func rotateFailure(err error, kind, name, siteSlug string) string {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
 		if apiErr.Code == api.CodeDatabaseNotRunning {
@@ -76,7 +66,14 @@ func rotateFailure(err error, kind, name string) string {
 		}
 		switch apiErr.Status {
 		case http.StatusConflict:
-			return fmt.Sprintf("This connection uses the %s's shared credential — it has nothing of its own to rotate.\n   Rotate that credential with: %s", kindLabel(kind), serviceRotateHint(kind, name))
+			if apiErr.Code == api.CodeNothingToRotate {
+				return apiErr.Message
+			}
+			msg := apiErr.Message
+			if msg == "" {
+				msg = "this connection has no credential of its own yet"
+			}
+			return fmt.Sprintf("%s\n   If the %s is stopped, start it and run this again; otherwise this app has no credential of its own to rotate yet — the platform gives it one as soon as the service can, or reconnect it: ghayma disconnect %s %s --site %s && ghayma connect %s %s --site %s", msg, kindLabel(kind), kind, name, siteSlug, kind, name, siteSlug)
 		case http.StatusServiceUnavailable:
 			msg := apiErr.Message
 			if msg == "" {
@@ -113,7 +110,7 @@ func rotateConnection(client *api.Client, target *connectionTarget, kind, name s
 	}
 
 	if err := client.RotateSiteConnection(target.ProjectID, target.Site.ID, kind, held.ResourceID); err != nil {
-		failf("%s", rotateFailure(err, kind, held.ResourceName))
+		failf("%s", rotateFailure(err, kind, held.ResourceName, target.Site.Slug))
 		return
 	}
 	fmt.Printf("✅ Rotated the credential of %s '%s' for '%s'\n", kindLabel(kind), held.ResourceName, target.Site.Slug)

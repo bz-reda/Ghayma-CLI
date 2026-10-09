@@ -162,8 +162,15 @@ var storageInfoCmd = &cobra.Command{
 		} else {
 			fmt.Printf("   Project:    (none)\n")
 		}
-		fmt.Printf("   Endpoint:   https://s3.ghayma.tech\n")
-		if bucket.ExternalAccess {
+		// The server's hosts win; the composed ones serve older backends.
+		endpoint := bucket.Endpoint
+		if endpoint == "" {
+			endpoint = "https://s3.ghayma.tech"
+		}
+		fmt.Printf("   Endpoint:   %s\n", endpoint)
+		if bucket.PublicURL != "" {
+			fmt.Printf("   Public URL: %s\n", bucket.PublicURL)
+		} else if bucket.ExternalAccess {
 			fmt.Printf("   Public URL: https://%s.web.ghayma.tech\n", bucket.GarageBucket)
 		}
 	},
@@ -171,35 +178,42 @@ var storageInfoCmd = &cobra.Command{
 
 var storageCredentialsCmd = &cobra.Command{
 	Use:   "credentials [name]",
-	Short: "Show S3 access credentials",
+	Short: "Show the S3 endpoint and each connected site's variables (no key)",
 	Args:  requireOneArg("name", "storage list"),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
+			failf("Please login first: ghayma login")
 			return
 		}
 
 		client := api.NewClient(cfg)
 		bucket, err := findBucketByName(client, args[0])
 		if err != nil {
-			fmt.Printf("❌ %v\n", err)
+			failf("%v", err)
 			return
 		}
-
-		creds, err := client.GetBucketCredentials(bucket.ID)
+		if bucket.ProjectID == "" {
+			failf("Bucket '%s' belongs to no project.", bucket.Name)
+			return
+		}
+		rows, err := serviceConnections(client, bucket.ProjectID, "bucket", bucket.ID)
 		if err != nil {
-			fmt.Printf("❌ Failed to get credentials: %v\n", err)
+			failf("Failed to load connections: %v", err)
 			return
 		}
 
-		fmt.Printf("🔑 S3 Credentials for '%s'\n\n", args[0])
-		fmt.Printf("   Endpoint:    %v\n", creds["endpoint"])
-		fmt.Printf("   Region:      %v\n", creds["region"])
-		fmt.Printf("   Bucket:      %v\n", creds["bucket"])
-		fmt.Printf("   Access Key:  %v\n", creds["access_key"])
-		fmt.Printf("   Secret Key:  %v\n", creds["secret_key"])
-		fmt.Println("\n   📋 Use with any S3-compatible SDK (aws-sdk, boto3, etc.)")
+		fmt.Printf("🔌 Connection details for bucket '%s'\n\n", bucket.Name)
+		if bucket.Endpoint != "" {
+			fmt.Printf("   Endpoint:  %s\n", bucket.Endpoint)
+		}
+		fmt.Printf("   Bucket:    %s\n", bucket.GarageBucket)
+		fmt.Println()
+		printConnectedSites(rows, "bucket", bucket.Name)
+		fmt.Println()
+		fmt.Println("   No key is shown: each site has its own key, delivered in these variables.")
+		fmt.Println("   From your laptop:     ghayma env pull")
+		fmt.Printf("   From outside Ghayma:  ghayma access add bucket %s --name <principal>\n", bucket.Name)
 	},
 }
 
@@ -260,42 +274,15 @@ var storageUnexposeCmd = &cobra.Command{
 	},
 }
 
+// storageRotateCmd stays, hidden, so a script that still calls it learns
+// where rotation went: a bucket's own key is never handed out.
 var storageRotateCmd = &cobra.Command{
-	Use:   "rotate [name]",
-	Short: "Rotate S3 access credentials",
-	Args:  requireOneArg("name", "storage list"),
+	Use:    "rotate [name]",
+	Short:  "Removed: use ghayma connections rotate bucket",
+	Hidden: true,
+	Args:   cobra.ArbitraryArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.Load()
-		if !cfg.LoggedIn() {
-			fmt.Println("❌ Please login first: ghayma login")
-			return
-		}
-
-		client := api.NewClient(cfg)
-		bucket, err := findBucketByName(client, args[0])
-		if err != nil {
-			fmt.Printf("❌ %v\n", err)
-			return
-		}
-
-		fmt.Printf("⚠️  This will invalidate current credentials for '%s'. Continue? (y/n): ", args[0])
-		var confirm string
-		fmt.Scanln(&confirm)
-		if confirm != "y" && confirm != "Y" {
-			fmt.Println("❌ Cancelled.")
-			return
-		}
-
-		creds, err := client.RotateBucketCredentials(bucket.ID)
-		if err != nil {
-			fmt.Printf("❌ Failed to rotate: %v\n", err)
-			return
-		}
-
-		fmt.Printf("✅ Credentials rotated for '%s'\n\n", args[0])
-		fmt.Printf("   Access Key:  %v\n", creds["access_key"])
-		fmt.Printf("   Secret Key:  %v\n", creds["secret_key"])
-		fmt.Println("\n   ⚠️  Save these now — the secret key won't be shown again.")
+		failf("'ghayma storage rotate' was removed: a bucket's own key is never handed out. To give one app a new key: ghayma connections rotate bucket %s --site <slug>", nameOrPlaceholder(args))
 	},
 }
 

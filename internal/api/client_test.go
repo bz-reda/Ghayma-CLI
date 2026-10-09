@@ -295,7 +295,7 @@ type createWithChoice struct {
 var createsWithChoice = []createWithChoice{
 	{"database", "/api/v1/databases", `"database":{"id":"d1","name":"shop-db","type":"postgres"}`, "d1",
 		func(c *Client, siteIDs []string) (string, *ConnectChoice, error) {
-			db, choice, err := c.CreateDatabase("shop-db", "postgres", "p1", nil, "", 0, "", siteIDs, "")
+			db, choice, err := c.CreateDatabase("shop-db", "postgres", "p1", "", 0, "", siteIDs, "")
 			if err != nil {
 				return "", choice, err
 			}
