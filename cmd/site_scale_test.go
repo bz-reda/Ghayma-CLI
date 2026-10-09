@@ -107,6 +107,15 @@ func TestResolveScaleTarget(t *testing.T) {
 			t.Fatalf("got %+v, err %v; want s1", got, err)
 		}
 	})
+	// main is displayed as "api" and listed first (oldest); --site resolves
+	// slugs first, so it names the site whose slug is api (2026-10-09).
+	t.Run("--site prefers a slug over an earlier site's name", func(t *testing.T) {
+		collision := []api.Site{{ID: "s1", Name: "api", Slug: "main"}, {ID: "s2", Name: "API", Slug: "api"}}
+		got, err := resolveScaleTarget(collision, "api", "")
+		if err != nil || got.ID != "s2" {
+			t.Fatalf("got %+v, err %v; want s2", got, err)
+		}
+	})
 	t.Run("--site unmatched errors", func(t *testing.T) {
 		if _, err := resolveScaleTarget(sites, "nope", ""); err == nil {
 			t.Error("unmatched --site must error")

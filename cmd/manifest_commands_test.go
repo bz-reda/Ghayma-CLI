@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -220,8 +221,11 @@ func TestProjectScopedCommand_FromNestedDir(t *testing.T) {
 // TestEnvList_SiteFlagAtWorkspaceRoot: env is SITE-scoped, so at a workspace
 // root it must address the site --site names — not the project-wide endpoint,
 // which would write one app's variables onto whichever site the server picks.
+//
+// The entry carries an id, so its slug is confirmed against the live list
+// (2026-10-09) before the env request.
 func TestEnvList_SiteFlagAtWorkspaceRoot(t *testing.T) {
-	ts, paths := sitesStub(t, `[]`)
+	ts, paths := sitesStub(t, manifestLiveSites)
 	cliHome(t, ts.URL)
 	root := manifestFixture(t)
 	forceStdin(t, false)
@@ -231,8 +235,9 @@ func TestEnvList_SiteFlagAtWorkspaceRoot(t *testing.T) {
 	if !strings.Contains(out, "API_URL") {
 		t.Errorf("env list printed %q; want the stub's variables", out)
 	}
-	if len(*paths) != 1 || !strings.Contains((*paths)[0], "/sites/s2/env") {
-		t.Errorf("requested %v; want the admin site's env endpoint (site s2)", *paths)
+	want := []string{"/api/v1/projects/p1/sites", "/api/v1/projects/p1/sites/s2/env"}
+	if !reflect.DeepEqual(*paths, want) {
+		t.Errorf("requested %v; want %v (the admin site's env endpoint, site s2)", *paths, want)
 	}
 }
 
@@ -278,9 +283,16 @@ func TestEnvList_FromAppDirNeedsNoFlag(t *testing.T) {
 
 // TestDomainCreate_SiteFlagAtWorkspaceRoot: a domain is attached to ONE site,
 // so --site has to reach the request body.
+//
+// "admin" is the entry's display name, so the live list confirms it names that
+// site (2026-10-09).
 func TestDomainCreate_SiteFlagAtWorkspaceRoot(t *testing.T) {
 	var body map[string]any
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/sites") {
+			io.WriteString(w, manifestLiveSites)
+			return
+		}
 		json.NewDecoder(r.Body).Decode(&body)
 		w.WriteHeader(http.StatusCreated)
 	}))
@@ -546,6 +558,9 @@ const manifestJSON = `{
     {"site_id":"s2","site_name":"admin","site_slug":"taarefni-admin","root_directory":"apps/taarefni-admin","upload":"app"}
   ]
 }`
+
+// manifestLiveSites is the live site list behind manifestJSON.
+const manifestLiveSites = `[{"id":"s1","name":"main","slug":"taarefni"},{"id":"s2","name":"admin","slug":"taarefni-admin"}]`
 
 // TestSiteUse_InManifestMappedDirExplains: inside an app directory that has no
 // per-app file but is mapped by the workspace manifest, `site use` must say the

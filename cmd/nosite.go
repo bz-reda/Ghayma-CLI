@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"paas-cli/internal/api"
 )
@@ -128,9 +129,13 @@ func liveSiteOf(client *api.Client, ctx *SiteContext, siteFlag string) (*api.Sit
 // (2026-10-08). That refusal is settled against the live list: a --site naming
 // the linked site resolves to it, carrying the live id. An expired session is
 // reported as such; anything else, or a list that cannot be read, keeps the
-// refusal.
+// refusal. An offline pass the live list could contradict is confirmed the
+// same way (confirmSiteFlag).
 func resolveSiteContextLive(client *api.Client, cwd, siteFlag, verb string) (*SiteContext, error) {
 	ctx, err := resolveSiteContext(cwd, siteFlag, verb)
+	if err == nil && ctx.siteFlagUnconfirmed {
+		return confirmSiteFlag(client, ctx, siteFlag, verb)
+	}
 	var mismatch *siteFlagMismatchError
 	if !errors.As(err, &mismatch) {
 		return ctx, err
@@ -152,4 +157,56 @@ func resolveSiteContextLive(client *api.Client, cwd, siteFlag, verb string) (*Si
 	}
 	linked.Site.SiteID, linked.Site.SiteSlug, linked.Site.SiteName = site.ID, site.Slug, site.Name
 	return linked, nil
+}
+
+// confirmSiteFlag settles an offline --site pass against the live list
+// (2026-10-09): main displayed as "api" passed `--site api` and deployed main,
+// although --site resolves slugs first and another site's slug is api. The
+// matched site stands only when the flag names it live, and carries its live
+// id; a flag naming no live site keeps today's pass. An expired session is
+// reported as such; any other list failure refuses with its cause, since the
+// flag path can deploy to production.
+func confirmSiteFlag(client *api.Client, ctx *SiteContext, siteFlag, verb string) (*SiteContext, error) {
+	sites, err := client.ListSites(ctx.ProjectID)
+	if errors.Is(err, api.ErrUnauthorized) {
+		return nil, err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("could not confirm which site --site %s names: %v", siteFlag, err)
+	}
+	named, err := matchSite(sites, siteFlag)
+	if err != nil {
+		return ctx, nil
+	}
+	linked := configuredLiveSite(sites, ctx.Site)
+	switch {
+	case ctx.workspaceSites != nil && (linked == nil || linked.ID != named.ID):
+		return nil, workspaceSiteFlagError(ctx.workspaceSites, ctx.Site, sites, siteFlag, named, linked)
+	case linked == nil:
+		return nil, errLinkedSiteGone
+	case linked.ID != named.ID:
+		return nil, &siteFlagMismatchError{entry: ctx.Site, verb: verb}
+	}
+	ctx.Site.SiteID, ctx.Site.SiteSlug, ctx.Site.SiteName = named.ID, named.Slug, named.Name
+	return ctx, nil
+}
+
+// workspaceSiteFlagError refuses a workspace-root --site that matched one
+// manifest entry offline but names another live site. A site the manifest
+// does not list is said plainly, with the slug that picks the entry and how
+// to add the named site. When no slug would pick it (the entry's slug is
+// missing or stale), or the site is listed under an entry without its slug,
+// the manifest is out of date.
+func workspaceSiteFlagError(entries []SiteEntry, matched SiteEntry, sites []api.Site, siteFlag string, named, linked *api.Site) error {
+	listed := false
+	for _, entry := range entries {
+		if site := configuredLiveSite(sites, entry); site != nil && site.ID == named.ID {
+			listed = true
+			break
+		}
+	}
+	if !listed && linked != nil && strings.EqualFold(matched.SiteSlug, linked.Slug) {
+		return fmt.Errorf("--site %s names site %q, which this workspace's manifest does not list; the manifest entry named %q is site %q — pass --site %s for it; to use site %q, run 'ghayma link' from the workspace root to add it", siteFlag, named.Slug, siteFlag, linked.Slug, linked.Slug, named.Slug)
+	}
+	return fmt.Errorf("--site %s names site %q, but this workspace's manifest matches %q to another of its sites — run 'ghayma link' from the workspace root to refresh it", siteFlag, named.Slug, siteFlag)
 }

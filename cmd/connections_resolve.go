@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -96,7 +97,7 @@ func pickLiveSite(sites []api.Site, entry SiteEntry) (*api.Site, error) {
 		return site, nil
 	}
 	if entry.SiteID != "" {
-		return nil, fmt.Errorf("the linked site is no longer in this project — run 'ghayma link' to relink")
+		return nil, errLinkedSiteGone
 	}
 	switch len(sites) {
 	case 0:
@@ -106,6 +107,10 @@ func pickLiveSite(sites []api.Site, entry SiteEntry) (*api.Site, error) {
 	}
 	return nil, fmt.Errorf("several sites in this project — pass --site <slug> (available: %s)", strings.Join(siteSlugs(sites), ", "))
 }
+
+// errLinkedSiteGone is the answer when the site a config links by id is no
+// longer in the project's live list.
+var errLinkedSiteGone = errors.New("the linked site is no longer in this project — run 'ghayma link' to relink")
 
 // configuredLiveSite is the live site the config itself names: by id when it
 // carries one, else by slug, then name. nil when none of them matches.
