@@ -480,6 +480,7 @@ func TestDockerPushWiring(t *testing.T) {
 	if group.Args == nil {
 		t.Error("docker push must require the local image argument — there is no safe default")
 	}
+	cliHome(t, "http://127.0.0.1:1")
 	out := runCLI(t, t.TempDir(), "docker", "push")
 	if !strings.Contains(out, "requires a local image") {
 		t.Errorf("no argument = %q; want the missing-argument message", out)

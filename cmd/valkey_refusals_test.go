@@ -303,6 +303,7 @@ func TestCopyLogLines_SkipsBlankAndCRLines(t *testing.T) {
 }
 
 func TestDBLogsAndMode_MissingArgumentsReadNaturally(t *testing.T) {
+	cliHome(t, "http://127.0.0.1:1")
 	cases := map[string][]string{
 		"ghayma db logs requires a name.":                                                        {"db", "logs"},
 		"ghayma db mode requires a name and a mode (cache or store).":                            {"db", "mode", "cache"},

@@ -61,8 +61,9 @@ reach it from your machine with ghayma connect --local.`,
 			failf("%v", err)
 			return
 		}
-		// A standalone MongoDB cannot give each app its own database user.
-		if cmd.Flags().Changed("replica-set") && !dbCreateReplicaSet {
+		// A standalone MongoDB cannot give each app its own database user;
+		// other engines ignore the flag.
+		if dbCreateType == dbTypeMongoDB && cmd.Flags().Changed("replica-set") && !dbCreateReplicaSet {
 			failf("MongoDB always runs as a single-node replica set: a standalone instance cannot give each app its own database user. Leave --replica-set out.")
 			return
 		}

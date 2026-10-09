@@ -1080,7 +1080,6 @@ type DatabaseInfo struct {
 	CPULimit    string `json:"cpu_limit"`
 	MemoryLimit string `json:"memory_limit"`
 	ProjectID   string `json:"project_id,omitempty"`
-	ReplicaSet  bool   `json:"replica_set,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	// Points-marketplace footprint fields (mirror managed_databases columns).
 	// DiskGB keeps its old value while a disk change runs.
@@ -1400,8 +1399,10 @@ type BucketInfo struct {
 	ProjectID         string `json:"project_id,omitempty"`
 	CreatedAt         string `json:"created_at"`
 	// Endpoint is the S3 endpoint the server reports for the bucket; empty
-	// from a backend older than 2026-10-08.
-	Endpoint string `json:"endpoint,omitempty"`
+	// from a backend older than 2026-10-08. PublicURL is set for a public
+	// bucket by backends that report it.
+	Endpoint  string `json:"endpoint,omitempty"`
+	PublicURL string `json:"public_url,omitempty"`
 }
 
 // CreateBucket creates an object-storage bucket. sizeMB is the optional

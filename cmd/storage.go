@@ -162,8 +162,15 @@ var storageInfoCmd = &cobra.Command{
 		} else {
 			fmt.Printf("   Project:    (none)\n")
 		}
-		fmt.Printf("   Endpoint:   https://s3.ghayma.tech\n")
-		if bucket.ExternalAccess {
+		// The server's hosts win; the composed ones serve older backends.
+		endpoint := bucket.Endpoint
+		if endpoint == "" {
+			endpoint = "https://s3.ghayma.tech"
+		}
+		fmt.Printf("   Endpoint:   %s\n", endpoint)
+		if bucket.PublicURL != "" {
+			fmt.Printf("   Public URL: %s\n", bucket.PublicURL)
+		} else if bucket.ExternalAccess {
 			fmt.Printf("   Public URL: https://%s.web.ghayma.tech\n", bucket.GarageBucket)
 		}
 	},

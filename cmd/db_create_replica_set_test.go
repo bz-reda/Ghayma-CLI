@@ -60,6 +60,23 @@ func TestDBCreate_WithoutReplicaSetSendsNothing(t *testing.T) {
 	}
 }
 
+// Another engine ignores the flag, as it always did.
+func TestDBCreate_ReplicaSetFalseIgnoredForOtherEngines(t *testing.T) {
+	stub := createStub(t, shopSites, `{"database":{"id":"d1","name":"pg","type":"postgres","status":"provisioning","port":5432}}`)
+	forceStdin(t, true)
+	noSiteQuestions(t)
+	cliHome(t, stub.URL)
+
+	out := runCLI(t, linkedDir(t), "db", "create", "pg", "--replica-set=false", "--no-connect")
+
+	if !stub.created() || lastExitCode != 0 || !strings.Contains(out, "✅ Created postgres database 'pg'") {
+		t.Fatalf("exit=%d created=%v output:\n%s", lastExitCode, stub.created(), out)
+	}
+	if _, sent := stub.body["replica_set"]; sent {
+		t.Errorf("body = %v; replica_set must never be sent", stub.body)
+	}
+}
+
 func TestDBCreateHelp_HidesReplicaSet(t *testing.T) {
 	out := helpText(t, dbCreateCmd)
 	if !strings.Contains(out, "--type") {

@@ -47,6 +47,7 @@ func TestStorageRotate_RemovedPointsToConnectionsRotate(t *testing.T) {
 
 // Without a name the pointer keeps its placeholder.
 func TestRotateRemoved_WithoutANameKeepsThePlaceholder(t *testing.T) {
+	cliHome(t, "http://127.0.0.1:1")
 	out := runCLI(t, t.TempDir(), "db", "rotate")
 	if !strings.Contains(out, "ghayma connections rotate database <name> --site <slug>") || lastExitCode != 1 {
 		t.Fatalf("exit=%d output = %q", lastExitCode, out)
