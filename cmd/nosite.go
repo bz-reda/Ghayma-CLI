@@ -194,9 +194,9 @@ func confirmSiteFlag(client *api.Client, ctx *SiteContext, siteFlag, verb string
 // workspaceSiteFlagError refuses a workspace-root --site that matched one
 // manifest entry offline but names another live site. A site the manifest
 // does not list is said plainly, with the slug that picks the entry and how
-// to add the named site. When no
-// slug would pick it (the entry's slug is missing or stale), or the site is
-// listed under an entry without its slug, the manifest is out of date.
+// to add the named site. When no slug would pick it (the entry's slug is
+// missing or stale), or the site is listed under an entry without its slug,
+// the manifest is out of date.
 func workspaceSiteFlagError(entries []SiteEntry, matched SiteEntry, sites []api.Site, siteFlag string, named, linked *api.Site) error {
 	listed := false
 	for _, entry := range entries {
