@@ -25,7 +25,7 @@ func TestCreateDatabase_SendsModeOnlyForValkey(t *testing.T) {
 	defer ts.Close()
 	c := newTestClient(ts.URL)
 
-	db, _, err := c.CreateDatabase("c", "valkey", "p1", nil, "", 0, "", nil, "store")
+	db, _, err := c.CreateDatabase("c", "valkey", "p1", "", 0, "", nil, "store")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestCreateDatabase_SendsModeOnlyForValkey(t *testing.T) {
 	if db.ValkeyMode != "store" {
 		t.Fatalf("ValkeyMode = %q", db.ValkeyMode)
 	}
-	if _, _, err := c.CreateDatabase("p", "postgres", "p1", nil, "", 0, "", nil, ""); err != nil {
+	if _, _, err := c.CreateDatabase("p", "postgres", "p1", "", 0, "", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := bodies[1]["mode"]; ok {
@@ -46,7 +46,7 @@ func TestCreateDatabase_SendsModeOnlyForValkey(t *testing.T) {
 func TestCreateDatabase_RefusalKeepsCode(t *testing.T) {
 	ts := jsonStatusServer(t, http.StatusBadRequest, `{"error":"Redis is not offered. Create a Valkey database instead: it speaks the Redis protocol and every Redis client works with it.","code":"use_valkey"}`)
 	c := newTestClient(ts.URL)
-	_, _, err := c.CreateDatabase("r", "redis", "p1", nil, "", 0, "", nil, "")
+	_, _, err := c.CreateDatabase("r", "redis", "p1", "", 0, "", nil, "")
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != CodeUseValkey || apiErr.Status != 400 {
 		t.Fatalf("err = %#v", err)
@@ -190,10 +190,8 @@ func TestDatabaseRefusalsKeepCode(t *testing.T) {
 	ts := jsonStatusServer(t, http.StatusConflict, `{"error":"Valkey has no shared credential: every connected site has its own user (see the site's connections)","code":"no_shared_credential"}`)
 	c := newTestClient(ts.URL)
 	for name, call := range map[string]func() error{
-		"credentials": func() error { _, err := c.GetDatabaseCredentials("d1"); return err },
-		"rotate":      func() error { _, err := c.RotatePassword("d1"); return err },
-		"stop":        func() error { return c.StopDatabase("d1") },
-		"start":       func() error { return c.StartDatabase("d1") },
+		"stop":  func() error { return c.StopDatabase("d1") },
+		"start": func() error { return c.StartDatabase("d1") },
 	} {
 		var apiErr *APIError
 		err := call()

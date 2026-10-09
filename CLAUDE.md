@@ -31,8 +31,9 @@ Tests are Go tests: `cmd/*_test.go` and `internal/api/*_test.go`. Run with `go t
 - `site_environment.go` — `site environment|inherit-env` (Environments: a site's kind + the env var ladder)
 - `promote.go` — `promote --from <site>`: ship the image a site already runs onto another site (default target: the project's default site)
 - `access.go` / `access_render.go` — `access <kind> <name>` plus `add|rotate|allow|revoke`: the external principals (Connections 3c) that reach a database or bucket from outside Ghayma; the credential is printed once, at add and at rotate
-- `db.go` — `db create|resize|list|info|credentials|stop|start|rotate|delete`
-- `storage.go` — `storage create|list|info|credentials|expose|unexpose|rotate|delete`
+- `db.go` — `db create|resize|list|info|credentials|stop|start|delete`; `db rotate` is a hidden stub pointing at `connections rotate` (no shared credentials, part 4)
+- `storage.go` — `storage create|list|info|credentials|expose|unexpose|delete`; `storage rotate` is a hidden stub the same way
+- `connection_details.go` — the connected-sites block `db credentials` / `storage credentials` print: connection details without any secret
 - `auth.go` — `auth create|list|info|config|users|stats|rotate-keys|delete`
 - `points.go` — `points` (project points meter + per-resource breakdown)
 - `domain.go`, `env.go`, `logs.go`, `rollback.go`, `status.go`, `delete.go`, `login.go`, `logout.go`, `register.go`, `whoami.go`, `link.go`, `project.go` (ownership transfer)

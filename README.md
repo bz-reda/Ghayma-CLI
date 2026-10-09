@@ -153,6 +153,7 @@ A connection lets one site (app) use one of the project's services — a databas
 | `ghayma connect <database\|bucket\|auth> <name> [--site <slug>] [--level <level>]` | Connect a service to an app (levels: database `connect` or `read-only`, bucket `read-write` or `read`, auth `client` or `admin`) |
 | `ghayma disconnect <database\|bucket\|auth> <name> [--site <slug>] [--yes]` | Disconnect a service from an app |
 | `ghayma connect --local [--site <slug>] [--out <file>]` | Tunnel the app's databases to localhost and write `.env.local` pointing at them |
+| `ghayma connections rotate <database\|bucket> <name> [--site <slug>] [--yes]` | Give one app a new credential for a database or bucket; the other apps keep theirs. The running app gets it at once (its pods restart); run `ghayma env pull` again for a local `.env.local` |
 
 ### External access
 
@@ -182,16 +183,15 @@ The allowlist is enforced at the front door, before any authentication, so it ca
 | `ghayma db resize [name] --disk-gb <gb>` | Grow or shrink a database's disk. A grow stays online; a shrink stops the database for about a minute while its data moves to the smaller disk. A Valkey disk can grow but cannot shrink yet. Waits for the change to finish; `--no-wait` returns once it has started |
 | `ghayma db resize [name] --backup <schedule>` | Change the backup schedule (weekly, daily, sixhourly) |
 | `ghayma db list` | List your databases, with any disk change in progress |
-| `ghayma db info [name]` | Show database details, including disk used and, for Postgres and MongoDB, the smallest disk it can shrink to |
+| `ghayma db info [name]` | Show database details, including disk used and, for Postgres and MongoDB, the smallest disk it can shrink to. No username: the database's own login is never shown |
 | `ghayma db mode [name] <cache\|store>` | Switch a Valkey between `cache` (evicts the least-recently-used keys when memory is full) and `store` (never evicts; keeps an append-only file). Switching restarts the database: a few seconds of downtime |
 | `ghayma db logs [name] [-n <lines>] [-f]` | Show a database's engine log (any engine). `-n/--lines` sets how many recent lines (1-1000, default 200); `-f/--follow` keeps printing new lines until Ctrl-C, and the platform ends a follow after 10 minutes |
-| `ghayma db credentials [name]` | Show connection credentials. A Valkey has no shared credential: each connected app has its own user in `REDIS_URL` / `VALKEY_URL` |
+| `ghayma db credentials [name]` | Show the host, port and database name, and each connected site with its level and the variables it receives — never a password: each site has its own credential. From your laptop: `ghayma connect --local`; from outside Ghayma: `ghayma access add database <name> --name <principal>`. A Valkey has no database name and no access from outside Ghayma; its apps receive `REDIS_URL` / `VALKEY_URL` |
 | `ghayma db stop [name]` | Stop database (preserves data) |
 | `ghayma db start [name]` | Start a stopped database |
-| `ghayma db rotate [name]` | Rotate database password. A Valkey has no shared password: rotate one app's user with `ghayma connections rotate database <name> --site <site>` |
 | `ghayma db delete [name]` | Delete database and all its data |
 
-Reaching a database from outside Ghayma is a named principal with its own credential — see [External access](#external-access) above.
+Reaching a database from outside Ghayma is a named principal with its own credential — see [External access](#external-access) above. A database's own login is never handed out: to give one app a new credential, run `ghayma connections rotate database <name> --site <slug>`.
 
 ### Storage
 
@@ -203,11 +203,12 @@ Reaching a database from outside Ghayma is a named principal with its own creden
 | `ghayma storage create [name] --no-connect` | Connect the new bucket to no site, without asking |
 | `ghayma storage list` | List your storage buckets |
 | `ghayma storage info [name]` | Show bucket details |
-| `ghayma storage credentials [name]` | Show S3 access credentials |
+| `ghayma storage credentials [name]` | Show the S3 endpoint and bucket name, and each connected site with its level and the `STORAGE_*` variables it receives — never a key: each site has its own. From your laptop: `ghayma env pull`; from outside Ghayma: `ghayma access add bucket <name> --name <principal>` |
 | `ghayma storage expose [name]` | Make bucket publicly accessible |
 | `ghayma storage unexpose [name]` | Disable public access |
-| `ghayma storage rotate [name]` | Rotate S3 access credentials |
 | `ghayma storage delete [name]` | Delete bucket and all its data |
+
+A bucket's own key is never handed out: to give one app a new key, run `ghayma connections rotate bucket <name> --site <slug>`.
 
 ### Auth Apps
 
