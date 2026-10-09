@@ -380,7 +380,8 @@ func resolveSiteContext(cwd, siteFlag, verb string) (*SiteContext, error) {
 			return nil, err
 		}
 		// A display name may be the slug of a site the manifest does not
-		// list (2026-10-09), so such a match is confirmed live too.
+		// list (2026-10-09), and an id-linked entry's stored slug can be
+		// stale, so either match is confirmed live too.
 		if siteFlagNeedsLiveCheck(*entry, siteFlag) {
 			ctx.siteFlagUnconfirmed = true
 			ctx.workspaceSites = manifest.Sites
@@ -626,8 +627,8 @@ func checkSiteFlag(entry SiteEntry, siteFlag, verb string) error {
 
 // siteFlagNeedsLiveCheck reports whether a checkSiteFlag pass rests on a key
 // the live list may give to another site. An id match is final, and so is a
-// slug match on an entry linked by slug alone: the live lookup resolves that
-// same slug. A display name may be another site's slug, and an id-linked
+// slug match on an entry with no site_id: the live lookup resolves that same
+// slug. A display name may be another site's slug, and an id-linked
 // entry's slug is a cached label that a slug-changing rename leaves stale.
 func siteFlagNeedsLiveCheck(entry SiteEntry, siteFlag string) bool {
 	if siteFlag == "" || !hasSite(entry) {

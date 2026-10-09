@@ -103,7 +103,7 @@ func TestResolveSiteContextLive_NamePassWithExpiredSession(t *testing.T) {
 }
 
 // A list that cannot be read proves nothing, and the flag path can deploy to
-// production: refuse rather than act on the linked site.
+// production: refuse rather than act on the linked site, and say why.
 func TestResolveSiteContextLive_NamePassWithUnreadableListIsRefused(t *testing.T) {
 	ts, _ := linkedStub(t, http.StatusInternalServerError, nil)
 	clients := map[string]*api.Client{
@@ -114,11 +114,46 @@ func TestResolveSiteContextLive_NamePassWithUnreadableListIsRefused(t *testing.T
 		t.Run(name, func(t *testing.T) {
 			ctx, err := resolveSiteContextLive(client, configDir(t, collisionJSON), "api", "deploy")
 
-			var mismatch *siteFlagMismatchError
-			if !errors.As(err, &mismatch) {
-				t.Errorf("err = %v (ctx %+v); want the mismatch refusal", err, ctx)
+			if err == nil || !strings.HasPrefix(err.Error(), "could not confirm which site --site api names: ") {
+				t.Errorf("err = %v (ctx %+v); want the refusal with its cause", err, ctx)
 			}
 		})
+	}
+}
+
+// The linked site was deleted while --site names a live one: relink, as
+// pickLiveSite says, rather than "another site".
+func TestResolveSiteContextLive_LinkedSiteGoneAsksToRelink(t *testing.T) {
+	ts, _ := linkedStub(t, http.StatusOK, map[string]string{sitesRoute: collisionSites})
+	client := api.NewClient(&config.Config{APIHost: ts.URL, Token: "t"})
+	cfg := `{"project_id":"p1","site_id":"s9","site_slug":"main","site_name":"api"}`
+
+	_, err := resolveSiteContextLive(client, configDir(t, cfg), "main", "deploy")
+
+	want := "the linked site is no longer in this project — run 'ghayma link' to relink"
+	if err == nil || err.Error() != want {
+		t.Errorf("err = %v; want %q", err, want)
+	}
+}
+
+// An id-linked config's own slug is confirmed live; a failed list refuses with
+// its cause and nothing is rotated.
+func TestConnectionsRotate_OwnSlugWithUnreadableListShowsTheCause(t *testing.T) {
+	ts, seen := linkedStub(t, http.StatusInternalServerError, rotateRoutes())
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	dir := configDir(t, `{"project_id":"p1","name":"shop","slug":"shop","site_id":"s1","site_slug":"main"}`)
+
+	out := runCLI(t, dir, "connections", "rotate", "database", "pg-main", "--site", "main", "--yes")
+
+	if rotated(*seen) {
+		t.Errorf("requests = %v; an unconfirmed --site must not rotate", *seen)
+	}
+	if want := "❌ could not confirm which site --site main names: failed to list sites (status 500)"; !strings.Contains(out, want) {
+		t.Errorf("output = %q; want %q", out, want)
+	}
+	if lastExitCode != 1 {
+		t.Errorf("exit code = %d; want 1", lastExitCode)
 	}
 }
 
@@ -240,7 +275,7 @@ func TestResolveSiteContextLive_WorkspaceRoot(t *testing.T) {
 		wantError string
 		wantLists int
 	}{
-		{"an unlisted site's slug", "api", "", `--site api names site "api", which this workspace's manifest does not list; the manifest entry named "api" is site "main" — pass --site main for it`, 1},
+		{"an unlisted site's slug", "api", "", `--site api names site "api", which this workspace's manifest does not list; the manifest entry named "api" is site "main" — pass --site main for it; to use site "api", run 'ghayma link' from the workspace root to add it`, 1},
 		{"the entry's own slug", "main", "main", "", 1},
 		{"a name no live slug shadows", "back office", "admin", "", 1},
 		{"the entry's id", "s3", "admin", "", 0},
@@ -308,8 +343,8 @@ func TestResolveSiteContextLive_WorkspaceRootListFailures(t *testing.T) {
 	ts, _ = linkedStub(t, http.StatusInternalServerError, nil)
 	client = api.NewClient(&config.Config{APIHost: ts.URL, Token: "t"})
 	ctx, err := resolveSiteContextLive(client, collisionRoot(t), "api", "deploy")
-	if err == nil || !strings.Contains(err.Error(), "could not confirm which site --site api names") {
-		t.Errorf("500: ctx = %+v, err = %v; want the refusal", ctx, err)
+	if err == nil || !strings.HasPrefix(err.Error(), "could not confirm which site --site api names: failed to list sites (status 500)") {
+		t.Errorf("500: ctx = %+v, err = %v; want the refusal with its cause", ctx, err)
 	}
 }
 
