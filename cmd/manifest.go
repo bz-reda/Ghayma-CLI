@@ -98,6 +98,9 @@ type SiteContext struct {
 	// (the platform creates main lazily) while every other site-scoped command
 	// says so and stops. See cmd/nosite.go.
 	NoSite bool
+	// siteFlagUnconfirmed records that the --site guard passed on a key the
+	// live list may give to another site; resolveSiteContextLive confirms it.
+	siteFlagUnconfirmed bool
 }
 
 // errNoProjectConfig means nothing here or above describes a site — the signal
@@ -383,7 +386,12 @@ func resolveSiteContext(cwd, siteFlag, verb string) (*SiteContext, error) {
 	if err := checkSiteFlag(*entry, siteFlag, verb); err != nil {
 		return nil, err
 	}
-	return manifestSiteContext(root, manifestPath, manifest, *entry)
+	ctx, err := manifestSiteContext(root, manifestPath, manifest, *entry)
+	if err != nil {
+		return nil, err
+	}
+	ctx.siteFlagUnconfirmed = siteFlagNeedsLiveCheck(*entry, siteFlag)
+	return ctx, nil
 }
 
 // nearestListedEntry finds the site that owns the directory we're standing in:
@@ -427,6 +435,7 @@ func perAppSiteContext(cwd, configPath string, data []byte, siteFlag, verb strin
 		ConfigPath:  configPath,
 		NoSite:      !hasSite(cfg.SiteEntry),
 	}
+	ctx.siteFlagUnconfirmed = siteFlagNeedsLiveCheck(cfg.SiteEntry, siteFlag)
 	if cfg.RootDirectory != "" {
 		ctx.RootDirectory = filepath.ToSlash(cfg.RootDirectory)
 		ctx.RootFromConfig = true
@@ -591,11 +600,30 @@ func matchSiteEntry(sites []SiteEntry, want string) *SiteEntry {
 // This check is offline: it only sees the keys the config carries, so a
 // config linking its site by id alone cannot match `--site main` here.
 // resolveSiteContextLive settles that refusal against the live site list.
+// Nor can it see a pass that names another site: main displayed as "api"
+// passes `--site api` although another site's slug is api (2026-10-09).
+// resolveSiteContextLive confirms such a pass (siteFlagNeedsLiveCheck); a
+// caller without a client keeps the offline answer.
 func checkSiteFlag(entry SiteEntry, siteFlag, verb string) error {
 	if siteFlag == "" || !hasSite(entry) || matchSiteEntry([]SiteEntry{entry}, siteFlag) != nil {
 		return nil
 	}
 	return &siteFlagMismatchError{entry: entry, verb: verb}
+}
+
+// siteFlagNeedsLiveCheck reports whether a checkSiteFlag pass rests on a key
+// the live list may give to another site. An id match is final, and so is a
+// slug match on an entry linked by slug alone: the live lookup resolves that
+// same slug. A display name may be another site's slug, and an id-linked
+// entry's slug is a cached label that a slug-changing rename leaves stale.
+func siteFlagNeedsLiveCheck(entry SiteEntry, siteFlag string) bool {
+	if siteFlag == "" || !hasSite(entry) {
+		return false
+	}
+	if entry.SiteID != "" {
+		return !strings.EqualFold(entry.SiteID, siteFlag)
+	}
+	return !strings.EqualFold(entry.SiteSlug, siteFlag)
 }
 
 // siteFlagMismatchError is checkSiteFlag's refusal, typed so a command holding

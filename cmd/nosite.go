@@ -128,9 +128,13 @@ func liveSiteOf(client *api.Client, ctx *SiteContext, siteFlag string) (*api.Sit
 // (2026-10-08). That refusal is settled against the live list: a --site naming
 // the linked site resolves to it, carrying the live id. An expired session is
 // reported as such; anything else, or a list that cannot be read, keeps the
-// refusal.
+// refusal. An offline pass the live list could contradict is confirmed the
+// same way (confirmSiteFlag).
 func resolveSiteContextLive(client *api.Client, cwd, siteFlag, verb string) (*SiteContext, error) {
 	ctx, err := resolveSiteContext(cwd, siteFlag, verb)
+	if err == nil && ctx.siteFlagUnconfirmed {
+		return confirmSiteFlag(client, ctx, siteFlag, verb)
+	}
 	var mismatch *siteFlagMismatchError
 	if !errors.As(err, &mismatch) {
 		return ctx, err
@@ -152,4 +156,31 @@ func resolveSiteContextLive(client *api.Client, cwd, siteFlag, verb string) (*Si
 	}
 	linked.Site.SiteID, linked.Site.SiteSlug, linked.Site.SiteName = site.ID, site.Slug, site.Name
 	return linked, nil
+}
+
+// confirmSiteFlag settles an offline --site pass against the live list
+// (2026-10-09): main displayed as "api" passed `--site api` and deployed main,
+// although --site resolves slugs first and another site's slug is api. The
+// linked context stands only when the flag names the linked site, and carries
+// its live id; a flag naming no live site keeps today's pass. An expired
+// session is reported as such; any other list failure refuses, since the flag
+// path can deploy to production.
+func confirmSiteFlag(client *api.Client, ctx *SiteContext, siteFlag, verb string) (*SiteContext, error) {
+	refusal := &siteFlagMismatchError{entry: ctx.Site, verb: verb}
+	sites, err := client.ListSites(ctx.ProjectID)
+	if errors.Is(err, api.ErrUnauthorized) {
+		return nil, err
+	}
+	if err != nil {
+		return nil, refusal
+	}
+	if _, err := matchSite(sites, siteFlag); err != nil {
+		return ctx, nil
+	}
+	site := linkedSiteNamed(sites, ctx.Site, siteFlag)
+	if site == nil {
+		return nil, refusal
+	}
+	ctx.Site.SiteID, ctx.Site.SiteSlug, ctx.Site.SiteName = site.ID, site.Slug, site.Name
+	return ctx, nil
 }
