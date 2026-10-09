@@ -126,3 +126,12 @@ func TestCronPath(t *testing.T) {
 		t.Errorf("cronPath no-path = %q", got)
 	}
 }
+
+// main is displayed as "api" and listed first (oldest); --site resolves slugs
+// first, so the scope is the site whose slug is api (2026-10-09).
+func TestResolveCronSiteScope_SlugBeforeAnEarlierSitesName(t *testing.T) {
+	got, err := resolveCronSiteScope(liveClient(t, collisionSites), "p1", "api", "")
+	if err != nil || got != "s2" {
+		t.Errorf("scope = %q, err %v; want s2", got, err)
+	}
+}

@@ -36,21 +36,17 @@ func findAppTier(cat *api.MarketplaceCatalog, slug string) (api.CatalogAppTier, 
 	return api.CatalogAppTier{}, false
 }
 
-// resolveScaleTarget picks which site to scale: an explicit --site name/slug
-// wins; otherwise the project config's site_id; otherwise a lone single site.
-// Ambiguous or unmatched inputs return a clear error so we never scale the wrong
-// app.
+// resolveScaleTarget picks which site to scale: an explicit --site wins
+// (matchSite, slugs first: main displayed as "api" rescaled main for
+// `--site api` while another site's slug is api, 2026-10-09); otherwise the
+// project config's site_id; otherwise a lone single site. Ambiguous or
+// unmatched inputs return a clear error so we never scale the wrong app.
 func resolveScaleTarget(sites []api.Site, siteFlag, configSiteID string) (*api.Site, error) {
 	if len(sites) == 0 {
 		return nil, fmt.Errorf("no sites in this project")
 	}
 	if siteFlag != "" {
-		for i := range sites {
-			if sites[i].Slug == siteFlag || sites[i].Name == siteFlag {
-				return &sites[i], nil
-			}
-		}
-		return nil, fmt.Errorf("site %q not found in this project — run 'ghayma site list'", siteFlag)
+		return matchSite(sites, siteFlag)
 	}
 	if configSiteID != "" {
 		for i := range sites {

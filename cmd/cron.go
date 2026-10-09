@@ -185,11 +185,12 @@ func resolveCronJob(cfg *config.Config, name string) (*api.Client, string, *api.
 	}
 }
 
-// resolveCronSiteScope maps the --site flag (name or slug) to a site id for the
-// list query, falling back to the project config's site_id. It returns "" for a
-// project-wide view (no flag and no config site) rather than forcing a choice —
-// name resolution disambiguates when it actually has to. A --site that matches
-// no site errors.
+// resolveCronSiteScope maps the --site flag to a site id for the list query
+// (matchSite, slugs first, so a display name never wins over another site's
+// slug, 2026-10-09), falling back to the project config's site_id. It returns
+// "" for a project-wide view (no flag and no config site) rather than forcing
+// a choice — name resolution disambiguates when it actually has to. A --site
+// that matches no site errors.
 func resolveCronSiteScope(client *api.Client, projectID, siteFlag, configSiteID string) (string, error) {
 	if siteFlag == "" {
 		return configSiteID, nil
@@ -198,12 +199,11 @@ func resolveCronSiteScope(client *api.Client, projectID, siteFlag, configSiteID 
 	if err != nil {
 		return "", err
 	}
-	for _, s := range sites {
-		if s.Slug == siteFlag || s.Name == siteFlag {
-			return s.ID, nil
-		}
+	site, err := matchSite(sites, siteFlag)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("site %q not found in this project — run 'ghayma site list'", siteFlag)
+	return site.ID, nil
 }
 
 // findCronsByName returns every job whose name matches exactly (the server
