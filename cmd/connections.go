@@ -70,7 +70,7 @@ func resolveConnectionTarget(client *api.Client, siteFlag, verb string) (*connec
 	if err != nil {
 		return nil, err
 	}
-	ctx, err := resolveSiteContext(cwd, siteFlag, verb)
+	ctx, err := resolveSiteContextLive(client, cwd, siteFlag, verb)
 	switch {
 	case errors.Is(err, errAttachCancelled):
 		return nil, errors.New("Cancelled")

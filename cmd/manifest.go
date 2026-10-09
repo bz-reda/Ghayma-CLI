@@ -587,11 +587,26 @@ func matchSiteEntry(sites []SiteEntry, want string) *SiteEntry {
 // An entry naming no site pins nothing, so there is nothing to guard: the
 // caller gets NoSite and says so in its own words, rather than this guard
 // claiming the directory is linked to a site called "(unnamed)" (2026-09-12).
+//
+// This check is offline: it only sees the keys the config carries, so a
+// config linking its site by id alone cannot match `--site main` here.
+// resolveSiteContextLive settles that refusal against the live site list.
 func checkSiteFlag(entry SiteEntry, siteFlag, verb string) error {
 	if siteFlag == "" || !hasSite(entry) || matchSiteEntry([]SiteEntry{entry}, siteFlag) != nil {
 		return nil
 	}
-	return fmt.Errorf("this directory is linked to site %q; run from the workspace root (or without --site) to %s another site", siteLabel(entry), verb)
+	return &siteFlagMismatchError{entry: entry, verb: verb}
+}
+
+// siteFlagMismatchError is checkSiteFlag's refusal, typed so a command holding
+// a client can tell it apart and confirm it against the live site list.
+type siteFlagMismatchError struct {
+	entry SiteEntry
+	verb  string
+}
+
+func (e *siteFlagMismatchError) Error() string {
+	return fmt.Sprintf("this directory is linked to site %q; run from the workspace root (or without --site) to %s another site", siteLabel(e.entry), e.verb)
 }
 
 // siteLabel is how a site is named back to the user: slug, else name, else id.

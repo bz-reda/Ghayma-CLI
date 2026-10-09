@@ -75,7 +75,7 @@ func TestDeployHeadline(t *testing.T) {
 func TestDeploy_UsesSiteResolver(t *testing.T) {
 	src := readCmdSource(t, "deploy.go")
 	for _, want := range []string{
-		"resolveSiteContext(",
+		"resolveSiteContextLive(",
 		`"site"`,
 		"findInitializedApps(",
 		"errNoProjectConfig",

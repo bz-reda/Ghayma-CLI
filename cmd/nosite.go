@@ -121,3 +121,35 @@ func liveSiteOf(client *api.Client, ctx *SiteContext, siteFlag string) (*api.Sit
 	}
 	return pickLiveSite(sites, ctx.Site)
 }
+
+// resolveSiteContextLive is resolveSiteContext for a command holding a client.
+// The offline guard only sees the linked site's config keys, so a config that
+// links its site by id alone refused `--site main` in main's own directory
+// (2026-10-08). That refusal is settled against the live list: a --site naming
+// the linked site resolves to it, carrying the live id. An expired session is
+// reported as such; anything else, or a list that cannot be read, keeps the
+// refusal.
+func resolveSiteContextLive(client *api.Client, cwd, siteFlag, verb string) (*SiteContext, error) {
+	ctx, err := resolveSiteContext(cwd, siteFlag, verb)
+	var mismatch *siteFlagMismatchError
+	if !errors.As(err, &mismatch) {
+		return ctx, err
+	}
+	linked, linkedErr := resolveSiteContext(cwd, "", verb)
+	if linkedErr != nil {
+		return nil, err
+	}
+	sites, listErr := client.ListSites(linked.ProjectID)
+	if errors.Is(listErr, api.ErrUnauthorized) {
+		return nil, listErr
+	}
+	if listErr != nil {
+		return nil, err
+	}
+	site := linkedSiteNamed(sites, linked.Site, siteFlag)
+	if site == nil {
+		return nil, err
+	}
+	linked.Site.SiteID, linked.Site.SiteSlug, linked.Site.SiteName = site.ID, site.Slug, site.Name
+	return linked, nil
+}

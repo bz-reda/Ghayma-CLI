@@ -235,7 +235,7 @@ func resolvePushTarget(client *api.Client, siteFlag string) (*pushTarget, error)
 	if err != nil {
 		return nil, err
 	}
-	ctx, err := resolveSiteContext(cwd, siteFlag, "push an image for")
+	ctx, err := resolveSiteContextLive(client, cwd, siteFlag, "push an image for")
 	switch {
 	case errors.Is(err, errAttachCancelled):
 		return nil, errors.New("Cancelled")

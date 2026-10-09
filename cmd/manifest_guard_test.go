@@ -31,18 +31,18 @@ func TestManifestHasNoActiveSite(t *testing.T) {
 
 // TestSiteScopedCommandsUseTheResolver pins the wiring the interim guards stood
 // in for: env's four subcommands and domain create resolve their site through
-// resolveSiteContext (which is what makes --site work), and `site use` still
-// refuses a manifest BEFORE the write-back that would destroy it.
+// resolveSiteContextLive (which is what makes --site work), and `site use`
+// still refuses a manifest BEFORE the write-back that would destroy it.
 func TestSiteScopedCommandsUseTheResolver(t *testing.T) {
 	env := readCmdSource(t, "env.go")
 	if strings.Count(env, "envSiteContext(") < 5 {
 		t.Error("env.go: all four subcommands (plus the helper) must resolve the site through envSiteContext")
 	}
-	if !strings.Contains(env, "resolveSiteContext(") {
-		t.Error("env.go must resolve its site through resolveSiteContext")
+	if !strings.Contains(env, "resolveSiteContextLive(") {
+		t.Error("env.go must resolve its site through resolveSiteContextLive")
 	}
-	if !strings.Contains(readCmdSource(t, "domain.go"), "resolveSiteContext(") {
-		t.Error("domain create must resolve its site through resolveSiteContext")
+	if !strings.Contains(readCmdSource(t, "domain.go"), "resolveSiteContextLive(") {
+		t.Error("domain create must resolve its site through resolveSiteContextLive")
 	}
 
 	site := readCmdSource(t, "site.go")
