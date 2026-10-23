@@ -50,7 +50,7 @@ func registerHint(code string) string {
 	case "invite_required":
 		return "💡 Have a code? Run: ghayma register --invite <code>"
 	case "privacy_required":
-		return "💡 Run: ghayma register --accept-privacy, or sign up at https://dash.ghayma.cloud/register"
+		return "💡 Your Ghayma CLI may be outdated: update it, or sign up at https://dash.ghayma.cloud/register"
 	}
 	return ""
 }

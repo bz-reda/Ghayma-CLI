@@ -44,7 +44,7 @@ func TestConfirmPrivacy(t *testing.T) {
 
 func TestRegisterHint_PrivacyRequired(t *testing.T) {
 	hint := registerHint("privacy_required")
-	for _, want := range []string{"--accept-privacy", "https://dash.ghayma.cloud/register"} {
+	for _, want := range []string{"update", "https://dash.ghayma.cloud/register"} {
 		if !strings.Contains(hint, want) {
 			t.Errorf("privacy_required hint %q lacks %q", hint, want)
 		}
