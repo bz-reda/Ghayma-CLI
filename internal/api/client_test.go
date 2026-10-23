@@ -244,14 +244,14 @@ func TestRegister_InviteCodeInBody(t *testing.T) {
 	defer ts.Close()
 	c := newTestClient(ts.URL)
 
-	if _, err := c.Register("t@t.dz", "password123", "t", "GYB-AB12CD34"); err != nil {
+	if _, err := c.Register("t@t.dz", "password123", "t", "GYB-AB12CD34", ""); err != nil {
 		t.Fatalf("register with invite: %v", err)
 	}
 	if got["invite_code"] != "GYB-AB12CD34" {
 		t.Errorf("invite_code = %q; want GYB-AB12CD34", got["invite_code"])
 	}
 
-	if _, err := c.Register("t@t.dz", "password123", "t", ""); err != nil {
+	if _, err := c.Register("t@t.dz", "password123", "t", "", ""); err != nil {
 		t.Fatalf("register without invite: %v", err)
 	}
 	if _, present := got["invite_code"]; present {
@@ -269,7 +269,7 @@ func TestRegister_SurfacesGateRefusal(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := newTestClient(ts.URL).Register("t@t.dz", "password123", "t", "")
+	_, err := newTestClient(ts.URL).Register("t@t.dz", "password123", "t", "", "")
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("want *APIError, got %T: %v", err, err)

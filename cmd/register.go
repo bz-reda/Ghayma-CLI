@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"paas-cli/internal/api"
 	"paas-cli/internal/config"
@@ -12,7 +13,47 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var registerInvite string
+const (
+	privacyPolicyVersion = "1.0"
+	privacyPolicyURL     = "https://dash.ghayma.cloud/privacy"
+)
+
+var (
+	registerInvite        string
+	registerAcceptPrivacy bool
+)
+
+func privacyConsentText() string {
+	return "Ghayma is in beta and your data is hosted on servers in Paris, France,\n" +
+		"and in the other countries listed in the policy, outside Algeria.\n" +
+		"Privacy Policy: " + privacyPolicyURL
+}
+
+// confirmPrivacy defaults to No: only an explicit y/yes accepts.
+func confirmPrivacy(flagAccepted bool, ask func() (string, error)) bool {
+	if flagAccepted {
+		return true
+	}
+	answer, err := ask()
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		return true
+	}
+	return false
+}
+
+func registerHint(code string) string {
+	switch code {
+	case "invite_required":
+		return "💡 Have a code? Run: ghayma register --invite <code>"
+	case "privacy_required":
+		return "💡 Your Ghayma CLI may be outdated: update it, or sign up at https://dash.ghayma.cloud/register"
+	}
+	return ""
+}
 
 var registerCmd = &cobra.Command{
 	Use:   "register",
@@ -21,7 +62,11 @@ var registerCmd = &cobra.Command{
 
 While Ghayma is in private beta, registration requires an invitation code:
 
-  ghayma register --invite GYB-XXXXXXXX`,
+  ghayma register --invite GYB-XXXXXXXX
+
+Registration asks you to accept the Privacy Policy (` + privacyPolicyURL + `).
+--accept-privacy answers that question in advance; name, email and password
+are still asked.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// The API host comes from config (default api.ghayma.tech), same as
 		// every other command — register deliberately has no --host flag, since
@@ -66,13 +111,26 @@ While Ghayma is in private beta, registration requires an invitation code:
 			return
 		}
 
+		fmt.Println()
+		fmt.Println(privacyConsentText())
+		accepted := confirmPrivacy(registerAcceptPrivacy, func() (string, error) {
+			p := promptui.Prompt{Label: "I have read and accept the Privacy Policy [y/N]"}
+			return p.Run()
+		})
+		if !accepted {
+			fmt.Println("❌ Registration cancelled: the Privacy Policy must be accepted.")
+			return
+		}
+
 		client := api.NewClient(cfg)
-		resp, err := client.Register(email, password, name, registerInvite)
+		resp, err := client.Register(email, password, name, registerInvite, privacyPolicyVersion)
 		if err != nil {
 			fmt.Printf("❌ Registration failed: %v\n", err)
 			var apiErr *api.APIError
-			if errors.As(err, &apiErr) && apiErr.Code == "invite_required" {
-				fmt.Println("💡 Have a code? Run: ghayma register --invite <code>")
+			if errors.As(err, &apiErr) {
+				if hint := registerHint(apiErr.Code); hint != "" {
+					fmt.Println(hint)
+				}
 			}
 			return
 		}
@@ -97,5 +155,6 @@ While Ghayma is in private beta, registration requires an invitation code:
 
 func init() {
 	registerCmd.Flags().StringVar(&registerInvite, "invite", "", "invitation code (required while Ghayma is in private beta)")
+	registerCmd.Flags().BoolVar(&registerAcceptPrivacy, "accept-privacy", false, "accept the Privacy Policy ("+privacyPolicyURL+") without being asked")
 	rootCmd.AddCommand(registerCmd)
 }

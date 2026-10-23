@@ -96,7 +96,7 @@ type RegisterResponse struct {
 	Message string `json:"message"`
 }
 
-func (c *Client) Register(email, password, name, inviteCode string) (*RegisterResponse, error) {
+func (c *Client) Register(email, password, name, inviteCode, privacyVersion string) (*RegisterResponse, error) {
 	payload := map[string]string{
 		"email":    email,
 		"password": password,
@@ -104,6 +104,9 @@ func (c *Client) Register(email, password, name, inviteCode string) (*RegisterRe
 	}
 	if inviteCode != "" {
 		payload["invite_code"] = inviteCode
+	}
+	if privacyVersion != "" {
+		payload["privacy_version"] = privacyVersion
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest("POST", c.cfg.APIHost+"/api/v1/auth/register", bytes.NewReader(body))
