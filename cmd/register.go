@@ -87,6 +87,14 @@ are still asked.`,
 			cfg.SetHost(cfg.APIHost)
 		}
 
+		// Without a terminal the consent question can't be asked, so say how
+		// to answer it before asking anything else.
+		if !registerAcceptPrivacy && !stdinIsTerminalFn() {
+			fmt.Println(privacyConsentText())
+			failf("Registration cancelled: the Privacy Policy must be accepted. Run again in a terminal, or with --accept-privacy.")
+			return
+		}
+
 		// Name
 		namePrompt := promptui.Prompt{Label: "Full Name"}
 		name, _ := namePrompt.Run()

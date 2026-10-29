@@ -149,14 +149,16 @@ type MeResponse struct {
 	PrivacyConsentRequired bool   `json:"privacy_consent_required"`
 }
 
-func (c *Client) GetMe(token string) (*MeResponse, error) {
-	req, err := http.NewRequest("GET", c.cfg.APIHost+"/api/v1/auth/me", nil)
+// GetMe reads the account behind a session. A body that won't decode is an
+// error, so a broken answer never reads as "no consent needed".
+func (c *Client) GetMe(ctx context.Context, token string) (*MeResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.cfg.APIHost+"/api/v1/auth/me", nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -167,15 +169,17 @@ func (c *Client) GetMe(token string) (*MeResponse, error) {
 	}
 
 	var result MeResponse
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("could not read the account details: %w", err)
+	}
 	return &result, nil
 }
 
 // AcceptPrivacy records the account's consent to a policy version. It takes
 // the session explicitly because login asks before saving any credential.
-func (c *Client) AcceptPrivacy(token, version string) error {
+func (c *Client) AcceptPrivacy(ctx context.Context, token, version string) error {
 	body, _ := json.Marshal(map[string]string{"privacy_version": version})
-	req, err := http.NewRequest("POST", c.cfg.APIHost+"/api/v1/auth/privacy/accept", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.cfg.APIHost+"/api/v1/auth/privacy/accept", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

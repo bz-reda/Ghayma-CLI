@@ -52,6 +52,7 @@ func resetCommandFlags() {
 	siteScaleSite, siteScaleTier, siteScaleReplicas = "", "", 0
 	initNoSite, initSite, initDomain = false, "", ""
 	linkNoSite = false
+	loginAcceptPrivacy, registerAcceptPrivacy = false, false
 	accessJSON, accessAddName, accessAddLevel, accessAddAllow, accessAddDays = false, "", "", "", 0
 	accessRevokeYes, accessRotateYes, accessAllowSet = false, false, ""
 	dbResizeTier, dbResizeDiskGB, dbResizeBackup, dbResizeNoWait = "", 0, "", false

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"paas-cli/internal/api"
@@ -207,7 +208,7 @@ func waitForApproval(client *api.Client, code string, deadline time.Time, flow l
 		}
 		delay = flow.interval
 
-		ctx, cancel := context.WithTimeout(context.Background(), flow.timeout)
+		ctx, cancel := context.WithTimeout(context.Background(), min(flow.timeout, deadline.Sub(flow.now())))
 		poll, err := client.PollCLISession(ctx, code)
 		cancel()
 
@@ -228,11 +229,9 @@ func waitForApproval(client *api.Client, code string, deadline time.Time, flow l
 		case apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusGone:
 			return nil, errors.New("Login session expired. Please try again.")
 		case apiErr.Status == http.StatusTooManyRequests:
-			if apiErr.RetryAfter > 0 {
-				delay = apiErr.RetryAfter
-			}
+			delay = max(apiErr.RetryAfter, flow.interval)
 			if !throttleSaid {
-				fmt.Printf("⏳ The server asked to slow down; checking again in %s.\n", waitText(delay))
+				fmt.Printf("⏳ The server asked to slow down; checking again in %s.\n", waitText(min(delay, deadline.Sub(flow.now()))))
 				throttleSaid = true
 			}
 		default:
@@ -245,19 +244,30 @@ func waitForApproval(client *api.Client, code string, deadline time.Time, flow l
 // completeLogin asks for privacy consent when the account needs it, on the
 // fresh session and before any credential is saved, then saves the login.
 func completeLogin(cfg *config.Config, client *api.Client, jwt, email string, flow loginFlow) error {
-	me, err := client.GetMe(jwt)
+	ctx, cancel := context.WithTimeout(context.Background(), flow.timeout)
+	me, err := client.GetMe(ctx, jwt)
+	cancel()
 	if err != nil {
 		return fmt.Errorf("Could not check your account: %v. Please try again.", err)
+	}
+	if me.ID == "" {
+		return errors.New("Could not check your account: the server sent no account details. Please try again.")
 	}
 
 	if me.PrivacyConsentRequired {
 		fmt.Println()
 		fmt.Println("Before you continue, please read and accept the Ghayma Privacy Policy.")
 		fmt.Println(privacyConsentText())
+		if !flow.acceptPrivacy && !stdinIsTerminalFn() {
+			return errors.New("Login cancelled: the Privacy Policy must be accepted. Run again in a terminal, or with --accept-privacy.")
+		}
 		if !confirmPrivacy(flow.acceptPrivacy, flow.askPrivacy) {
 			return errors.New("Login cancelled: the Privacy Policy must be accepted.")
 		}
-		if err := client.AcceptPrivacy(jwt, privacyPolicyVersion); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), flow.timeout)
+		err := client.AcceptPrivacy(ctx, jwt, privacyPolicyVersion)
+		cancel()
+		if err != nil {
 			return fmt.Errorf("Could not record your acceptance of the Privacy Policy: %v. Please try again.", err)
 		}
 	}
@@ -272,10 +282,11 @@ func completeLogin(cfg *config.Config, client *api.Client, jwt, email string, fl
 	return nil
 }
 
-// refusalText is the server's message, with the wait it asked for.
+// refusalText is the server's message, with the wait it asked for unless the
+// message already says when to try again.
 func refusalText(err error) string {
 	var apiErr *api.APIError
-	if errors.As(err, &apiErr) && apiErr.RetryAfter > 0 {
+	if errors.As(err, &apiErr) && apiErr.RetryAfter > 0 && !strings.Contains(strings.ToLower(apiErr.Message), "try again") {
 		return fmt.Sprintf("%v (try again in %s)", err, waitText(apiErr.RetryAfter))
 	}
 	return err.Error()

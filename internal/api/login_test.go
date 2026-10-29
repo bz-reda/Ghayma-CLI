@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -226,7 +228,7 @@ func TestGetMe_PrivacyConsentRequired(t *testing.T) {
 			}
 			jsonReply(w, http.StatusOK, tc.body)
 		}))
-		me, err := newTestClient(ts.URL).GetMe("jwt-fresh")
+		me, err := newTestClient(ts.URL).GetMe(context.Background(), "jwt-fresh")
 		ts.Close()
 		if err != nil {
 			t.Fatalf("GetMe: %v", err)
@@ -243,9 +245,72 @@ func TestGetMe_RefusalCarriesServerMessage(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := newTestClient(ts.URL).GetMe("jwt-fresh")
+	_, err := newTestClient(ts.URL).GetMe(context.Background(), "jwt-fresh")
 	if apiErr := asAPIError(t, err); apiErr.Message != "database unavailable" {
 		t.Errorf("message = %q", apiErr.Message)
+	}
+}
+
+// A 200 that won't decode must not read as "no consent needed".
+func TestGetMe_MalformedBodyIsAnError(t *testing.T) {
+	for _, body := range []string{
+		`<html>captive portal</html>`,
+		`{"id":"u1","email":"a@b.dz","privacy_consent_required":tr`,
+	} {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			jsonReply(w, http.StatusOK, body)
+		}))
+		me, err := newTestClient(ts.URL).GetMe(context.Background(), "jwt-fresh")
+		ts.Close()
+		if err == nil {
+			t.Errorf("%s: got %+v and no error; want the decode error", body, me)
+		}
+	}
+}
+
+func TestGetMe_RetriesTransportFailures(t *testing.T) {
+	shrinkBackoff(t)
+	st := &stubTransport{fn: func(attempt int, req *http.Request) (*http.Response, error) {
+		if attempt == 1 {
+			return nil, &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
+		}
+		resp := stubResponse(http.StatusOK, req)
+		resp.Body = io.NopCloser(strings.NewReader(`{"id":"u1","email":"a@b.dz"}`))
+		return resp, nil
+	}}
+	me, err := stubClient(t, st).GetMe(context.Background(), "jwt-fresh")
+	if err != nil {
+		t.Fatalf("GetMe: %v", err)
+	}
+	if me.ID != "u1" || st.calls.Load() != 2 {
+		t.Errorf("got %+v after %d calls; want u1 after one retry", me, st.calls.Load())
+	}
+}
+
+func TestGetMeAndAcceptPrivacy_HonourTheDeadline(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The server only notices a dropped client once the body is read.
+		io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+	c := newTestClient(ts.URL)
+
+	calls := map[string]func(ctx context.Context) error{
+		"me":     func(ctx context.Context) error { _, err := c.GetMe(ctx, "jwt-fresh"); return err },
+		"accept": func(ctx context.Context) error { return c.AcceptPrivacy(ctx, "jwt-fresh", "1.0") },
+	}
+	for name, call := range calls {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		start := time.Now()
+		err := call(ctx)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("%s: err = %v; want the deadline", name, err)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Errorf("%s took %v past a 50ms deadline", name, elapsed)
+		}
 	}
 }
 
@@ -259,7 +324,7 @@ func TestAcceptPrivacy(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	if err := newTestClient(ts.URL).AcceptPrivacy("jwt-fresh", "1.0"); err != nil {
+	if err := newTestClient(ts.URL).AcceptPrivacy(context.Background(), "jwt-fresh", "1.0"); err != nil {
 		t.Fatalf("AcceptPrivacy: %v", err)
 	}
 	if gotMethod != http.MethodPost || gotPath != "/api/v1/auth/privacy/accept" {
@@ -279,7 +344,7 @@ func TestAcceptPrivacy_Refusal(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	err := newTestClient(ts.URL).AcceptPrivacy("jwt-fresh", "9.9")
+	err := newTestClient(ts.URL).AcceptPrivacy(context.Background(), "jwt-fresh", "9.9")
 	apiErr := asAPIError(t, err)
 	if apiErr.Status != http.StatusBadRequest || apiErr.Code != "invalid_privacy_version" || apiErr.Message != "unknown privacy policy version" {
 		t.Errorf("got %+v", apiErr)

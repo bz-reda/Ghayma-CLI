@@ -144,6 +144,7 @@ func newLoginHarness(t *testing.T, backend *loginBackend) *loginHarness {
 	h := &loginHarness{t: t, backend: backend, cfgPath: filepath.Join(t.TempDir(), "cli.json"), clock: &fakeClock{at: time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)}}
 	t.Setenv("GHAYMA_CONFIG", h.cfgPath)
 	t.Setenv("GHAYMA_API_HOST", "")
+	forceStdin(t, true)
 	h.cfg = config.Load()
 	h.cfg.SetHost(ts.URL)
 	h.client = api.NewClient(h.cfg)
@@ -221,7 +222,7 @@ func TestBrowserLogin_CreateRefusedShowsServerMessage(t *testing.T) {
 		{"per-address limit", loginReply{status: 429, header: "60", body: `{"error":"too many pending CLI logins from your network; finish one or wait a few minutes","retry_after":60}`},
 			[]string{"too many pending CLI logins from your network", "try again in 1 minute"}},
 		{"store full", loginReply{status: 503, header: "60", body: `{"error":"too many CLI logins in progress; try again in a few minutes","retry_after":60}`},
-			[]string{"too many CLI logins in progress", "try again in 1 minute"}},
+			[]string{"too many CLI logins in progress; try again in a few minutes"}},
 		{"rate limit middleware", loginReply{status: 429, header: "17", body: `{"error":"rate limit exceeded","retry_after":17}`},
 			[]string{"rate limit exceeded", "try again in 17 seconds"}},
 		{"header only", loginReply{status: 503, header: "120", body: `{"error":"maintenance"}`},
@@ -242,6 +243,9 @@ func TestBrowserLogin_CreateRefusedShowsServerMessage(t *testing.T) {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q lacks %q", err, want)
 				}
+			}
+			if n := strings.Count(err.Error(), "try again"); n > 1 {
+				t.Errorf("error %q names the wait %d times; want once", err, n)
 			}
 			if msg := strings.ToLower(err.Error() + out); strings.Contains(msg, "expired") {
 				t.Errorf("a refusal must not read as an expired session: %q / %q", err, out)
@@ -431,11 +435,54 @@ func TestBrowserLogin_ThrottleNeverWaitsPastTheDeadline(t *testing.T) {
 	h := newLoginHarness(t, backend)
 	start := h.clock.at
 
-	if _, err := h.browser(); err == nil || !strings.Contains(err.Error(), "timed out") {
+	out, err := h.browser()
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v; want a timeout", err)
 	}
 	if got := h.clock.at.Sub(start); got != 60*time.Second {
 		t.Errorf("waited %v; want the 60s deadline", got)
+	}
+	if !strings.Contains(out, "checking again in 55 seconds") || strings.Contains(out, "minutes") {
+		t.Errorf("the announced wait must be the capped one:\n%s", out)
+	}
+}
+
+func TestBrowserLogin_ShortRetryAfterKeepsTheInterval(t *testing.T) {
+	backend := newLoginBackend()
+	backend.polls = []loginReply{
+		{status: 429, body: `{"error":"rate limit exceeded","retry_after":1}`},
+		{status: 200, body: `{"confirmed":true,"token":"jwt-1","email":"a@b.dz"}`},
+	}
+	h := newLoginHarness(t, backend)
+
+	out, err := h.browser()
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if len(h.clock.slept) != 2 || h.clock.slept[1] != 5*time.Second {
+		t.Errorf("slept %v; want a throttled poll no sooner than a normal one", h.clock.slept)
+	}
+	if !strings.Contains(out, "checking again in 5 seconds") {
+		t.Errorf("the announced wait must be the one used:\n%s", out)
+	}
+}
+
+// A poll started just before the deadline must not outlive it.
+func TestBrowserLogin_PollRequestEndsAtTheDeadline(t *testing.T) {
+	backend := newLoginBackend()
+	backend.create = loginReply{status: 200, body: `{"code":"c0de","login_url":"https://dash.test/x"}`}
+	backend.polls = []loginReply{{hang: true}}
+	h := newLoginHarness(t, backend)
+	h.flow.wait = 5*time.Second + 50*time.Millisecond
+	h.flow.timeout = 3 * time.Second
+
+	start := time.Now()
+	_, err := h.browser()
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v; want a timeout", err)
+	}
+	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
+		t.Errorf("took %v; the last poll ran past the deadline", elapsed)
 	}
 }
 
@@ -458,8 +505,12 @@ func TestBrowserLogin_ApprovedWithoutToken(t *testing.T) {
 	backend.polls = []loginReply{{status: 200, body: `{"confirmed":true}`}}
 	h := newLoginHarness(t, backend)
 
-	if _, err := h.browser(); err == nil {
-		t.Fatal("an approval without a session must fail")
+	_, err := h.browser()
+	if err == nil || !strings.Contains(err.Error(), "sent no session") {
+		t.Errorf("err = %v; want the no-session error", err)
+	}
+	if backend.pollCalls != 1 {
+		t.Errorf("polled %d times; want 1", backend.pollCalls)
 	}
 	h.assertNothingSaved()
 }
@@ -483,6 +534,9 @@ func TestLogin_PrivacyConsent(t *testing.T) {
 		{"not required", loginReply{status: 200, body: `{"id":"u1","email":"a@b.dz","name":"A","privacy_consent_required":false}`}, loginReply{}, false, "", "", 0, 0},
 		{"older backend", loginReply{status: 200, body: `{"id":"u1","email":"a@b.dz","name":"A"}`}, loginReply{}, false, "", "", 0, 0},
 		{"account unreadable", loginReply{status: 503, body: `{"error":"database unavailable"}`}, loginReply{}, false, "", "database unavailable", 0, 0},
+		{"account malformed", loginReply{status: 200, body: `<html>captive portal</html>`}, loginReply{}, false, "", "Could not check your account", 0, 0},
+		{"account truncated", loginReply{status: 200, body: `{"id":"u1","email":"a@b.dz","privacy_consent_required":tr`}, loginReply{}, false, "", "Could not check your account", 0, 0},
+		{"account without id", loginReply{status: 200, body: `{"email":"a@b.dz","privacy_consent_required":false}`}, loginReply{}, false, "", "Could not check your account", 0, 0},
 	}
 	paths := map[string]func(h *loginHarness) (string, error){
 		"browser": (*loginHarness).browser,
@@ -524,6 +578,90 @@ func TestLogin_PrivacyConsent(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestLogin_ConsentWithoutTerminal(t *testing.T) {
+	required := loginReply{status: 200, body: `{"id":"u1","email":"a@b.dz","name":"A","privacy_consent_required":true}`}
+	notRequired := loginReply{status: 200, body: `{"id":"u1","email":"a@b.dz","name":"A"}`}
+	paths := map[string]func(h *loginHarness) (string, error){
+		"browser": (*loginHarness).browser,
+		"email":   (*loginHarness).email,
+	}
+	for path, run := range paths {
+		t.Run(path+"/refused at once", func(t *testing.T) {
+			backend := newLoginBackend()
+			backend.me = required
+			h := newLoginHarness(t, backend)
+			forceStdin(t, false)
+
+			_, err := run(h)
+			if err == nil || !strings.Contains(err.Error(), "--accept-privacy") {
+				t.Errorf("err = %v; want the --accept-privacy hint", err)
+			}
+			if h.asked != 0 || len(backend.acceptAuth) != 0 {
+				t.Errorf("asked %d, accept calls %d; want neither", h.asked, len(backend.acceptAuth))
+			}
+			h.assertNothingSaved()
+		})
+		t.Run(path+"/flag", func(t *testing.T) {
+			backend := newLoginBackend()
+			backend.me = required
+			h := newLoginHarness(t, backend)
+			forceStdin(t, false)
+			h.flow.acceptPrivacy = true
+
+			if _, err := run(h); err != nil {
+				t.Fatalf("login: %v", err)
+			}
+			if h.asked != 0 || len(backend.acceptAuth) != 1 {
+				t.Errorf("asked %d, accept calls %d; want 0, 1", h.asked, len(backend.acceptAuth))
+			}
+			h.assertLoggedIn("a@b.dz")
+		})
+		t.Run(path+"/not required", func(t *testing.T) {
+			backend := newLoginBackend()
+			backend.me = notRequired
+			h := newLoginHarness(t, backend)
+			forceStdin(t, false)
+
+			if _, err := run(h); err != nil {
+				t.Fatalf("login: %v", err)
+			}
+			h.assertLoggedIn("a@b.dz")
+		})
+	}
+}
+
+// completeLogin bounds both account calls, so a hung server ends the login.
+func TestLogin_AccountCallsTimeOut(t *testing.T) {
+	cases := map[string]func(b *loginBackend){
+		"me": func(b *loginBackend) { b.me = loginReply{hang: true} },
+		"accept": func(b *loginBackend) {
+			b.me = loginReply{status: 200, body: `{"id":"u1","email":"a@b.dz","privacy_consent_required":true}`}
+			b.accept = loginReply{hang: true}
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			backend := newLoginBackend()
+			setup(backend)
+			h := newLoginHarness(t, backend)
+			h.flow.timeout = 50 * time.Millisecond
+			h.answer = "y"
+
+			done := make(chan error, 1)
+			go func() { _, err := h.email(); done <- err }()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("a hung account call must fail the login")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("login hung on the account call")
+			}
+			h.assertNothingSaved()
+		})
 	}
 }
 
@@ -579,11 +717,59 @@ func TestLoginCommand_RefusalExitsNonZero(t *testing.T) {
 	if lastExitCode != 1 {
 		t.Errorf("exit code %d; want 1", lastExitCode)
 	}
-	if !strings.Contains(out, "too many CLI logins in progress") || !strings.Contains(out, "try again in 1 minute") {
-		t.Errorf("output lacks the server's message and wait:\n%s", out)
+	if !strings.Contains(out, "too many CLI logins in progress; try again in a few minutes") || strings.Count(out, "try again") != 1 {
+		t.Errorf("output lacks the server's message, or names the wait twice:\n%s", out)
 	}
 	if backend.pollCalls != 0 {
 		t.Errorf("polled %d times; want none", backend.pollCalls)
+	}
+}
+
+func TestLoginCommand_AcceptPrivacyFlagReachesTheFlow(t *testing.T) {
+	backend := newLoginBackend()
+	backend.me = loginReply{status: 200, body: `{"id":"u1","email":"a@b.dz","privacy_consent_required":true}`}
+	ts := backend.serve(t)
+	cfgPath := filepath.Join(t.TempDir(), "cli.json")
+	t.Setenv("GHAYMA_CONFIG", cfgPath)
+	t.Setenv("GHAYMA_API_HOST", ts.URL)
+	forceStdin(t, false)
+	clock := &fakeClock{at: time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)}
+	orig := defaultLoginFlow
+	defaultLoginFlow.now, defaultLoginFlow.sleep = clock.now, clock.sleep
+	defaultLoginFlow.openBrowser = func(string) {}
+	defaultLoginFlow.askPrivacy = func() (string, error) {
+		t.Error("--accept-privacy must answer the question")
+		return "", nil
+	}
+	t.Cleanup(func() { defaultLoginFlow = orig })
+
+	out := runCLI(t, t.TempDir(), "login", "--accept-privacy")
+	if lastExitCode != 0 {
+		t.Fatalf("exit code %d; want 0:\n%s", lastExitCode, out)
+	}
+	if len(backend.acceptAuth) != 1 || backend.acceptBody[0] != `{"privacy_version":"1.0"}` {
+		t.Errorf("accept calls %v; want one with version 1.0", backend.acceptBody)
+	}
+	if loginAcceptPrivacy {
+		t.Error("resetCommandFlags must clear --accept-privacy")
+	}
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil || !strings.Contains(string(raw), "gh_minted") {
+		t.Errorf("the login was not saved: %v", err)
+	}
+}
+
+func TestRegister_WithoutTerminalFailsAtOnce(t *testing.T) {
+	forceStdin(t, false)
+	t.Setenv("GHAYMA_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
+	t.Setenv("GHAYMA_API_HOST", "http://127.0.0.1:1")
+
+	out := runCLI(t, t.TempDir(), "register")
+	if lastExitCode != 1 || !strings.Contains(out, "--accept-privacy") {
+		t.Errorf("exit %d, output:\n%s\nwant exit 1 and the --accept-privacy hint", lastExitCode, out)
+	}
+	if strings.Contains(out, "Full Name") {
+		t.Errorf("register prompted before refusing:\n%s", out)
 	}
 }
 

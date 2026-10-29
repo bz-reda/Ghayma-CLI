@@ -34,8 +34,10 @@ ghayma deploy             # Deploy (production when the target site is a product
 | Command | Description |
 |---|---|
 | `ghayma register` | Create a new Ghayma account |
+| `ghayma register --accept-privacy` | Accept the Privacy Policy in advance (needed without a terminal) |
 | `ghayma login` | Authenticate with Ghayma (opens browser) |
 | `ghayma login --email` | Authenticate with email/password |
+| `ghayma login --accept-privacy` | Accept the Privacy Policy in advance, if your account is asked to (needed without a terminal) |
 | `ghayma logout` | Log out and clear saved credentials |
 | `ghayma whoami` | Show the current CLI identity |
 | `ghayma version` | Show CLI version |
