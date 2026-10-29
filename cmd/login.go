@@ -1,12 +1,14 @@
 package cmd
 
 import (
-	"encoding/json"
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"paas-cli/internal/api"
@@ -83,9 +85,38 @@ func provisionCLIToken(client *api.Client, cfg *config.Config, jwt string) {
 		name, expires.Format("2006-01-02"))
 }
 
+// loginFlow is how a login waits and asks. Tests swap the clock, the browser
+// and the prompt.
+type loginFlow struct {
+	interval      time.Duration // between polls
+	wait          time.Duration // how long to poll when the server names no expiry
+	timeout       time.Duration // per create or poll request
+	now           func() time.Time
+	sleep         func(time.Duration)
+	openBrowser   func(string)
+	acceptPrivacy bool
+	askPrivacy    func() (string, error)
+}
+
+var defaultLoginFlow = loginFlow{
+	interval:    5 * time.Second,
+	wait:        5 * time.Minute,
+	timeout:     30 * time.Second,
+	now:         time.Now,
+	sleep:       time.Sleep,
+	openBrowser: openBrowser,
+	askPrivacy:  askPrivacyConsent,
+}
+
+var loginAcceptPrivacy bool
+
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Login to Ghayma",
+	Long: `Login to Ghayma, in the browser or with --email.
+
+If your account has not accepted the Privacy Policy (` + privacyPolicyURL + `),
+login asks you to first. --accept-privacy answers that question in advance.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := config.Load()
 		// A login is the one deliberate act that should persist the host, so
@@ -101,95 +132,180 @@ var loginCmd = &cobra.Command{
 		}
 		client := api.NewClient(cfg)
 
-		useEmail, _ := cmd.Flags().GetBool("email")
+		flow := defaultLoginFlow
+		flow.acceptPrivacy = loginAcceptPrivacy
 
-		if useEmail {
+		var err error
+		if useEmail, _ := cmd.Flags().GetBool("email"); useEmail {
 			emailPrompt := promptui.Prompt{Label: "Email"}
 			email, _ := emailPrompt.Run()
 
 			passPrompt := promptui.Prompt{Label: "Password", Mask: '*'}
 			password, _ := passPrompt.Run()
 
-			resp, err := client.Login(email, password)
-			if err != nil {
-				fmt.Printf("❌ Login failed: %v\n", err)
-				return
-			}
-
-			cfg.UserID = resp.User.ID
-			cfg.Email = resp.User.Email
-
-			fmt.Printf("✅ Logged in as %s (%s)\n", resp.User.Name, resp.User.Email)
-			provisionCLIToken(client, cfg, resp.Token)
-			return
+			err = emailLogin(cfg, client, email, password, flow)
+		} else {
+			err = browserLogin(cfg, client, flow)
 		}
-
-		// Default: browser login
-		browserLogin(cfg, client)
+		if err != nil {
+			failf("%v", err)
+		}
 	},
 }
 
-func browserLogin(cfg *config.Config, client *api.Client) {
-	fmt.Println("🔐 Opening browser for login...")
-
-	resp, err := http.Post(cfg.APIHost+"/api/v1/auth/cli/session", "application/json", nil)
+func emailLogin(cfg *config.Config, client *api.Client, email, password string, flow loginFlow) error {
+	resp, err := client.Login(email, password)
 	if err != nil {
-		fmt.Printf("❌ Failed to create login session: %v\n", err)
-		return
+		return fmt.Errorf("Login failed: %s", refusalText(err))
 	}
-	defer resp.Body.Close()
+	if resp.Token == "" {
+		return errors.New("Login failed: the server sent no session. Please try again.")
+	}
+	return completeLogin(cfg, client, resp.Token, resp.User.Email, flow)
+}
 
-	var session struct {
-		Code     string `json:"code"`
-		LoginURL string `json:"login_url"`
+func browserLogin(cfg *config.Config, client *api.Client, flow loginFlow) error {
+	ctx, cancel := context.WithTimeout(context.Background(), flow.timeout)
+	session, err := client.CreateCLISession(ctx)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("Could not start the login: %s", refusalText(err))
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
-		fmt.Printf("❌ Failed to parse response: %v\n", err)
-		return
+	if session.Code == "" || session.LoginURL == "" {
+		return errors.New("Could not start the login: the server sent an incomplete login session. Please try again.")
 	}
 
-	openBrowser(session.LoginURL)
+	fmt.Println("🔐 Opening browser for login...")
+	flow.openBrowser(session.LoginURL)
 	fmt.Printf("\n   If browser didn't open, visit:\n   %s\n\n", session.LoginURL)
 	fmt.Println("⏳ Waiting for approval in browser... (Ctrl+C to cancel)")
 
-	for i := 0; i < 60; i++ {
-		time.Sleep(5 * time.Second)
+	wait := flow.wait
+	if session.ExpiresIn > 0 {
+		wait = time.Duration(session.ExpiresIn) * time.Second
+	}
+	approved, err := waitForApproval(client, session.Code, flow.now().Add(wait), flow)
+	if err != nil {
+		return err
+	}
+	return completeLogin(cfg, client, approved.Token, approved.Email, flow)
+}
 
-		pollResp, err := http.Get(cfg.APIHost + "/api/v1/auth/cli/session/" + session.Code)
-		if err != nil {
-			continue
+// waitForApproval polls until the login is approved, refused or past the
+// deadline. A throttled poll waits as long as the server asked; server trouble
+// is said once and polling goes on.
+func waitForApproval(client *api.Client, code string, deadline time.Time, flow loginFlow) (*api.CLISessionPoll, error) {
+	delay := flow.interval
+	var troubleSaid, throttleSaid bool
+	for {
+		remaining := deadline.Sub(flow.now())
+		if remaining <= 0 {
+			break
 		}
-
-		var result struct {
-			Confirmed bool   `json:"confirmed"`
-			Token     string `json:"token"`
-			Email     string `json:"email"`
-			Error     string `json:"error"`
+		flow.sleep(min(delay, remaining))
+		if !flow.now().Before(deadline) {
+			break
 		}
-		json.NewDecoder(pollResp.Body).Decode(&result)
-		pollResp.Body.Close()
+		delay = flow.interval
 
-		if pollResp.StatusCode == http.StatusGone || pollResp.StatusCode == http.StatusNotFound {
-			fmt.Println("❌ Login session expired. Please try again.")
-			return
-		}
+		ctx, cancel := context.WithTimeout(context.Background(), min(flow.timeout, deadline.Sub(flow.now())))
+		poll, err := client.PollCLISession(ctx, code)
+		cancel()
 
-		if result.Confirmed && result.Token != "" {
-			cfg.Email = result.Email
-
-			me, err := client.GetMe(result.Token)
-			if err == nil {
-				cfg.UserID = me.ID
-				cfg.Email = me.Email
+		var apiErr *api.APIError
+		switch {
+		case err == nil && poll.Status == http.StatusOK && poll.Confirmed:
+			if poll.Token == "" {
+				return nil, errors.New("Login failed: the server approved the login but sent no session. Please try again.")
 			}
+			return poll, nil
+		case err == nil:
+			continue
+		case !errors.As(err, &apiErr) || apiErr.Status >= 500:
+			if !troubleSaid {
+				fmt.Printf("⚠️  Server unavailable, retrying… (%v)\n", err)
+				troubleSaid = true
+			}
+		case apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusGone:
+			return nil, errors.New("Login session expired. Please try again.")
+		case apiErr.Status == http.StatusTooManyRequests:
+			delay = max(apiErr.RetryAfter, flow.interval)
+			if !throttleSaid {
+				fmt.Printf("⏳ The server asked to slow down; checking again in %s.\n", waitText(min(delay, deadline.Sub(flow.now()))))
+				throttleSaid = true
+			}
+		default:
+			return nil, fmt.Errorf("Login failed: %v", err)
+		}
+	}
+	return nil, errors.New("Login timed out. Please try again.")
+}
 
-			fmt.Printf("✅ Logged in as %s\n", cfg.Email)
-			provisionCLIToken(client, cfg, result.Token)
-			return
+// completeLogin asks for privacy consent when the account needs it, on the
+// fresh session and before any credential is saved, then saves the login.
+func completeLogin(cfg *config.Config, client *api.Client, jwt, email string, flow loginFlow) error {
+	ctx, cancel := context.WithTimeout(context.Background(), flow.timeout)
+	me, err := client.GetMe(ctx, jwt)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("Could not check your account: %v. Please try again.", err)
+	}
+	if me.ID == "" {
+		return errors.New("Could not check your account: the server sent no account details. Please try again.")
+	}
+
+	if me.PrivacyConsentRequired {
+		fmt.Println()
+		fmt.Println("Before you continue, please read and accept the Ghayma Privacy Policy.")
+		fmt.Println(privacyConsentText())
+		if !flow.acceptPrivacy && !stdinIsTerminalFn() {
+			return errors.New("Login cancelled: the Privacy Policy must be accepted. Run again in a terminal, or with --accept-privacy.")
+		}
+		if !confirmPrivacy(flow.acceptPrivacy, flow.askPrivacy) {
+			return errors.New("Login cancelled: the Privacy Policy must be accepted.")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), flow.timeout)
+		err := client.AcceptPrivacy(ctx, jwt, privacyPolicyVersion)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("Could not record your acceptance of the Privacy Policy: %v. Please try again.", err)
 		}
 	}
 
-	fmt.Println("❌ Login timed out. Please try again.")
+	cfg.UserID = me.ID
+	cfg.Email = me.Email
+	if cfg.Email == "" {
+		cfg.Email = email
+	}
+	fmt.Printf("✅ Logged in as %s\n", cfg.Email)
+	provisionCLIToken(client, cfg, jwt)
+	return nil
+}
+
+// refusalText is the server's message, with the wait it asked for unless the
+// message already says when to try again.
+func refusalText(err error) string {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.RetryAfter > 0 && !strings.Contains(strings.ToLower(apiErr.Message), "try again") {
+		return fmt.Sprintf("%v (try again in %s)", err, waitText(apiErr.RetryAfter))
+	}
+	return err.Error()
+}
+
+// waitText rounds a wait up to whole seconds, or whole minutes from one minute.
+func waitText(d time.Duration) string {
+	secs := int((d + time.Second - 1) / time.Second)
+	if secs < 60 {
+		return plural(max(secs, 1), "second")
+	}
+	return plural((secs+59)/60, "minute")
+}
+
+func plural(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
 }
 
 func openBrowser(url string) {
@@ -210,5 +326,6 @@ func openBrowser(url string) {
 func init() {
 	loginCmd.Flags().Bool("email", false, "Login with email/password instead of browser")
 	loginCmd.Flags().String("host", "", "API host to log in to (e.g. https://api.staging.ghayma.tech); stored in the config file")
+	loginCmd.Flags().BoolVar(&loginAcceptPrivacy, "accept-privacy", false, "accept the Privacy Policy ("+privacyPolicyURL+") without being asked, if your account needs to")
 	rootCmd.AddCommand(loginCmd)
 }

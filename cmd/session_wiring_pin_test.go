@@ -36,10 +36,8 @@ func TestLogin_ProvisionsLongLivedToken(t *testing.T) {
 		}
 	}
 
-	// Both login paths and register's auto-login must call it.
-	if got := strings.Count(login, "provisionCLIToken("); got < 3 {
-		t.Errorf("login.go mentions provisionCLIToken %d times; want the definition plus both login paths", got)
-	}
+	// Both login paths mint through completeLogin (TestLogin_PrivacyConsent);
+	// register's auto-login must call it too.
 	if !strings.Contains(readCmdSource(t, "register.go"), "provisionCLIToken(") {
 		t.Error("register.go should provision a CLI token on its auto-login path")
 	}

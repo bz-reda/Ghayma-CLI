@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -22,6 +23,10 @@ var (
 	registerInvite        string
 	registerAcceptPrivacy bool
 )
+
+// promptStdin is what register's prompts and the consent question read; nil
+// is the process's stdin. Tests set it.
+var promptStdin io.ReadCloser
 
 func privacyConsentText() string {
 	return "Ghayma is in beta and your data is hosted on servers in Paris, France,\n" +
@@ -43,6 +48,12 @@ func confirmPrivacy(flagAccepted bool, ask func() (string, error)) bool {
 		return true
 	}
 	return false
+}
+
+// askPrivacyConsent is the consent question register and login share.
+func askPrivacyConsent() (string, error) {
+	p := promptui.Prompt{Label: "I have read and accept the Privacy Policy [y/N]", Stdin: promptStdin}
+	return p.Run()
 }
 
 func registerHint(code string) string {
@@ -81,18 +92,27 @@ are still asked.`,
 			cfg.SetHost(cfg.APIHost)
 		}
 
+		// Without a terminal the consent question can't be asked, so say how
+		// to answer it before asking anything else.
+		if !registerAcceptPrivacy && !stdinIsTerminalFn() {
+			fmt.Println(privacyConsentText())
+			failf("Registration cancelled: the Privacy Policy must be accepted. Run again in a terminal, or with --accept-privacy.")
+			return
+		}
+
 		// Name
-		namePrompt := promptui.Prompt{Label: "Full Name"}
+		namePrompt := promptui.Prompt{Label: "Full Name", Stdin: promptStdin}
 		name, _ := namePrompt.Run()
 
 		// Email
-		emailPrompt := promptui.Prompt{Label: "Email"}
+		emailPrompt := promptui.Prompt{Label: "Email", Stdin: promptStdin}
 		email, _ := emailPrompt.Run()
 
 		// Password
 		passPrompt := promptui.Prompt{
 			Label: "Password",
 			Mask:  '*',
+			Stdin: promptStdin,
 			Validate: func(s string) error {
 				if len(s) < 8 {
 					return fmt.Errorf("password must be at least 8 characters")
@@ -103,7 +123,7 @@ are still asked.`,
 		password, _ := passPrompt.Run()
 
 		// Confirm Password
-		confirmPrompt := promptui.Prompt{Label: "Confirm Password", Mask: '*'}
+		confirmPrompt := promptui.Prompt{Label: "Confirm Password", Mask: '*', Stdin: promptStdin}
 		confirm, _ := confirmPrompt.Run()
 
 		if password != confirm {
@@ -113,12 +133,9 @@ are still asked.`,
 
 		fmt.Println()
 		fmt.Println(privacyConsentText())
-		accepted := confirmPrivacy(registerAcceptPrivacy, func() (string, error) {
-			p := promptui.Prompt{Label: "I have read and accept the Privacy Policy [y/N]"}
-			return p.Run()
-		})
+		accepted := confirmPrivacy(registerAcceptPrivacy, askPrivacyConsent)
 		if !accepted {
-			fmt.Println("❌ Registration cancelled: the Privacy Policy must be accepted.")
+			failf("Registration cancelled: the Privacy Policy must be accepted.")
 			return
 		}
 
