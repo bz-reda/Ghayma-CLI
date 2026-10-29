@@ -21,14 +21,17 @@ type loginReply struct {
 	status int
 	body   string
 	header string // Retry-After
-	hang   bool   // never answers; the client's timeout ends it
+	hang   bool   // answers nothing until the client gives up or the test ends
 	drop   bool   // closes the connection without answering
 }
 
-func (r loginReply) write(w http.ResponseWriter, req *http.Request) {
+func (r loginReply) write(w http.ResponseWriter, req *http.Request, release <-chan struct{}) {
 	switch {
 	case r.hang:
-		<-req.Context().Done()
+		select {
+		case <-req.Context().Done():
+		case <-release:
+		}
 	case r.drop:
 		conn, _, err := w.(http.Hijacker).Hijack()
 		if err == nil {
@@ -73,6 +76,7 @@ func newLoginBackend() *loginBackend {
 
 func (b *loginBackend) serve(t *testing.T) *httptest.Server {
 	t.Helper()
+	release := make(chan struct{})
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		var reply loginReply
@@ -103,13 +107,15 @@ func (b *loginBackend) serve(t *testing.T) *httptest.Server {
 			reply = loginReply{status: 404, body: `{"error":"not found"}`}
 		}
 		b.mu.Unlock()
-		reply.write(w, r)
+		reply.write(w, r, release)
 	}))
 	// A fresh connection per request, so a dropped one is never replayed
 	// onto the next scripted reply.
 	ts.Config.SetKeepAlivesEnabled(false)
 	ts.Start()
 	t.Cleanup(ts.Close)
+	// Runs first: a hung reply ends, so Close never waits on it.
+	t.Cleanup(func() { close(release) })
 	return ts
 }
 
@@ -770,6 +776,69 @@ func TestRegister_WithoutTerminalFailsAtOnce(t *testing.T) {
 	}
 	if strings.Contains(out, "Full Name") {
 		t.Errorf("register prompted before refusing:\n%s", out)
+	}
+}
+
+// feedPrompts points register's prompts at input for one test, so they never
+// read the test binary's own stdin.
+func feedPrompts(t *testing.T, input string) {
+	t.Helper()
+	orig := promptStdin
+	promptStdin = io.NopCloser(strings.NewReader(input))
+	t.Cleanup(func() { promptStdin = orig })
+}
+
+// registerStub answers POST /auth/register and returns the bodies it got.
+func registerStub(t *testing.T) *[]map[string]string {
+	t.Helper()
+	var mu sync.Mutex
+	var bodies []map[string]string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/auth/register" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		bodies = append(bodies, body)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, `{"user":{"id":"u1","email":"a@b.dz","name":"A"},"message":"Check your inbox to verify your email."}`)
+	}))
+	t.Cleanup(ts.Close)
+	t.Setenv("GHAYMA_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
+	t.Setenv("GHAYMA_API_HOST", ts.URL)
+	return &bodies
+}
+
+func TestRegister_AcceptPrivacyWithoutTerminal(t *testing.T) {
+	forceStdin(t, false)
+	feedPrompts(t, "")
+	bodies := registerStub(t)
+
+	out := runCLI(t, t.TempDir(), "register", "--accept-privacy")
+	if strings.Contains(out, "Run again in a terminal") || lastExitCode != 0 {
+		t.Errorf("--accept-privacy must get past the no-terminal check; exit %d:\n%s", lastExitCode, out)
+	}
+	if len(*bodies) != 1 || (*bodies)[0]["privacy_version"] != "1.0" {
+		t.Errorf("register calls %v; want one with privacy_version 1.0", *bodies)
+	}
+}
+
+func TestRegister_DeclineExitsNonZero(t *testing.T) {
+	forceStdin(t, true)
+	feedPrompts(t, "")
+	bodies := registerStub(t)
+
+	out := runCLI(t, t.TempDir(), "register")
+	if lastExitCode != 1 || !strings.Contains(out, "Registration cancelled: the Privacy Policy must be accepted.") {
+		t.Errorf("exit %d, output:\n%s\nwant exit 1 and the cancellation", lastExitCode, out)
+	}
+	if len(*bodies) != 0 {
+		t.Errorf("a declined registration reached the server: %v", *bodies)
 	}
 }
 

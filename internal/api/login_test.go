@@ -187,30 +187,51 @@ func TestPollCLISession(t *testing.T) {
 	}
 }
 
-// A server that never answers must not hang the login: the caller's deadline ends both calls.
-func TestCLISessionCalls_HonourTheDeadline(t *testing.T) {
+// hungServer never answers. Its handlers end when the test does, so a call
+// that ignores its deadline fails the test instead of hanging the run.
+func hungServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
+		// The server only notices a dropped client once the body is read.
+		io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
 	}))
-	defer ts.Close()
-	c := newTestClient(ts.URL)
+	t.Cleanup(ts.Close)
+	t.Cleanup(func() { close(release) })
+	return ts
+}
 
-	calls := map[string]func(ctx context.Context) error{
-		"create": func(ctx context.Context) error { _, err := c.CreateCLISession(ctx); return err },
-		"poll":   func(ctx context.Context) error { _, err := c.PollCLISession(ctx, "c0de"); return err },
-	}
+// assertDeadlineEnds runs each call with a 50ms deadline and fails within 5s
+// when one outlives it.
+func assertDeadlineEnds(t *testing.T, calls map[string]func(ctx context.Context) error) {
+	t.Helper()
 	for name, call := range calls {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		start := time.Now()
-		err := call(ctx)
+		done := make(chan error, 1)
+		go func() { done <- call(ctx) }()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("%s: err = %v; want the deadline", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Errorf("%s ran past a 50ms deadline", name)
+		}
 		cancel()
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("%s: err = %v; want the deadline", name, err)
-		}
-		if elapsed := time.Since(start); elapsed > 5*time.Second {
-			t.Errorf("%s took %v past a 50ms deadline", name, elapsed)
-		}
 	}
+}
+
+// A server that never answers must not hang the login: the caller's deadline ends both calls.
+func TestCLISessionCalls_HonourTheDeadline(t *testing.T) {
+	c := newTestClient(hungServer(t).URL)
+	assertDeadlineEnds(t, map[string]func(ctx context.Context) error{
+		"create": func(ctx context.Context) error { _, err := c.CreateCLISession(ctx); return err },
+		"poll":   func(ctx context.Context) error { _, err := c.PollCLISession(ctx, "c0de"); return err },
+	})
 }
 
 func TestGetMe_PrivacyConsentRequired(t *testing.T) {
@@ -288,30 +309,11 @@ func TestGetMe_RetriesTransportFailures(t *testing.T) {
 }
 
 func TestGetMeAndAcceptPrivacy_HonourTheDeadline(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The server only notices a dropped client once the body is read.
-		io.Copy(io.Discard, r.Body)
-		<-r.Context().Done()
-	}))
-	defer ts.Close()
-	c := newTestClient(ts.URL)
-
-	calls := map[string]func(ctx context.Context) error{
+	c := newTestClient(hungServer(t).URL)
+	assertDeadlineEnds(t, map[string]func(ctx context.Context) error{
 		"me":     func(ctx context.Context) error { _, err := c.GetMe(ctx, "jwt-fresh"); return err },
 		"accept": func(ctx context.Context) error { return c.AcceptPrivacy(ctx, "jwt-fresh", "1.0") },
-	}
-	for name, call := range calls {
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-		start := time.Now()
-		err := call(ctx)
-		cancel()
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("%s: err = %v; want the deadline", name, err)
-		}
-		if elapsed := time.Since(start); elapsed > 5*time.Second {
-			t.Errorf("%s took %v past a 50ms deadline", name, elapsed)
-		}
-	}
+	})
 }
 
 func TestAcceptPrivacy(t *testing.T) {
