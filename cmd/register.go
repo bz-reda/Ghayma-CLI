@@ -45,6 +45,12 @@ func confirmPrivacy(flagAccepted bool, ask func() (string, error)) bool {
 	return false
 }
 
+// askPrivacyConsent is the consent question register and login share.
+func askPrivacyConsent() (string, error) {
+	p := promptui.Prompt{Label: "I have read and accept the Privacy Policy [y/N]"}
+	return p.Run()
+}
+
 func registerHint(code string) string {
 	switch code {
 	case "invite_required":
@@ -113,10 +119,7 @@ are still asked.`,
 
 		fmt.Println()
 		fmt.Println(privacyConsentText())
-		accepted := confirmPrivacy(registerAcceptPrivacy, func() (string, error) {
-			p := promptui.Prompt{Label: "I have read and accept the Privacy Policy [y/N]"}
-			return p.Run()
-		})
+		accepted := confirmPrivacy(registerAcceptPrivacy, askPrivacyConsent)
 		if !accepted {
 			fmt.Println("❌ Registration cancelled: the Privacy Policy must be accepted.")
 			return

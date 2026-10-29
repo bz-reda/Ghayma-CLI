@@ -27,10 +27,12 @@ var ErrUnauthorized = errors.New("session expired or revoked — run: ghayma log
 // APIError carries the server's own message for a non-2xx response. Code is
 // the stable machine code some endpoints send alongside it (e.g. the register
 // gate's "invite_required") — empty when the server didn't include one.
+// RetryAfter is the wait a 429 or 503 asked for, zero when it named none.
 type APIError struct {
-	Status  int
-	Message string
-	Code    string
+	Status     int
+	Message    string
+	Code       string
+	RetryAfter time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -76,7 +78,7 @@ func (c *Client) Login(email, password string) (*AuthResponse, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("login failed (status %d)", resp.StatusCode)
+		return nil, newAPIError(resp)
 	}
 
 	var result AuthResponse
@@ -138,10 +140,13 @@ func (c *Client) Register(email, password, name, inviteCode, privacyVersion stri
 	return &result, nil
 }
 
+// MeResponse is the signed-in account. PrivacyConsentRequired is absent from
+// older backends, which reads as false.
 type MeResponse struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-	Name  string `json:"name"`
+	ID                     string `json:"id"`
+	Email                  string `json:"email"`
+	Name                   string `json:"name"`
+	PrivacyConsentRequired bool   `json:"privacy_consent_required"`
 }
 
 func (c *Client) GetMe(token string) (*MeResponse, error) {
@@ -158,12 +163,31 @@ func (c *Client) GetMe(token string) (*MeResponse, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to get user info")
+		return nil, newAPIError(resp)
 	}
 
 	var result MeResponse
 	json.NewDecoder(resp.Body).Decode(&result)
 	return &result, nil
+}
+
+// AcceptPrivacy records the account's consent to a policy version. It takes
+// the session explicitly because login asks before saving any credential.
+func (c *Client) AcceptPrivacy(token, version string) error {
+	body, _ := json.Marshal(map[string]string{"privacy_version": version})
+	req, err := http.NewRequest("POST", c.cfg.APIHost+"/api/v1/auth/privacy/accept", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return c.decodeJSON(resp, nil)
 }
 
 // API tokens
@@ -1348,16 +1372,7 @@ func (c *Client) authRequestContext(ctx context.Context, method, path string, bo
 // leaving the caller with a zero value and a nil error (2026-08-16).
 func (c *Client) decodeJSON(resp *http.Response, out any) error {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		raw, _ := io.ReadAll(resp.Body)
-		// `code` rides along so a caller can branch on the stable machine code
-		// rather than on the prose (the environment and env-inheritance
-		// refusals are told apart that way).
-		var errResp struct {
-			Error string `json:"error"`
-			Code  string `json:"code"`
-		}
-		json.Unmarshal(raw, &errResp)
-		return &APIError{Status: resp.StatusCode, Message: errResp.Error, Code: errResp.Code}
+		return newAPIError(resp)
 	}
 	if out == nil {
 		return nil
@@ -1837,6 +1852,38 @@ func (c *Client) AcceptProjectTransfer(rawToken string) (*TransferAcceptResponse
 		return nil, err
 	}
 	return &out, nil
+}
+
+// newAPIError reads a non-2xx body into an *APIError. `code` rides along so a
+// caller can branch on the stable machine code rather than on the prose (the
+// environment and env-inheritance refusals are told apart that way). The wait
+// comes from the body's retry_after, else the Retry-After header.
+func newAPIError(resp *http.Response) *APIError {
+	raw, _ := io.ReadAll(resp.Body)
+	var errResp struct {
+		Error      string  `json:"error"`
+		Code       string  `json:"code"`
+		RetryAfter float64 `json:"retry_after"`
+	}
+	json.Unmarshal(raw, &errResp)
+
+	retry := time.Duration(errResp.RetryAfter * float64(time.Second))
+	if retry <= 0 {
+		retry = retryAfterHeader(resp.Header.Get("Retry-After"), time.Now())
+	}
+	return &APIError{Status: resp.StatusCode, Message: errResp.Error, Code: errResp.Code, RetryAfter: retry}
+}
+
+// retryAfterHeader reads Retry-After as seconds or as an HTTP date.
+func retryAfterHeader(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if secs, err := strconv.Atoi(v); err == nil {
+		return max(time.Duration(secs)*time.Second, 0)
+	}
+	if at, err := http.ParseTime(v); err == nil {
+		return max(at.Sub(now), 0)
+	}
+	return 0
 }
 
 // decodeAPIError reads a JSON {"error": "..."} body and returns a Go error
