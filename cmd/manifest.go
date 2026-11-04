@@ -54,6 +54,9 @@ type SiteEntry struct {
 	OutputDirectory string          `json:"output_directory,omitempty"`
 	Port            int             `json:"port,omitempty"`
 	Crons           json.RawMessage `json:"crons,omitempty"`
+	// Builder is the site's build choice, "auto" or "dockerfile"; empty keeps
+	// what the site has.
+	Builder string `json:"builder,omitempty"`
 }
 
 // ProjectManifest is the root-level file: one project, every site it owns.

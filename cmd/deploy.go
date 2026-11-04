@@ -36,9 +36,8 @@ type projectConfig struct {
 	// DockerfilePath is an optional explicit override for the user's
 	// Dockerfile, relative to the appDir (project root or rootDirectory
 	// for monorepos). When empty the platform falls back to the
-	// convention (literal `Dockerfile` at appDir). Only honored when
-	// `custom_dockerfile_enabled` is set on the project from the
-	// Customer Dashboard (Part 2 alpha feature flag).
+	// convention (literal `Dockerfile` at appDir). Only honored when the
+	// site builds with its Dockerfile.
 	DockerfilePath string `json:"dockerfile_path,omitempty"`
 	// Build config: optional overrides recorded from init; the server
 	// still auto-detects when these are empty.
@@ -266,6 +265,12 @@ Examples:
 			return
 		}
 
+		builder, err := configBuilder(ctx)
+		if err != nil {
+			failf("%v", err)
+			return
+		}
+
 		// A config naming no site leaves --site to the live list, as every
 		// other site-scoped command does. The upload has to carry the site it
 		// picked: without a site_id the server deploys to the default site.
@@ -321,15 +326,17 @@ Examples:
 		rules := api.LoadIgnoreRules(ctx.SourceDir)
 		printIgnoreRules(rules)
 
-		// Surface which Dockerfile the build will use. The gate is the
-		// project's "Use custom Dockerfile" toggle, so read it rather than
-		// assume it is on; the lookup is best-effort and never fails the
-		// deploy — an error just leaves the setting unknown (2026-08-17).
-		var customDockerfile *bool
-		if project, projErr := client.GetProject(ctx.ProjectID); projErr == nil {
-			customDockerfile = &project.CustomDockerfileEnabled
-		}
-		for _, line := range dockerfileHint(appDirOf(ctx.SourceDir, ctx.RootDirectory), ctx.Site.DockerfilePath, customDockerfile) {
+		// Surface which Dockerfile the build will use (2026-08-17). The site's
+		// builder decides; the project toggle is read only from a server that
+		// sends none, and a failed read leaves the setting unknown.
+		effective := deployBuilder(builder, siteBuilderOf(ctx, sites), func() (bool, error) {
+			project, err := client.GetProject(ctx.ProjectID)
+			if err != nil {
+				return false, err
+			}
+			return project.CustomDockerfileEnabled, nil
+		})
+		for _, line := range dockerfileHint(appDirOf(ctx.SourceDir, ctx.RootDirectory), ctx.Site.DockerfilePath, effective) {
 			fmt.Println(line)
 		}
 
@@ -341,6 +348,7 @@ Examples:
 			OutputDirectory: ctx.Site.OutputDirectory,
 			Port:            ctx.Site.Port,
 			Crons:           cronsFormField(ctx.Site.Crons),
+			Builder:         builder,
 		}
 		resp, err := client.Deploy(ctx.ProjectID, ctx.Site.SiteID, ctx.SourceDir, "CLI deploy", deployProd, ctx.RootDirectory, filepath.ToSlash(ctx.Site.DockerfilePath), bc, rules, connectionItems(chosen))
 		if err != nil {
@@ -604,42 +612,45 @@ func appDirOf(sourceDir, rootDirectory string) string {
 }
 
 // dockerfileHint returns the lines describing which Dockerfile the build will
-// use. flag is the project's custom_dockerfile_enabled toggle; nil means the
-// lookup failed and the setting is unknown.
+// use. builder is the one this build runs with ("auto" | "dockerfile"); ""
+// means it could not be read.
 //
-// The wording has to track the flag because the flag is the whole gate: with it
-// off the server always generates its own Dockerfile, however many Dockerfiles
-// the upload carries. The old message claimed "Using your Dockerfile" from the
-// file's presence alone, which read as a platform bug when the server was
-// correctly ignoring it (2026-08-17).
+// The wording tracks the builder because the builder is the whole gate: on
+// auto the server generates the build, however many Dockerfiles the upload
+// carries. The old message claimed "Using your Dockerfile" from the file's
+// presence alone, which read as a platform bug when the server was correctly
+// ignoring it (2026-08-17).
 //
 // A dockerfile_path that is set but missing on disk is a warning, not an abort:
 // the server resolves it (relative to the app directory) and is the authority
 // on whether the build fails.
-func dockerfileHint(appDir, explicitPath string, flag *bool) []string {
+func dockerfileHint(appDir, explicitPath, builder string) []string {
 	relPath := explicitPath
 	if relPath == "" {
 		relPath = "Dockerfile"
 	}
 
 	if _, err := os.Stat(filepath.Join(appDir, filepath.FromSlash(relPath))); err != nil {
-		if explicitPath == "" {
-			return nil
+		if explicitPath != "" {
+			// %s, not %q: a Windows-style path must be shown as written, not
+			// with its separators escaped.
+			return []string{fmt.Sprintf("⚠️  dockerfile_path \"%s\" not found under %s — the path is relative to the app directory; the build will fail if this site builds with your Dockerfile.", explicitPath, appDir)}
 		}
-		// %s, not %q: a Windows-style path must be shown as written, not
-		// with its separators escaped.
-		return []string{fmt.Sprintf("⚠️  dockerfile_path \"%s\" not found under %s — the path is relative to the app directory; the build will fail if \"Use custom Dockerfile\" is enabled.", explicitPath, appDir)}
+		if builder == builderDockerfile {
+			return []string{fmt.Sprintf("ℹ️  No Dockerfile found under %s — the platform will generate the build instead.", appDir)}
+		}
+		return nil
 	}
 
-	switch {
-	case flag != nil && *flag:
+	switch builder {
+	case builderDockerfile:
 		if explicitPath != "" {
-			return []string{fmt.Sprintf("🐳 Using your Dockerfile at %s (dockerfile_path).", explicitPath)}
+			return []string{fmt.Sprintf("🐳 Building with your Dockerfile at %s (dockerfile_path).", explicitPath)}
 		}
-		return []string{"🐳 Using your Dockerfile (custom Dockerfile enabled for this project)."}
-	case flag != nil:
-		return []string{fmt.Sprintf("ℹ️  Dockerfile found (%s) but \"Use custom Dockerfile\" is OFF for this project — the platform will generate one. Enable it in the Dashboard → project → Settings → Advanced.", relPath)}
+		return []string{"🐳 Building with your Dockerfile."}
+	case builderAuto:
+		return []string{fmt.Sprintf("ℹ️  Dockerfile found (%s) but this site builds with Auto-detect — the platform will generate the build. To build from your Dockerfile, set \"builder\": \"dockerfile\" in .ghayma.json or choose My Dockerfile in the site's Settings → Build settings.", relPath)}
 	default:
-		return []string{fmt.Sprintf("ℹ️  Dockerfile found (%s) — it is used only when \"Use custom Dockerfile\" is enabled for this project (could not verify the setting).", relPath)}
+		return []string{fmt.Sprintf("ℹ️  Dockerfile found (%s) — it is used only when this site builds with your Dockerfile (could not verify the setting).", relPath)}
 	}
 }
