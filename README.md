@@ -246,6 +246,8 @@ Running `ghayma init` creates a `.ghayma.json` file in the project directory:
 }
 ```
 
+Optional build keys sit next to these (`build_command`, `port`, `dockerfile_path`, …). `"builder"` chooses how the site builds: `"auto"` lets Ghayma generate the build, `"dockerfile"` builds from your Dockerfile (`dockerfile_path`, else `Dockerfile` in the app directory). A deploy sends it and the site keeps it; leave it out to keep the site's current choice. In a workspace manifest, set it on each entry in `sites`.
+
 The user-level config (auth token, API host) is stored separately, in `~/.paas-cli.json` or wherever `GHAYMA_CONFIG` points.
 
 ## Building from Source
