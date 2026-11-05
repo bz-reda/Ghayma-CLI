@@ -82,6 +82,7 @@ func TestBuildWorkspaceManifest(t *testing.T) {
 				SiteID:          "s1",
 				Framework:       "nextjs",
 				DockerfilePath:  "docker/Dockerfile",
+				Builder:         "dockerfile",
 				BuildCommand:    "pnpm build",
 				InstallCommand:  "pnpm install",
 				StartCommand:    "pnpm start",
@@ -110,7 +111,7 @@ func TestBuildWorkspaceManifest(t *testing.T) {
 	}
 	if main.Framework != "nextjs" || main.BuildCommand != "pnpm build" || main.InstallCommand != "pnpm install" ||
 		main.StartCommand != "pnpm start" || main.OutputDirectory != ".next" || main.Port != 3000 ||
-		main.DockerfilePath != "docker/Dockerfile" || !strings.Contains(string(main.Crons), "nightly") {
+		main.DockerfilePath != "docker/Dockerfile" || main.Builder != "dockerfile" || !strings.Contains(string(main.Crons), "nightly") {
 		t.Errorf("main entry lost per-app settings: %+v", main)
 	}
 

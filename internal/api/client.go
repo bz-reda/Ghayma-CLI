@@ -435,10 +435,8 @@ func EligibleBillingAccounts(accounts []BillingAccount) []BillingAccount {
 }
 
 // ProjectDetail is the slice of GET /api/v1/projects/:id (id or slug) the CLI
-// reads. CustomDockerfileEnabled is the per-project "Use custom Dockerfile"
-// toggle (Dashboard → project → Settings → Advanced): the server only honors a
-// Dockerfile from the upload when it is on, so deploy needs it to describe the
-// build honestly (2026-08-17).
+// reads. CustomDockerfileEnabled is the retired project toggle: deploy reads it
+// only from a server whose sites carry no builder, where it is still the gate.
 type ProjectDetail struct {
 	ID                      string `json:"id"`
 	Name                    string `json:"name"`
@@ -508,6 +506,15 @@ type Site struct {
 	// sends neither.
 	Applied   *bool  `json:"applied,omitempty"`
 	ApplyNote string `json:"apply_note,omitempty"`
+	// BuildSettings is the site's stored build configuration.
+	BuildSettings SiteBuildSettings `json:"build_settings"`
+}
+
+// SiteBuildSettings is the slice of a site's build_settings deploy reads.
+// Builder is "auto" or "dockerfile"; empty from an older server, where the
+// project's custom_dockerfile_enabled still decides.
+type SiteBuildSettings struct {
+	Builder string `json:"builder"`
 }
 
 // CreateSite creates a site. environment is the kind the new site is born as
@@ -631,12 +638,15 @@ type DeployBuildConfig struct {
 	// forwarded verbatim. Empty ⇒ the field is omitted and the backend never
 	// touches cron jobs; a present-but-empty "[]" is authoritative.
 	Crons string
+	// Builder is the site's build choice, "auto" or "dockerfile". Empty ⇒ the
+	// field is omitted and the site keeps its stored choice.
+	Builder string
 }
 
 // Deploy uploads a tarball to /api/v1/deploy/upload and starts a build.
-// dockerfilePath is the optional Part 2 PR-C explicit override; pass empty
+// dockerfilePath is the optional explicit Dockerfile override; pass empty
 // string to fall back to the platform convention (literal `Dockerfile` at
-// appDir, only honored when projects.custom_dockerfile_enabled is TRUE).
+// appDir). Either is used only when the site builds with its Dockerfile.
 // connect are the services to connect to the deploy's site before it builds.
 func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isProduction bool, rootDirectory, dockerfilePath string, bc DeployBuildConfig, rules *IgnoreRules, connect []ConnectionItem) (*DeployResponse, error) {
 	// One archive per process: a fixed name in the shared temp directory let
@@ -695,6 +705,9 @@ func (c *Client) Deploy(projectID, siteID, sourceDir, commitMessage string, isPr
 	// (including "[]") ⇒ authoritative per-site sync.
 	if bc.Crons != "" {
 		writer.WriteField("crons", bc.Crons)
+	}
+	if bc.Builder != "" {
+		writer.WriteField("builder", bc.Builder)
 	}
 	// Omitted when nothing was chosen, so an older server never sees it.
 	if len(connect) > 0 {

@@ -292,6 +292,7 @@ func buildWorkspaceManifest(project *api.Project, sites []api.Site, mapped map[s
 		if cfg, found := existing[dir]; found {
 			entry.Framework = cfg.Framework
 			entry.DockerfilePath = cfg.DockerfilePath
+			entry.Builder = cfg.Builder
 			entry.BuildCommand = cfg.BuildCommand
 			entry.InstallCommand = cfg.InstallCommand
 			entry.StartCommand = cfg.StartCommand
