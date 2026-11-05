@@ -170,9 +170,7 @@ func runPromote(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	fmt.Println(promoteHeadline(p, from, target.Slug))
-	fmt.Printf("📦 Promotion queued (deployment: %s)\n", p.ID)
-	fmt.Println("⏳ Checking the image and rolling it out...")
+	fmt.Print(promoteHeadline(p, from, target.Slug) + "...")
 	waitForDeployment(client, p.ID)
 }
 

@@ -321,25 +321,10 @@ Examples:
 			}
 		}
 
-		fmt.Println(deployHeadline(ctx))
+		// The headline stays open: the wait's progress dots extend it.
+		fmt.Print(deployHeadline(ctx))
 
 		rules := api.LoadIgnoreRules(ctx.SourceDir)
-		printIgnoreRules(rules)
-
-		// Surface which Dockerfile the build will use (2026-08-17). The site's
-		// builder decides; the project toggle is read only from a server that
-		// sends none, and a failed read leaves the setting unknown.
-		effective := deployBuilder(builder, siteBuilderOf(ctx, sites), func() (bool, error) {
-			project, err := client.GetProject(ctx.ProjectID)
-			if err != nil {
-				return false, err
-			}
-			return project.CustomDockerfileEnabled, nil
-		})
-		for _, line := range dockerfileHint(appDirOf(ctx.SourceDir, ctx.RootDirectory), ctx.Site.DockerfilePath, effective) {
-			fmt.Println(line)
-		}
-
 		bc := api.DeployBuildConfig{
 			Framework:       ctx.Site.Framework,
 			BuildCommand:    ctx.Site.BuildCommand,
@@ -352,53 +337,33 @@ Examples:
 		}
 		resp, err := client.Deploy(ctx.ProjectID, ctx.Site.SiteID, ctx.SourceDir, "CLI deploy", deployProd, ctx.RootDirectory, filepath.ToSlash(ctx.Site.DockerfilePath), bc, rules, connectionItems(chosen))
 		if err != nil {
-			fmt.Printf("❌ Deploy failed: %v\n", err)
+			fmt.Printf("\n❌ Deploy failed: %v\n", err)
 			return
 		}
 
-		printDeployConnections(resp.Connections, chosen, deployedSiteSlug(sites, resp.SiteID, target))
-		fmt.Printf("📦 Build queued (deployment: %s)\n", resp.DeploymentID)
-		fmt.Println("⏳ Waiting for build...")
+		if len(chosen) > 0 {
+			fmt.Println()
+			printDeployConnections(resp.Connections, chosen, deployedSiteSlug(sites, resp.SiteID, target))
+		}
 		waitForDeployment(client, resp.DeploymentID)
 	},
 }
 
 // waitForDeployment is the wait every deploy shares, whatever it was created
-// from: poll, narrate, then print where the app is live or why it failed.
+// from: one dot per poll on the caller's open headline line, then where the app
+// is live or why it failed.
 //
 // An image deploy uses it unchanged on purpose — it IS a normal deployment,
 // and an image refused by admission is a FAILED one whose build logs carry the
 // reason, which is exactly what the failure branch already prints.
 func waitForDeployment(client *api.Client, deploymentID string) {
-	// The platform builds a bounded number of deployments at a time and allows a
-	// build twenty minutes, so a deploy can legitimately wait behind other builds
-	// and then build for a while; give it the same budget the server does before
-	// giving up on the wait.
-	lastStatus := ""
-	var queue queueTracker
+	// Same budget as the server: the build queue plus the 20-minute build deadline.
 	for i := 0; i < deployWaitPolls; i++ {
 		time.Sleep(deployWaitInterval)
 
 		deployment, err := client.GetDeployment(deploymentID)
 		if err != nil {
 			continue
-		}
-
-		// The queued line carries the rank, so it is reprinted when the rank
-		// moves rather than when the status changes — a long wait stays one
-		// line plus dots instead of repeating an identical line every poll.
-		if line := queue.next(deployment.Status, deployment.QueuePosition, deployment.QueueSize); line != "" {
-			fmt.Print("\n" + line)
-		}
-
-		if deployment.Status != lastStatus {
-			switch deployment.Status {
-			case "building":
-				fmt.Print("\n🔨 Building")
-			case "deploying":
-				fmt.Print("\n🚀 Deploying")
-			}
-			lastStatus = deployment.Status
 		}
 
 		switch deployment.Status {
@@ -460,21 +425,21 @@ func runImageDeploy(client *api.Client, ctx *SiteContext, image, siteFlag string
 		fmt.Println(prodFlagNotice(site.Slug, site.Environment))
 	}
 	image = strings.TrimSpace(image)
-	fmt.Printf("🚀 Deploying image %s to %s [site: %s]...\n", image, ctx.ProjectName, site.Slug)
+	fmt.Printf("🚀 Deploying image %s to %s [site: %s]...", image, ctx.ProjectName, site.Slug)
 	deployPushedImage(client, ctx.ProjectID, site.ID, image, prod)
 }
 
-// deployPushedImage creates the image deployment and waits on it. The commit
-// message is left to the server, which labels the row "Deploy image <ref>" —
-// one place decides how an image deployment is named.
+// deployPushedImage creates the image deployment and waits on it, after the
+// caller printed its headline without a newline. The commit message is left to
+// the server, which labels the row "Deploy image <ref>" — one place decides
+// how an image deployment is named.
 func deployPushedImage(client *api.Client, projectID, siteID, image string, prod bool) {
 	resp, err := client.DeployImage(projectID, siteID, image, "", prod)
 	if err != nil {
+		fmt.Println()
 		failf("Deploy failed: %v", err)
 		return
 	}
-	fmt.Printf("📦 Deploy queued (deployment: %s)\n", resp.ID)
-	fmt.Println("⏳ Checking the image and rolling it out...")
 	waitForDeployment(client, resp.ID)
 }
 
@@ -537,38 +502,6 @@ func deployHeadline(ctx *SiteContext) string {
 	return fmt.Sprintf("🚀 Deploying %s%s...", ctx.ProjectName, site)
 }
 
-// queuedLine is the line shown while a deployment waits for a build slot.
-// position is its 1-based rank in its queue and size how many are waiting;
-// the platform reports 0/0 when it has no rank to give — including on a server
-// older than the fields — so that case keeps the original generic wording
-// rather than claiming "position 0 of 0".
-func queuedLine(position, size int) string {
-	if position <= 0 || size <= 0 {
-		return "⏸️  Queued — waiting for a build slot"
-	}
-	return fmt.Sprintf("⏸️  Queued, position %d of %d", position, size)
-}
-
-// queueTracker turns the deploy's stream of polls into the queue lines it
-// prints, so the "one line per change of position" rule is a pure seam rather
-// than state tangled into the polling loop.
-type queueTracker struct{ last string }
-
-// next returns the line to print for one poll, or "" for nothing to print —
-// either the deployment is no longer queued, or the same line already stands.
-func (q *queueTracker) next(status string, position, size int) string {
-	if status != "queued" {
-		q.last = ""
-		return ""
-	}
-	line := queuedLine(position, size)
-	if line == q.last {
-		return ""
-	}
-	q.last = line
-	return line
-}
-
 // uploadDescription describes a manifest deploy's upload mode: a root_directory
 // on the context means the whole workspace is uploaded and one app built inside
 // it; no root_directory means only that app directory is uploaded.
@@ -583,25 +516,6 @@ func uploadDescription(ctx *SiteContext) string {
 	return fmt.Sprintf("uploading %s only", dir)
 }
 
-func printIgnoreRules(rules *api.IgnoreRules) {
-	fmt.Printf("📋 Baseline ignore: %s, .env*.local\n", strings.Join(api.BaselineIgnoreDirs, ", "))
-	if rules == nil || rules.Source == "" {
-		fmt.Println("   (no .ghaymaignore or .dockerignore found)")
-		return
-	}
-	if len(rules.Patterns) == 0 {
-		fmt.Printf("   %s is present but empty\n", rules.Source)
-		return
-	}
-	fmt.Printf("   Applying %s:\n", rules.Source)
-	for _, p := range rules.Patterns {
-		fmt.Printf("     • %s\n", p)
-	}
-	// The build cannot run without these, so the tarball keeps them even when
-	// a pattern above matches (Docker's own .dockerignore semantics).
-	fmt.Println("   (Dockerfiles, .ghayma.json and ignore files are always uploaded)")
-}
-
 // appDirOf resolves the directory the build actually runs in: the upload root,
 // or the root_directory inside it for a monorepo/workspace upload.
 func appDirOf(sourceDir, rootDirectory string) string {
@@ -609,48 +523,4 @@ func appDirOf(sourceDir, rootDirectory string) string {
 		return sourceDir
 	}
 	return filepath.Join(sourceDir, filepath.FromSlash(rootDirectory))
-}
-
-// dockerfileHint returns the lines describing which Dockerfile the build will
-// use. builder is the one this build runs with ("auto" | "dockerfile"); ""
-// means it could not be read.
-//
-// The wording tracks the builder because the builder is the whole gate: on
-// auto the server generates the build, however many Dockerfiles the upload
-// carries. The old message claimed "Using your Dockerfile" from the file's
-// presence alone, which read as a platform bug when the server was correctly
-// ignoring it (2026-08-17).
-//
-// A dockerfile_path that is set but missing on disk is a warning, not an abort:
-// the server resolves it (relative to the app directory) and is the authority
-// on whether the build fails.
-func dockerfileHint(appDir, explicitPath, builder string) []string {
-	relPath := explicitPath
-	if relPath == "" {
-		relPath = "Dockerfile"
-	}
-
-	if _, err := os.Stat(filepath.Join(appDir, filepath.FromSlash(relPath))); err != nil {
-		if explicitPath != "" {
-			// %s, not %q: a Windows-style path must be shown as written, not
-			// with its separators escaped.
-			return []string{fmt.Sprintf("⚠️  dockerfile_path \"%s\" not found under %s — the path is relative to the app directory; the build will fail if this site builds with your Dockerfile.", explicitPath, appDir)}
-		}
-		if builder == builderDockerfile {
-			return []string{fmt.Sprintf("ℹ️  No Dockerfile found under %s — the platform will generate the build instead.", appDir)}
-		}
-		return nil
-	}
-
-	switch builder {
-	case builderDockerfile:
-		if explicitPath != "" {
-			return []string{fmt.Sprintf("🐳 Building with your Dockerfile at %s (dockerfile_path).", explicitPath)}
-		}
-		return []string{"🐳 Building with your Dockerfile."}
-	case builderAuto:
-		return []string{fmt.Sprintf("ℹ️  Dockerfile found (%s) but this site builds with Auto-detect — the platform will generate the build. To build from your Dockerfile, set \"builder\": \"dockerfile\" in .ghayma.json or choose My Dockerfile in the site's Settings → Build settings.", relPath)}
-	default:
-		return []string{fmt.Sprintf("ℹ️  Dockerfile found (%s) — it is used only when this site builds with your Dockerfile (could not verify the setting).", relPath)}
-	}
 }

@@ -475,7 +475,7 @@ func TestDeployPrintsWhatTheUploadConnected(t *testing.T) {
 
 	out := runCLI(t, siteLessDir(t), "deploy")
 
-	queued := strings.Index(out, "📦 Build queued")
+	result := strings.Index(out, "✅ Deployed successfully!")
 	for _, line := range []string{
 		"🔗 Connected database 'shop-db' to 'main'\n",
 		"⚠️  Couldn't connect bucket 'media': the site's platform key could not be updated\n   Retry with: ghayma connect bucket media --site main\n",
@@ -485,7 +485,7 @@ func TestDeployPrintsWhatTheUploadConnected(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", line, out)
 			continue
 		}
-		if queued < i {
+		if result < i {
 			t.Errorf("%q must come with the upload's answer, before the build is waited on:\n%s", line, out)
 		}
 	}
