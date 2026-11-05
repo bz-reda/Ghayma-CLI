@@ -364,6 +364,7 @@ func runDockerPush(cmd *cobra.Command, args []string) {
 		return
 	}
 	fmt.Printf("\n✅ Pushed %s\n", image.Ref)
+	fmt.Printf("🚀 Deploying image %s...", image.Tag)
 	deployPushedImage(client, target.ProjectID, target.SiteRef, image.Tag, dockerPushProd)
 }
 

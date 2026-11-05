@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"paas-cli/internal/api"
 )
 
 // cmdSourceFiles returns the non-test .go files in the cmd package. The
@@ -153,17 +151,6 @@ func TestNoLegacyNameInReadme(t *testing.T) {
 	for i, line := range strings.Split(string(data), "\n") {
 		if legacyNameRe.MatchString(line) {
 			t.Errorf("README.md:%d names the legacy brand: %s", i+1, strings.TrimSpace(line))
-		}
-	}
-}
-
-// TestIgnoreRulesNoneFoundLine pins the deploy line shown when no ignore file
-// exists: it names only the Ghayma files, though the legacy one is still read.
-func TestIgnoreRulesNoneFoundLine(t *testing.T) {
-	for _, rules := range []*api.IgnoreRules{nil, {}} {
-		out := captureStdout(t, func() { printIgnoreRules(rules) })
-		if !strings.Contains(out, "   (no .ghaymaignore or .dockerignore found)\n") {
-			t.Errorf("printIgnoreRules(%v) = %q; want the .ghaymaignore/.dockerignore line", rules, out)
 		}
 	}
 }

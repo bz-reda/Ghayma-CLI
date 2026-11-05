@@ -7,10 +7,9 @@ import (
 	"testing"
 )
 
-// TestGetDeployment_ParsesQueuePosition pins the wire contract the deploy's
-// "Queued, position N of M" line reads: queue_position is the 1-based rank
-// among the deployments queued in the same queue, queue_size how many wait
-// there.
+// TestGetDeployment_ParsesQueuePosition pins the wire contract: queue_position
+// is the 1-based rank among the deployments queued in the same queue,
+// queue_size how many wait there.
 func TestGetDeployment_ParsesQueuePosition(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/deployments/d1" || r.Method != http.MethodGet {
