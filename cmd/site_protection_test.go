@@ -1301,3 +1301,18 @@ func TestSiteBypass_RevokeWhenUnavailable(t *testing.T) {
 		t.Errorf("asked %d, requests %v; want no prompt and no DELETE", *asked, *seen)
 	}
 }
+
+func TestSiteProtection_ArgumentErrorsReadNaturally(t *testing.T) {
+	cliHome(t, "http://127.0.0.1:1")
+	cases := map[string][]string{
+		"ghayma site protection requires a site.":                      {"site", "protection"},
+		"ghayma site bypass revoke requires a site.":                   {"site", "bypass", "revoke"},
+		"ghayma site protection accepts at most 2 argument(s), got 3.": {"site", "protection", "dev", "on", "x"},
+	}
+	for want, args := range cases {
+		out := runCLI(t, t.TempDir(), args...)
+		if !strings.Contains(out, want) || strings.Contains(out, "requires a argument") || strings.Contains(out, "site(s)") {
+			t.Errorf("%v: out = %q; want %q", args, out, want)
+		}
+	}
+}

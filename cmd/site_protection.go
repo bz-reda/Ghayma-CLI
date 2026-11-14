@@ -82,6 +82,15 @@ func protectionStatusLines(siteSlug string, v *api.Protection) []string {
 	}
 }
 
+// siteThenOptionalArg names the site when it is missing ("requires a site.")
+// and counts arguments when there are too many, where "site(s)" would misread.
+func siteThenOptionalArg(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return argChecker("site", "site list", 1, 2)(cmd, args)
+	}
+	return argChecker("argument", "site list", 1, 2)(cmd, args)
+}
+
 var siteProtectionCmd = &cobra.Command{
 	Use:   "protection <site> [on|off]",
 	Short: "Show whether a site is private, or make it private or public",
@@ -96,7 +105,7 @@ Examples:
   ghayma site protection staging
   ghayma site protection staging on
   ghayma site protection staging off --yes`,
-	Args: argChecker("argument", "site list", 1, 2),
+	Args: siteThenOptionalArg,
 	Run:  runSiteProtection,
 }
 
@@ -418,7 +427,7 @@ var siteBypassCreateCmd = &cobra.Command{
 var siteBypassRevokeCmd = &cobra.Command{
 	Use:   "revoke <site> [name]",
 	Short: "Revoke a bypass token by name, or by ID with --id",
-	Args:  argChecker("argument", "site list", 1, 2),
+	Args:  siteThenOptionalArg,
 	Run:   runSiteBypassRevoke,
 }
 
