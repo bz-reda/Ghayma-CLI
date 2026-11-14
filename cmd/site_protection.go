@@ -119,6 +119,11 @@ func runSiteProtection(cmd *cobra.Command, args []string) {
 			return
 		}
 		enable = v
+		// A script asking for JSON must not get prose with exit 0.
+		if siteProtectionJSON {
+			failf("--json only applies when showing: ghayma site protection <site> --json")
+			return
+		}
 	}
 	client, projectID, site, err := resolveNamedSite(args[0])
 	if err != nil {

@@ -1351,3 +1351,19 @@ func TestSiteBypass_TokenIDsNeverCarryControlCharacters(t *testing.T) {
 	}, "revoke", "dev", "--id", evilID)
 	clean("unknown ID", out)
 }
+
+func TestSiteProtection_JSONWithOnOrOffIsRefused(t *testing.T) {
+	for _, value := range []string{"on", "off"} {
+		out, seen, _ := runProtection(t, map[string]stubReply{
+			"PUT " + protectionPathS2: {200, protectionViewBody(true, true, true, "development", 0)},
+		}, "dev", value, "--json", "--yes")
+
+		want := "❌ --json only applies when showing: ghayma site protection <site> --json"
+		if strings.TrimSpace(out) != want || lastExitCode != 1 {
+			t.Errorf("%s: output = %q, exit %d; want %q and exit 1", value, out, lastExitCode, want)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("%s: requests = %v; want none", value, *seen)
+		}
+	}
+}
