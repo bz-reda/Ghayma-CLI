@@ -310,3 +310,54 @@ func TestSiteEnvironmentCommands_Wiring(t *testing.T) {
 		t.Error("site create should expose --env")
 	}
 }
+
+// runSiteEnvironment moves a site and returns the output; the PUT answers with
+// the site after the change.
+func runSiteEnvironment(t *testing.T, sites, answer string, args ...string) string {
+	t.Helper()
+	ts, _, _ := siteEnvStub(t, sites, 0, answer)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	return runCLI(t, linkedDir(t), append([]string{"site", "environment"}, args...)...)
+}
+
+func TestSiteEnvironment_SaysWhenAPrivateSiteBecomesPublic(t *testing.T) {
+	sites := `[{"id":"s1","name":"main","slug":"main","status":"live","is_default":true,"environment":"production"},` +
+		`{"id":"s2","name":"dev","slug":"dev","status":"live","environment":"development","protection_enabled":true,"protection_effective":true}]`
+	out := runSiteEnvironment(t, sites,
+		`{"id":"s2","name":"dev","slug":"dev","environment":"production","protection_enabled":true,"protection_effective":false}`,
+		"dev", "production")
+
+	if !strings.Contains(out, "   'dev' is now public: production sites are not protected.\n") {
+		t.Errorf("output = %q; want the now-public line", out)
+	}
+	if strings.Contains(out, "🔒") {
+		t.Errorf("output = %q; a public site gets no private hint", out)
+	}
+}
+
+func TestSiteEnvironment_SaysWhenASiteBecomesPrivate(t *testing.T) {
+	sites := `[{"id":"s1","name":"main","slug":"main","status":"live","is_default":true,"environment":"production"},` +
+		`{"id":"s3","name":"preview","slug":"preview","status":"live","environment":"production","protection_enabled":true}]`
+	out := runSiteEnvironment(t, sites,
+		`{"id":"s3","name":"preview","slug":"preview","environment":"staging","protection_enabled":true,"protection_effective":true}`,
+		"preview", "staging")
+
+	if !strings.Contains(out, "   "+privateHint("preview")+"\n") {
+		t.Errorf("output = %q; want the private hint", out)
+	}
+	if strings.Contains(out, "is now public") {
+		t.Errorf("output = %q; want no now-public line", out)
+	}
+}
+
+func TestSiteEnvironment_PublicSiteOutputIsUnchanged(t *testing.T) {
+	sites := `[{"id":"s1","name":"main","slug":"main","status":"live","is_default":true,"environment":"production"},` +
+		`{"id":"s2","name":"dev","slug":"dev","status":"live","environment":"staging"}]`
+	out := runSiteEnvironment(t, sites, `{"id":"s2","name":"dev","slug":"dev","environment":"development"}`, "dev", "development")
+
+	want := "✅ 'dev' is now a development site (was staging)\n   It applies from the next deploy of this site.\n"
+	if out != want {
+		t.Errorf("output = %q; want exactly %q", out, want)
+	}
+}

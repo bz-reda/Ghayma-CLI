@@ -169,6 +169,13 @@ Examples:
 		}
 		fmt.Printf("✅ '%s' is now a %s site (was %s)\n", updated.Slug, updated.Environment, from)
 		fmt.Println("   It applies from the next deploy of this site.")
+		// Protection follows the kind at once, not at the next deploy.
+		switch {
+		case updated.ProtectionEffective:
+			fmt.Println("   " + privateHint(updated.Slug))
+		case site.ProtectionEffective:
+			fmt.Printf("   '%s' is now public: production sites are not protected.\n", updated.Slug)
+		}
 	},
 }
 
