@@ -1237,3 +1237,37 @@ func TestPromote_PrivateHint(t *testing.T) {
 		t.Errorf("output = %q; want the hint after the URLs", out)
 	}
 }
+
+const unavailableLine = "ℹ️  Site protection is not switched on for this platform yet."
+
+// A switched-off platform may still hold the site's data; removing from it is
+// a failed removal with the real reason, not "not found".
+func TestSiteVisitors_RemoveWhenUnavailable(t *testing.T) {
+	v := strings.Replace(visitorsViewBody(true, visitorAna), `"available":true`, `"available":false`, 1)
+	out, seen, _ := runVisitors(t, map[string]stubReply{
+		"GET " + protectionPathS2:              {200, v},
+		"DELETE " + visitorsEmailsPath + "/e1": {200, visitorsViewBody(true)},
+	}, "remove", "dev", "ana@example.com")
+
+	if strings.TrimSpace(out) != unavailableLine || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want only the unavailable line and exit 1", out, lastExitCode)
+	}
+	if countPrefix(*seen, "DELETE") != 0 {
+		t.Errorf("requests = %v; want no DELETE", *seen)
+	}
+}
+
+func TestSiteBypass_RevokeWhenUnavailable(t *testing.T) {
+	asked := answerProtection(t, "y")
+	out, seen, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2:            {200, bypassViewBody(false, true, bypassCI1)},
+		"DELETE " + bypassTokensPath + "/t1": {200, bypassViewBody(false, true)},
+	}, "revoke", "dev", "CI")
+
+	if strings.TrimSpace(out) != unavailableLine || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want only the unavailable line and exit 1", out, lastExitCode)
+	}
+	if *asked != 0 || countPrefix(*seen, "DELETE") != 0 {
+		t.Errorf("asked %d, requests %v; want no prompt and no DELETE", *asked, *seen)
+	}
+}

@@ -253,6 +253,17 @@ func findProtectionEmail(v *api.Protection, email string) *api.ProtectionEmail {
 	return nil
 }
 
+// unavailableRefused ends a removal on a switched-off platform: the view may
+// still list the entry, but the server would refuse the DELETE.
+func unavailableRefused(v *api.Protection) bool {
+	if v.Available {
+		return false
+	}
+	fmt.Println("ℹ️  Site protection is not switched on for this platform yet.")
+	exitFn(1)
+	return true
+}
+
 func printNotPrivateNote(siteSlug string, v *api.Protection) {
 	if !v.Effective {
 		fmt.Printf("   Note: '%s' is not private right now (ghayma site protection %s).\n", siteSlug, siteSlug)
@@ -357,6 +368,9 @@ func runSiteVisitorsRemove(cmd *cobra.Command, args []string) {
 	v, err := client.GetProtection(projectID, site.ID)
 	if err != nil {
 		failf("%s", protectionFailure(err, site.Slug))
+		return
+	}
+	if unavailableRefused(v) {
 		return
 	}
 	entry := findProtectionEmail(v, args[1])
@@ -509,6 +523,9 @@ func runSiteBypassRevoke(cmd *cobra.Command, args []string) {
 	v, err := client.GetProtection(projectID, site.ID)
 	if err != nil {
 		failf("%s", protectionFailure(err, site.Slug))
+		return
+	}
+	if unavailableRefused(v) {
 		return
 	}
 	var target *api.ProtectionToken
