@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"paas-cli/internal/api"
 )
@@ -561,6 +562,17 @@ func TestSiteVisitors_RemoveUnknownEmail(t *testing.T) {
 	}
 }
 
+func TestSiteVisitors_EmailsAreSanitisedForDisplay(t *testing.T) {
+	spoofed := api.ProtectionEmail{ID: "e3", Email: "eve\x1b[2K@example.com", CreatedAt: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)}
+	out, _, _ := runVisitors(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, visitorsViewBody(true, visitorAna, spoofed)},
+	}, "list", "dev")
+
+	if strings.Contains(out, "\x1b") || !strings.Contains(out, "eve [2K@example.com") {
+		t.Errorf("output = %q; want the email without the ESC byte", out)
+	}
+}
+
 func TestSiteVisitors_NotPrivateNote(t *testing.T) {
 	note := "   Note: 'dev' is not private right now (ghayma site protection dev)."
 	out, _, _ := runVisitors(t, map[string]stubReply{
@@ -813,6 +825,20 @@ func TestSiteBypass_CreateJSON(t *testing.T) {
 	}
 }
 
+func TestSiteBypass_CreateJSONWithNullView(t *testing.T) {
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"POST " + bypassTokensPath: {201, createdBody("null")},
+	}, "create", "dev", "CI", "--json")
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output = %q; want only JSON: %v", out, err)
+	}
+	if view, ok := got["view"]; !ok || view != nil || got["token"] != bypassSecret {
+		t.Errorf("json = %v; want the token and a null view", got)
+	}
+}
+
 func TestSiteBypass_CreateInvalidName(t *testing.T) {
 	out, _, _ := runBypass(t, map[string]stubReply{
 		"POST " + bypassTokensPath: {422, `{"error":"invalid name","code":"invalid_name"}`},
@@ -851,7 +877,7 @@ func TestSiteBypass_RevokeByName(t *testing.T) {
 		"DELETE " + bypassTokensPath + "/t1": {200, bypassViewBody(true, true, bypassApp)},
 	}, "revoke", "dev", "CI")
 
-	if !strings.Contains(out, "⚠️  Anything using this token will be refused by 'dev' within a minute. Continue? [y/N] ") || *asked != 1 {
+	if !strings.Contains(out, `⚠️  This revokes "CI" (gpb_…Xy3Q). Anything using it will be refused by 'dev' within a minute. Continue? [y/N] `) || *asked != 1 {
 		t.Errorf("output = %q, asked %d; want the prompt once", out, *asked)
 	}
 	if countPrefix(*seen, "DELETE") != 1 || !containsPath(*seen, "DELETE "+bypassTokensPath+"/t1") {
@@ -860,8 +886,8 @@ func TestSiteBypass_RevokeByName(t *testing.T) {
 	if !strings.Contains(out, `✅ Revoked bypass token "CI".`) || lastExitCode != 0 {
 		t.Errorf("output = %q, exit %d; want the revoked line", out, lastExitCode)
 	}
-	if strings.Contains(out, "gpb_") {
-		t.Errorf("output = %q; revoke prints no token material", out)
+	if strings.Count(out, "gpb_") != 1 {
+		t.Errorf("output = %q; revoke prints only the token's hint", out)
 	}
 }
 
@@ -925,6 +951,112 @@ func TestSiteBypass_RevokeByID(t *testing.T) {
 	}
 }
 
+func TestSiteBypass_RevokeIDWithAMismatchedName(t *testing.T) {
+	asked := answerProtection(t, "y")
+	out, seen, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2:            {200, bypassViewBody(true, true, bypassCI1, bypassApp)},
+		"DELETE " + bypassTokensPath + "/t3": {200, bypassViewBody(true, true, bypassCI1)},
+	}, "revoke", "dev", "CI", "--id", "t3")
+
+	want := `❌ Token t3 is named "mobile app", not "CI". Drop the name or fix the ID.`
+	if !strings.Contains(out, want) || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want %q", out, lastExitCode, want)
+	}
+	if *asked != 0 || countPrefix(*seen, "DELETE") != 0 {
+		t.Errorf("asked %d, requests %v; a mismatch must not prompt or send", *asked, *seen)
+	}
+
+	// The matching name with --id still revokes, after naming the token.
+	asked = answerProtection(t, "y")
+	out, seen, _ = runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2:            {200, bypassViewBody(true, true, bypassCI1, bypassApp)},
+		"DELETE " + bypassTokensPath + "/t3": {200, bypassViewBody(true, true, bypassCI1)},
+	}, "revoke", "dev", "mobile app", "--id", "t3")
+	if !strings.Contains(out, `⚠️  This revokes "mobile app" (gpb_…Qq9W).`) || *asked != 1 {
+		t.Errorf("output = %q, asked %d; want the prompt naming the token", out, *asked)
+	}
+	if !containsPath(*seen, "DELETE "+bypassTokensPath+"/t3") || !strings.Contains(out, `✅ Revoked bypass token "mobile app".`) || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d, requests %v; want t3 revoked", out, lastExitCode, *seen)
+	}
+}
+
+func TestSiteBypass_NamesPrintAsTyped(t *testing.T) {
+	name := "أداة CI\u200f"
+	tok := api.ProtectionToken{ID: "t7", Name: name, Hint: "gpb_…Zz1A", CreatedAt: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)}
+
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"POST " + bypassTokensPath: {201, createdBody(bypassViewBody(true, true, tok))},
+	}, "create", "dev", name)
+	if !strings.Contains(out, "✅ Created bypass token \""+name+"\" for 'dev'") || strings.Contains(out, `\`) {
+		t.Errorf("output = %q; want the name byte for byte", out)
+	}
+
+	out, _, _ = runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2:            {200, bypassViewBody(true, true, tok)},
+		"DELETE " + bypassTokensPath + "/t7": {200, bypassViewBody(true, true)},
+	}, "revoke", "dev", name, "--yes")
+	if !strings.Contains(out, "✅ Revoked bypass token \""+name+"\".") || strings.Contains(out, `\`) {
+		t.Errorf("output = %q; want the name byte for byte", out)
+	}
+}
+
+func TestDisplayText(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"CI", "CI"},
+		{"أداة CI", "أداة CI"},
+		{"أداة CI\u200f", "أداة CI\u200f"},
+		{"👩\u200d💻 app", "👩\u200d💻 app"},
+		{"a\x1b[31mb", "a [31mb"},
+		{"line1\nline2", "line1 line2"},
+		{"admin\u202egnp.exe", "admingnp.exe"},
+		{"x\u2066y\u2069", "xy"},
+		{"a\u0085b\x7fc", "a b c"},
+		{"  padded\t", "padded"},
+		{"\x00", "(unnamed)"},
+		{"", "(unnamed)"},
+	}
+	for _, tc := range cases {
+		if got := displayText(tc.in); got != tc.want {
+			t.Errorf("displayText(%q) = %q; want %q", tc.in, got, tc.want)
+		}
+	}
+	got := displayText("ok\xff\xfe")
+	if !strings.Contains(got, "\uFFFD") || !utf8.ValidString(got) {
+		t.Errorf("displayText(invalid UTF-8) = %q; want U+FFFD and valid UTF-8", got)
+	}
+}
+
+func TestSiteBypass_ControlCharactersNeverReachTheTerminal(t *testing.T) {
+	evil := api.ProtectionToken{ID: "t8", Name: "CI\x1b[2K\u202eevil", Hint: "gpb_…Ev1L", CreatedAt: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)}
+	clean := func(label, out string) {
+		t.Helper()
+		if strings.Contains(out, "\x1b") || strings.Contains(out, "\u202e") {
+			t.Errorf("%s output = %q; want no ESC byte and no U+202E", label, out)
+		}
+	}
+
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true, evil)},
+	}, "list", "dev")
+	clean("list", out)
+	if !strings.Contains(out, "CI [2Kevil") {
+		t.Errorf("list output = %q; want the sanitised name in the table", out)
+	}
+
+	answerProtection(t, "y")
+	out, seen, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2:            {200, bypassViewBody(true, true, evil)},
+		"DELETE " + bypassTokensPath + "/t8": {200, bypassViewBody(true, true)},
+	}, "revoke", "dev", "--id", "t8")
+	clean("revoke", out)
+	if !strings.Contains(out, `⚠️  This revokes "CI [2Kevil" (gpb_…Ev1L).`) || !strings.Contains(out, `✅ Revoked bypass token "CI [2Kevil".`) {
+		t.Errorf("revoke output = %q; want the prompt and the success line", out)
+	}
+	if !containsPath(*seen, "DELETE "+bypassTokensPath+"/t8") {
+		t.Errorf("requests = %v; want t8 revoked", *seen)
+	}
+}
+
 func TestSiteBypass_RevokeUnknownName(t *testing.T) {
 	out, seen, _ := runBypass(t, map[string]stubReply{
 		"GET " + protectionPathS2: {200, bypassViewBody(true, true, bypassCI1)},
@@ -940,7 +1072,7 @@ func TestSiteBypass_RevokeUnknownName(t *testing.T) {
 	out, seen, _ = runBypass(t, map[string]stubReply{
 		"GET " + protectionPathS2: {200, bypassViewBody(true, true, bypassCI1)},
 	}, "revoke", "dev")
-	if !strings.Contains(out, "❌ Give the token's name, or pick one with --id.") || lastExitCode != 1 || countPrefix(*seen, "DELETE") != 0 {
+	if !strings.Contains(out, "❌ Give the token's name, or pick one with --id.") || lastExitCode != 1 || len(*seen) != 0 {
 		t.Errorf("output = %q, exit %d, requests %v; want the missing-name line", out, lastExitCode, *seen)
 	}
 }

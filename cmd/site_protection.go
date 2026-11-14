@@ -211,6 +211,28 @@ var siteVisitorsRemoveCmd = &cobra.Command{
 	Run:   runSiteVisitorsRemove,
 }
 
+// displayText makes a server-supplied or user-typed value safe to print: a
+// name could otherwise carry escape sequences or bidi overrides that rewrite
+// the line around it, including the revoke prompt. Joiners and the weak
+// direction marks stay, because real Arabic, Persian and emoji names need them.
+func displayText(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToValidUTF8(s, "\uFFFD") {
+		switch {
+		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
+			b.WriteRune(' ')
+		case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := strings.Trim(b.String(), " ")
+	if out == "" {
+		return "(unnamed)"
+	}
+	return out
+}
+
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
@@ -268,7 +290,7 @@ func runSiteVisitorsList(cmd *cobra.Command, args []string) {
 			if e.HasAccount {
 				account = "yes"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\n", e.Email, account, e.CreatedAt.UTC().Format("2006-01-02"))
+			fmt.Fprintf(w, "%s\t%s\t%s\n", displayText(e.Email), account, e.CreatedAt.UTC().Format("2006-01-02"))
 		}
 		w.Flush()
 	}
@@ -289,7 +311,7 @@ func runSiteVisitorsAdd(cmd *cobra.Command, args []string) {
 		if errors.As(err, &apiErr) {
 			switch apiErr.Code {
 			case api.CodeEmailExists:
-				fmt.Printf("ℹ️  %s is already allowed on '%s'.\n", email, site.Slug)
+				fmt.Printf("ℹ️  %s is already allowed on '%s'.\n", displayText(email), site.Slug)
 				return
 			case api.CodeInvalidEmail:
 				failf("That is not a valid email address.")
@@ -310,7 +332,7 @@ func runSiteVisitorsAdd(cmd *cobra.Command, args []string) {
 	if added != nil {
 		email = added.Email
 	}
-	fmt.Printf("✅ %s can now open '%s'.\n", email, site.Slug)
+	fmt.Printf("✅ %s can now open '%s'.\n", displayText(email), site.Slug)
 	if added != nil && !added.HasAccount {
 		fmt.Println("   They need a Ghayma account with this email before they can sign in.")
 	}
@@ -333,14 +355,14 @@ func runSiteVisitorsRemove(cmd *cobra.Command, args []string) {
 	}
 	entry := findProtectionEmail(v, args[1])
 	if entry == nil {
-		failf("%s is not on the list for '%s'.", strings.TrimSpace(args[1]), site.Slug)
+		failf("%s is not on the list for '%s'.", displayText(args[1]), site.Slug)
 		return
 	}
 	if _, err := client.RemoveProtectionEmail(projectID, site.ID, entry.ID); err != nil {
 		failf("%s", protectionFailure(err, site.Slug))
 		return
 	}
-	fmt.Printf("✅ %s can no longer open '%s'.\n", entry.Email, site.Slug)
+	fmt.Printf("✅ %s can no longer open '%s'.\n", displayText(entry.Email), site.Slug)
 	fmt.Println("   It takes effect within a minute.")
 }
 
@@ -410,7 +432,7 @@ func runSiteBypassList(cmd *cobra.Command, args []string) {
 		w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 		fmt.Fprintln(w, "NAME\tTOKEN\tCREATED\tID")
 		for _, tok := range v.Tokens {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", tok.Name, tok.Hint, tok.CreatedAt.UTC().Format("2006-01-02"), tok.ID)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", displayText(tok.Name), displayText(tok.Hint), tok.CreatedAt.UTC().Format("2006-01-02"), tok.ID)
 		}
 		w.Flush()
 	}
@@ -450,7 +472,9 @@ func runSiteBypassCreate(cmd *cobra.Command, args []string) {
 		fmt.Println(string(raw))
 		return
 	}
-	fmt.Printf("✅ Created bypass token %q for '%s'\n", name, site.Slug)
+	// Names print through displayText, not %q: %q would escape the joiners and
+	// direction marks that real names contain.
+	fmt.Printf("✅ Created bypass token \"%s\" for '%s'\n", displayText(name), site.Slug)
 	fmt.Printf("Token (shown once): %s\n", created.Token)
 	fmt.Println("Save it now — it will not be shown again.")
 	fmt.Printf("   Send it as a header:   %s: %s\n", api.BypassHeader, created.Token)
@@ -490,7 +514,11 @@ func runSiteBypassRevoke(cmd *cobra.Command, args []string) {
 			}
 		}
 		if target == nil {
-			failf("No bypass token with ID %q on '%s'.", siteBypassRevokeID, site.Slug)
+			failf("No bypass token with ID \"%s\" on '%s'.", displayText(siteBypassRevokeID), site.Slug)
+			return
+		}
+		if len(args) == 2 && args[1] != target.Name {
+			failf("Token %s is named \"%s\", not \"%s\". Drop the name or fix the ID.", target.ID, displayText(target.Name), displayText(args[1]))
 			return
 		}
 	} else {
@@ -503,21 +531,21 @@ func runSiteBypassRevoke(cmd *cobra.Command, args []string) {
 		}
 		switch len(matches) {
 		case 0:
-			failf("No bypass token named %q on '%s'.", name, site.Slug)
+			failf("No bypass token named \"%s\" on '%s'.", displayText(name), site.Slug)
 			return
 		case 1:
 			target = &matches[0]
 		default:
-			fmt.Printf("❌ %d bypass tokens are named %q. Pick one with --id:\n", len(matches), name)
+			fmt.Printf("❌ %d bypass tokens are named \"%s\". Pick one with --id:\n", len(matches), displayText(name))
 			for _, tok := range matches {
-				fmt.Printf("   %s  %s  created %s\n", tok.ID, tok.Hint, tok.CreatedAt.UTC().Format("2006-01-02"))
+				fmt.Printf("   %s  %s  created %s\n", tok.ID, displayText(tok.Hint), tok.CreatedAt.UTC().Format("2006-01-02"))
 			}
 			exitFn(1)
 			return
 		}
 	}
 	if !siteBypassRevokeYes {
-		fmt.Printf("⚠️  Anything using this token will be refused by '%s' within a minute. Continue? [y/N] ", site.Slug)
+		fmt.Printf("⚠️  This revokes \"%s\" (%s). Anything using it will be refused by '%s' within a minute. Continue? [y/N] ", displayText(target.Name), displayText(target.Hint), site.Slug)
 		if !confirmed(protectionAsk) {
 			fmt.Println("❌ Cancelled.")
 			exitFn(1)
@@ -528,7 +556,7 @@ func runSiteBypassRevoke(cmd *cobra.Command, args []string) {
 		failf("%s", protectionFailure(err, site.Slug))
 		return
 	}
-	fmt.Printf("✅ Revoked bypass token %q.\n", target.Name)
+	fmt.Printf("✅ Revoked bypass token \"%s\".\n", displayText(target.Name))
 }
 
 func init() {
