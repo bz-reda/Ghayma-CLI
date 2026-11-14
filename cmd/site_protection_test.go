@@ -377,6 +377,7 @@ func TestProtectionFailure(t *testing.T) {
 		{&api.APIError{Status: 404, Message: "404 page not found"}, "This platform does not serve site protection yet — the update that adds it is not deployed."},
 		{&api.APIError{Status: 404, Code: api.CodeNotFound, Message: "x"}, "That site, email or token was not found."},
 		{&api.APIError{Status: 422, Code: api.CodeInvalidEmail, Message: "bad email"}, "bad email"},
+		{&api.APIError{Status: 500, Message: "boom\x1b[2J\u202eevil"}, "boom [2Jevil"},
 	}
 	for _, tc := range cases {
 		if got := protectionFailure(tc.err, "dev"); got != tc.want {
@@ -1315,4 +1316,38 @@ func TestSiteProtection_ArgumentErrorsReadNaturally(t *testing.T) {
 			t.Errorf("%v: out = %q; want %q", args, out, want)
 		}
 	}
+}
+
+func TestSiteBypass_TokenIDsNeverCarryControlCharacters(t *testing.T) {
+	evilID := "t\x1b[2K9\u202e"
+	evil := api.ProtectionToken{ID: evilID, Name: "CI", Hint: "gpb_…Ev1L", CreatedAt: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)}
+	clean := func(label, out string) {
+		t.Helper()
+		if strings.Contains(out, "\x1b") || strings.Contains(out, "\u202e") {
+			t.Errorf("%s output = %q; want no ESC byte and no U+202E", label, out)
+		}
+		if !strings.Contains(out, "t [2K9") {
+			t.Errorf("%s output = %q; want the sanitised ID", label, out)
+		}
+	}
+
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true, evil)},
+	}, "list", "dev")
+	clean("list", out)
+
+	out, _, _ = runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true, bypassCI1, evil)},
+	}, "revoke", "dev", "CI")
+	clean("ambiguous", out)
+
+	out, _, _ = runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true, evil)},
+	}, "revoke", "dev", "other", "--id", evilID)
+	clean("mismatch", out)
+
+	out, _, _ = runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true, bypassCI1)},
+	}, "revoke", "dev", "--id", evilID)
+	clean("unknown ID", out)
 }

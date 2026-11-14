@@ -44,7 +44,7 @@ func protectionFailure(err error, siteSlug string) string {
 			return "That site, email or token was not found."
 		}
 	}
-	return fmt.Sprintf("%v", err)
+	return displayText(err.Error())
 }
 
 // privateHint is the line that tells a user, wherever a site is shown, that a
@@ -463,7 +463,7 @@ func runSiteBypassList(cmd *cobra.Command, args []string) {
 		w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 		fmt.Fprintln(w, "NAME\tTOKEN\tCREATED\tID")
 		for _, tok := range v.Tokens {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", displayText(tok.Name), displayText(tok.Hint), tok.CreatedAt.UTC().Format("2006-01-02"), tok.ID)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", displayText(tok.Name), displayText(tok.Hint), tok.CreatedAt.UTC().Format("2006-01-02"), displayText(tok.ID))
 		}
 		w.Flush()
 	}
@@ -552,7 +552,7 @@ func runSiteBypassRevoke(cmd *cobra.Command, args []string) {
 			return
 		}
 		if len(args) == 2 && args[1] != target.Name {
-			failf("Token %s is named \"%s\", not \"%s\". Drop the name or fix the ID.", target.ID, displayText(target.Name), displayText(args[1]))
+			failf("Token %s is named \"%s\", not \"%s\". Drop the name or fix the ID.", displayText(target.ID), displayText(target.Name), displayText(args[1]))
 			return
 		}
 	} else {
@@ -572,7 +572,7 @@ func runSiteBypassRevoke(cmd *cobra.Command, args []string) {
 		default:
 			fmt.Printf("❌ %d bypass tokens are named \"%s\". Pick one with --id:\n", len(matches), displayText(name))
 			for _, tok := range matches {
-				fmt.Printf("   %s  %s  created %s\n", tok.ID, displayText(tok.Hint), tok.CreatedAt.UTC().Format("2006-01-02"))
+				fmt.Printf("   %s  %s  created %s\n", displayText(tok.ID), displayText(tok.Hint), tok.CreatedAt.UTC().Format("2006-01-02"))
 			}
 			exitFn(1)
 			return
