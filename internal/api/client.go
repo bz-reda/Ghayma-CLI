@@ -496,6 +496,10 @@ type Site struct {
 	// InheritEnv says the site resolves its environment as the default site's
 	// variables overridden by its own (design §3).
 	InheritEnv bool `json:"inherit_env"`
+	// ProtectionEffective means the site is gated right now. Both are false
+	// from a server older than site protection.
+	ProtectionEnabled   bool `json:"protection_enabled"`
+	ProtectionEffective bool `json:"protection_effective"`
 	// Points-allowance marketplace: every app carries its compute tier slug +
 	// replica count so `site scale` can show the current size before changing it
 	// and price the change as AppCost(tier.PointsCost, replicas).
