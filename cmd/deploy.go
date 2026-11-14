@@ -345,7 +345,16 @@ Examples:
 			fmt.Println()
 			printDeployConnections(resp.Connections, chosen, deployedSiteSlug(sites, resp.SiteID, target))
 		}
-		waitForDeployment(client, resp.DeploymentID)
+		// The hint needs the site the server deployed to; a first deploy that
+		// creates the site is not in the list and prints none.
+		private, slug := false, ""
+		for _, s := range sites {
+			if s.ID == resp.SiteID {
+				private, slug = s.ProtectionEffective, s.Slug
+				break
+			}
+		}
+		waitForDeployment(client, resp.DeploymentID, private, slug)
 	},
 }
 
@@ -356,7 +365,10 @@ Examples:
 // An image deploy uses it unchanged on purpose — it IS a normal deployment,
 // and an image refused by admission is a FAILED one whose build logs carry the
 // reason, which is exactly what the failure branch already prints.
-func waitForDeployment(client *api.Client, deploymentID string) {
+//
+// private is the target site's ProtectionEffective as the caller already holds
+// it: the hint is never worth an extra request.
+func waitForDeployment(client *api.Client, deploymentID string, private bool, siteSlug string) {
 	// Same budget as the server: the build queue plus the 20-minute build deadline.
 	for i := 0; i < deployWaitPolls; i++ {
 		time.Sleep(deployWaitInterval)
@@ -376,6 +388,9 @@ func waitForDeployment(client *api.Client, deploymentID string) {
 				}
 			} else {
 				fmt.Println("🌐 Your app is live")
+			}
+			if private {
+				fmt.Println(privateHint(siteSlug))
 			}
 			return
 		case "failed":
@@ -426,21 +441,21 @@ func runImageDeploy(client *api.Client, ctx *SiteContext, image, siteFlag string
 	}
 	image = strings.TrimSpace(image)
 	fmt.Printf("🚀 Deploying image %s to %s [site: %s]...", image, ctx.ProjectName, site.Slug)
-	deployPushedImage(client, ctx.ProjectID, site.ID, image, prod)
+	deployPushedImage(client, ctx.ProjectID, site.ID, image, prod, site.ProtectionEffective, site.Slug)
 }
 
 // deployPushedImage creates the image deployment and waits on it, after the
 // caller printed its headline without a newline. The commit message is left to
 // the server, which labels the row "Deploy image <ref>" — one place decides
 // how an image deployment is named.
-func deployPushedImage(client *api.Client, projectID, siteID, image string, prod bool) {
+func deployPushedImage(client *api.Client, projectID, siteID, image string, prod, private bool, siteSlug string) {
 	resp, err := client.DeployImage(projectID, siteID, image, "", prod)
 	if err != nil {
 		fmt.Println()
 		failf("Deploy failed: %v", err)
 		return
 	}
-	waitForDeployment(client, resp.ID)
+	waitForDeployment(client, resp.ID, private, siteSlug)
 }
 
 // prodFlagNotice is what --prod prints since Environments (design D6). The flag

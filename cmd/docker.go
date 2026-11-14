@@ -221,6 +221,8 @@ type pushTarget struct {
 	ProjectID   string
 	ProjectName string
 	SiteRef     string
+	SiteSlug    string
+	Private     bool
 }
 
 // SiteLess reports the project-with-no-site case.
@@ -253,7 +255,7 @@ func resolvePushTarget(client *api.Client, siteFlag string) (*pushTarget, error)
 	case err != nil:
 		return nil, err
 	}
-	target.SiteRef = site.ID
+	target.SiteRef, target.SiteSlug, target.Private = site.ID, site.Slug, site.ProtectionEffective
 	return target, nil
 }
 
@@ -365,7 +367,7 @@ func runDockerPush(cmd *cobra.Command, args []string) {
 	}
 	fmt.Printf("\n✅ Pushed %s\n", image.Ref)
 	fmt.Printf("🚀 Deploying image %s...", image.Tag)
-	deployPushedImage(client, target.ProjectID, target.SiteRef, image.Tag, dockerPushProd)
+	deployPushedImage(client, target.ProjectID, target.SiteRef, image.Tag, dockerPushProd, target.Private, target.SiteSlug)
 }
 
 func init() {

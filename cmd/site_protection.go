@@ -47,6 +47,12 @@ func protectionFailure(err error, siteSlug string) string {
 	return fmt.Sprintf("%v", err)
 }
 
+// privateHint is the line that tells a user, wherever a site is shown, that a
+// visitor will meet a sign-in wall rather than the app.
+func privateHint(siteSlug string) string {
+	return fmt.Sprintf("🔒 Private — only project members and allowed emails can open it (ghayma site protection %s).", siteSlug)
+}
+
 func isProductionEnvironment(env string) bool {
 	return env == "" || env == api.EnvironmentProduction
 }
@@ -78,7 +84,7 @@ func protectionStatusLines(siteSlug string, v *api.Protection) []string {
 
 var siteProtectionCmd = &cobra.Command{
 	Use:   "protection <site> [on|off]",
-	Short: "Show or switch a site's protection",
+	Short: "Show whether a site is private, or make it private or public",
 	Long: `Show whether a site is private, or switch its protection on or off.
 
 A private site opens only for project members and the emails you allow
@@ -561,7 +567,7 @@ func runSiteBypassRevoke(cmd *cobra.Command, args []string) {
 
 func init() {
 	siteProtectionCmd.Flags().BoolVar(&siteProtectionYes, "yes", false, "Turn protection off without asking")
-	siteProtectionCmd.Flags().BoolVar(&siteProtectionJSON, "json", false, "Print the protection as JSON")
+	siteProtectionCmd.Flags().BoolVar(&siteProtectionJSON, "json", false, "Print the protection as JSON (when showing)")
 	siteCmd.AddCommand(siteProtectionCmd)
 
 	siteVisitorsListCmd.Flags().BoolVar(&siteVisitorsJSON, "json", false, "Print the allowed emails as JSON")
@@ -570,7 +576,7 @@ func init() {
 
 	siteBypassListCmd.Flags().BoolVar(&siteBypassListJSON, "json", false, "Print the bypass tokens as JSON")
 	siteBypassCreateCmd.Flags().BoolVar(&siteBypassCreateJSON, "json", false, "Print the created token as JSON")
-	siteBypassRevokeCmd.Flags().StringVar(&siteBypassRevokeID, "id", "", "Revoke the token with this ID")
+	siteBypassRevokeCmd.Flags().StringVar(&siteBypassRevokeID, "id", "", "Revoke the token with this ID (a name given too must match it)")
 	siteBypassRevokeCmd.Flags().BoolVar(&siteBypassRevokeYes, "yes", false, "Revoke without asking")
 	siteBypassCmd.AddCommand(siteBypassListCmd, siteBypassCreateCmd, siteBypassRevokeCmd)
 	siteCmd.AddCommand(siteBypassCmd)

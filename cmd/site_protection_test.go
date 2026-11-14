@@ -1090,3 +1090,150 @@ func TestSiteBypass_OlderBackend(t *testing.T) {
 		}
 	}
 }
+
+const (
+	devPrivateHint  = "🔒 Private — only project members and allowed emails can open it (ghayma site protection dev)."
+	mainPrivateHint = "🔒 Private — only project members and allowed emails can open it (ghayma site protection main)."
+	privateMainSite = `[{"id":"s1","name":"main","slug":"main","is_default":true,"protection_enabled":true,"protection_effective":true}]`
+)
+
+func TestPrivateHint(t *testing.T) {
+	if got := privateHint("dev"); got != devPrivateHint {
+		t.Errorf("privateHint = %q; want %q", got, devPrivateHint)
+	}
+}
+
+func TestSiteList_MarksPrivateSites(t *testing.T) {
+	sites := []api.Site{
+		{ID: "s1", Name: "main", Slug: "main", Status: "live", IsDefault: true, Environment: "production", ProtectionEnabled: true},
+		{ID: "s2", Name: "dev", Slug: "dev", Status: "live", Environment: "development", ProtectionEnabled: true, ProtectionEffective: true},
+	}
+	ts, _, _ := protectionStub(t, sites, nil)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	out := runCLI(t, linkedDir(t), "site", "list")
+
+	if !strings.Contains(out, "dev  (slug: dev, env: development, private, status: live, id: s2)") {
+		t.Errorf("output = %q; want the dev row marked private", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "main  (slug: main") && strings.Contains(line, "private") {
+			t.Errorf("main row = %q; a public site is not marked", line)
+		}
+	}
+
+	// A production site whose setting is on but not in force reads as before.
+	if got := siteListLine(sites[0], true); got != "  ▶ main  (slug: main, env: production, status: live, id: s1)" {
+		t.Errorf("public row = %q; want it unchanged", got)
+	}
+}
+
+func runSiteCreatePrivate(t *testing.T, created string, args ...string) string {
+	t.Helper()
+	ts, _, _ := protectionStub(t, protectionSites, map[string]stubReply{
+		"POST /api/v1/projects/p1/sites": {201, created},
+	})
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	return runCLI(t, linkedDir(t), append([]string{"site", "create"}, args...)...)
+}
+
+func TestSiteCreate_PrivateHint(t *testing.T) {
+	out := runSiteCreatePrivate(t,
+		`{"id":"s9","name":"staging","slug":"staging","environment":"staging","protection_enabled":true,"protection_effective":true}`,
+		"staging", "--env", "staging")
+	want := "✅ Site 'staging' created (slug: staging, id: s9)\n" +
+		"   Environment: staging\n" +
+		"   🔒 Private — only project members and allowed emails can open it (ghayma site protection staging).\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q; want %q", out, want)
+	}
+
+	// Without an environment line the hint follows the created line.
+	out = runSiteCreatePrivate(t, `{"id":"s9","name":"qa","slug":"qa","protection_effective":true}`, "qa")
+	want = "✅ Site 'qa' created (slug: qa, id: s9)\n" +
+		"   🔒 Private — only project members and allowed emails can open it (ghayma site protection qa).\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q; want %q", out, want)
+	}
+}
+
+func TestSiteCreate_NoHintWhenPublic(t *testing.T) {
+	out := runSiteCreatePrivate(t,
+		`{"id":"s9","name":"staging","slug":"staging","environment":"staging","protection_enabled":false,"protection_effective":false}`,
+		"staging", "--env", "staging")
+	if !strings.Contains(out, "   Environment: staging\n") || strings.Contains(out, "🔒") {
+		t.Errorf("output = %q; want the environment line and no hint", out)
+	}
+}
+
+func TestDeploy_PrivateHintAfterTheURLs(t *testing.T) {
+	ts, _, _ := builderStub(t, `[{"id":"s1","name":"web","slug":"web","is_default":true,"protection_effective":true}]`)
+	deployQuietly(t, ts.URL)
+
+	out := runCLI(t, perAppWithBuilder(t, ""), "deploy")
+
+	want := "🚀 Deploying shop......\n✅ Deployed successfully!\n🌐 Your app is live at:\n   https://shop.ghayma.app\n" +
+		"🔒 Private — only project members and allowed emails can open it (ghayma site protection web).\n"
+	if out != want {
+		t.Errorf("output:\n got  %q\n want %q", out, want)
+	}
+}
+
+func TestDeploy_NoHintForAPublicSite(t *testing.T) {
+	ts, _, _ := builderStub(t, webSiteAuto)
+	deployQuietly(t, ts.URL)
+
+	out := runCLI(t, perAppWithBuilder(t, ""), "deploy")
+
+	want := "🚀 Deploying shop......\n✅ Deployed successfully!\n🌐 Your app is live at:\n   https://shop.ghayma.app\n"
+	if out != want {
+		t.Errorf("output:\n got  %q\n want %q", out, want)
+	}
+}
+
+// With no domains the hint follows the "live" line.
+func TestDeployImage_PrivateHintWithoutDomains(t *testing.T) {
+	ts, _, _ := imageDeployStub(t, privateMainSite, `{"id":"dep-1","status":"live"}`)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	fastPolls(t)
+
+	out := runCLI(t, linkedDir(t), "deploy", "--image", "v1")
+
+	if !strings.HasSuffix(out, "✅ Deployed successfully!\n🌐 Your app is live\n"+mainPrivateHint+"\n") {
+		t.Errorf("output = %q; want the hint after the live line", out)
+	}
+}
+
+func TestDockerPushDeploy_PrivateHint(t *testing.T) {
+	stubDocker(t, func(args []string) (string, error) {
+		if args[0] == "push" {
+			return pushOutput, nil
+		}
+		return "", nil
+	})
+	ts, _, _ := dockerStub(t, privateMainSite)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	fastPolls(t)
+
+	out := runCLI(t, linkedDir(t), "docker", "push", "my-app", "--tag", "v1", "--deploy")
+
+	if !strings.HasSuffix(out, "   https://shop.ghayma.app\n"+mainPrivateHint+"\n") {
+		t.Errorf("output = %q; want the hint after the URLs", out)
+	}
+}
+
+func TestPromote_PrivateHint(t *testing.T) {
+	ts, _, _ := promoteStub(t, privateMainSite, 0, promoteAccepted, `{"id":"dep-9","status":"live","domains":["shop.ghayma.app"]}`)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	fastPolls(t)
+
+	out := runCLI(t, linkedDir(t), "promote", "--from", "dev")
+
+	if !strings.HasSuffix(out, "   https://shop.ghayma.app\n"+mainPrivateHint+"\n") {
+		t.Errorf("output = %q; want the hint after the URLs", out)
+	}
+}
