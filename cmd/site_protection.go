@@ -168,8 +168,10 @@ func protectionOn(client *api.Client, projectID string, site *api.Site) {
 	}
 }
 
+// protectionOff asks only for a site that is private now: on a public one the
+// PUT exposes nothing.
 func protectionOff(client *api.Client, projectID string, site *api.Site) {
-	if !siteProtectionYes {
+	if site.ProtectionEffective && !siteProtectionYes {
 		fmt.Printf("⚠️  This makes '%s' public: anyone with the URL can open it. Continue? [y/N] ", site.Slug)
 		if !confirmed(protectionAsk) {
 			fmt.Println("❌ Cancelled.")

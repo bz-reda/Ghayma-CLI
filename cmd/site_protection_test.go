@@ -84,9 +84,20 @@ func answerProtection(t *testing.T, answer string) *int {
 	return &asked
 }
 
+// privateDevSites is protectionSites with the dev site private right now.
+var privateDevSites = []api.Site{
+	protectionSites[0],
+	{ID: "s2", Name: "dev", Slug: "dev", Status: "live", Environment: "development", ProtectionEnabled: true, ProtectionEffective: true},
+}
+
 func runProtection(t *testing.T, routes map[string]stubReply, args ...string) (string, *[]string, *[]map[string]any) {
 	t.Helper()
-	ts, seen, bodies := protectionStub(t, protectionSites, routes)
+	return runProtectionOn(t, protectionSites, routes, args...)
+}
+
+func runProtectionOn(t *testing.T, sites []api.Site, routes map[string]stubReply, args ...string) (string, *[]string, *[]map[string]any) {
+	t.Helper()
+	ts, seen, bodies := protectionStub(t, sites, routes)
 	cliHome(t, ts.URL)
 	noPrompt(t)
 	out := runCLI(t, linkedDir(t), append([]string{"site", "protection"}, args...)...)
@@ -247,7 +258,7 @@ func TestSiteProtection_OffAsksFirst(t *testing.T) {
 		"PUT " + protectionPathS2: {200, protectionViewBody(true, false, false, "development", 0)},
 	}
 	asked := answerProtection(t, "n")
-	out, seen, _ := runProtection(t, routes, "dev", "off")
+	out, seen, _ := runProtectionOn(t, privateDevSites, routes, "dev", "off")
 
 	if !strings.Contains(out, "⚠️  This makes 'dev' public: anyone with the URL can open it. Continue? [y/N] ") {
 		t.Errorf("output = %q; want the prompt", out)
@@ -260,7 +271,7 @@ func TestSiteProtection_OffAsksFirst(t *testing.T) {
 	}
 
 	answerProtection(t, "y")
-	out, seen, bodies := runProtection(t, routes, "dev", "off")
+	out, seen, bodies := runProtectionOn(t, privateDevSites, routes, "dev", "off")
 	if !containsPath(*seen, "PUT "+protectionPathS2) || len(*bodies) != 1 || (*bodies)[0]["enabled"] != false {
 		t.Errorf("requests %v, bodies %v; want the PUT with enabled:false", *seen, *bodies)
 	}
@@ -271,7 +282,7 @@ func TestSiteProtection_OffAsksFirst(t *testing.T) {
 
 func TestSiteProtection_OffWithYesSkipsThePrompt(t *testing.T) {
 	asked := answerProtection(t, "n")
-	out, seen, _ := runProtection(t, map[string]stubReply{
+	out, seen, _ := runProtectionOn(t, privateDevSites, map[string]stubReply{
 		"PUT " + protectionPathS2: {200, protectionViewBody(true, false, false, "development", 0)},
 	}, "dev", "off", "--yes")
 
@@ -280,6 +291,25 @@ func TestSiteProtection_OffWithYesSkipsThePrompt(t *testing.T) {
 	}
 	if !containsPath(*seen, "PUT "+protectionPathS2) || !strings.Contains(out, "✅ 'dev' is now public.") {
 		t.Errorf("requests %v, output %q; want the PUT and the public line", *seen, out)
+	}
+}
+
+// Turning protection off cannot expose a site that is already public, so
+// there is nothing to confirm.
+func TestSiteProtection_OffOnAPublicSiteDoesNotAsk(t *testing.T) {
+	asked := answerProtection(t, "n")
+	out, seen, bodies := runProtection(t, map[string]stubReply{
+		"PUT " + protectionPathS2: {200, protectionViewBody(true, false, false, "development", 0)},
+	}, "dev", "off")
+
+	if *asked != 0 || strings.Contains(out, "Continue?") {
+		t.Errorf("asked %d, output %q; a public site must not prompt", *asked, out)
+	}
+	if !containsPath(*seen, "PUT "+protectionPathS2) || len(*bodies) != 1 || (*bodies)[0]["enabled"] != false {
+		t.Errorf("requests %v, bodies %v; want the PUT with enabled:false", *seen, *bodies)
+	}
+	if !strings.Contains(out, "✅ 'dev' is now public.") || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; want the public line", out, lastExitCode)
 	}
 }
 
