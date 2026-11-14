@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
+	"text/tabwriter"
 
 	"paas-cli/internal/api"
 
@@ -16,6 +19,7 @@ import (
 var (
 	siteProtectionYes  bool
 	siteProtectionJSON bool
+	siteVisitorsJSON   bool
 )
 
 // protectionAsk reads the answer to the confirmation; tests replace it.
@@ -170,8 +174,178 @@ func protectionOff(client *api.Client, projectID string, site *api.Site) {
 	fmt.Printf("✅ '%s' is now public.\n", site.Slug)
 }
 
+var siteVisitorsCmd = &cobra.Command{
+	Use:   "visitors",
+	Short: "Manage the people outside the project allowed to open a private site",
+	Long: `Manage the emails of people outside the project who may open a private
+site. Project members can always open it and do not need to be listed.
+
+Examples:
+  ghayma site visitors list staging
+  ghayma site visitors add staging ana@example.com
+  ghayma site visitors remove staging ana@example.com`,
+}
+
+var siteVisitorsListCmd = &cobra.Command{
+	Use:   "list <site>",
+	Short: "List the emails allowed on a private site",
+	Args:  argChecker("site", "site list", 1, 1),
+	Run:   runSiteVisitorsList,
+}
+
+var siteVisitorsAddCmd = &cobra.Command{
+	Use:   "add <site> <email>",
+	Short: "Allow an email to open a private site",
+	Args:  argChecker("argument", "site list", 2, 2),
+	Run:   runSiteVisitorsAdd,
+}
+
+var siteVisitorsRemoveCmd = &cobra.Command{
+	Use:   "remove <site> <email>",
+	Short: "Stop an email from opening a private site",
+	Args:  argChecker("argument", "site list", 2, 2),
+	Run:   runSiteVisitorsRemove,
+}
+
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func findProtectionEmail(v *api.Protection, email string) *api.ProtectionEmail {
+	want := normalizeEmail(email)
+	for i := range v.Emails {
+		if normalizeEmail(v.Emails[i].Email) == want {
+			return &v.Emails[i]
+		}
+	}
+	return nil
+}
+
+func printNotPrivateNote(siteSlug string, v *api.Protection) {
+	if !v.Effective {
+		fmt.Printf("   Note: '%s' is not private right now (ghayma site protection %s).\n", siteSlug, siteSlug)
+	}
+}
+
+func runSiteVisitorsList(cmd *cobra.Command, args []string) {
+	client, projectID, site, err := resolveNamedSite(args[0])
+	if err != nil {
+		reportSiteError(err)
+		exitFn(1)
+		return
+	}
+	v, err := client.GetProtection(projectID, site.ID)
+	if err != nil {
+		failf("%s", protectionFailure(err, site.Slug))
+		return
+	}
+	if siteVisitorsJSON {
+		emails := v.Emails
+		if emails == nil {
+			emails = []api.ProtectionEmail{}
+		}
+		raw, _ := json.MarshalIndent(emails, "", "  ")
+		fmt.Println(string(raw))
+		return
+	}
+	if !v.Available {
+		fmt.Println("ℹ️  Site protection is not switched on for this platform yet.")
+		return
+	}
+	if len(v.Emails) == 0 {
+		fmt.Printf("ℹ️  No extra emails are allowed on '%s'.\n", site.Slug)
+		fmt.Printf("   Allow one: ghayma site visitors add %s <email>\n", site.Slug)
+	} else {
+		fmt.Println("Project members can always open the site; they do not need to be listed.")
+		w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(w, "EMAIL\tACCOUNT\tADDED")
+		for _, e := range v.Emails {
+			account := "no account yet"
+			if e.HasAccount {
+				account = "yes"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\n", e.Email, account, e.CreatedAt.UTC().Format("2006-01-02"))
+		}
+		w.Flush()
+	}
+	printNotPrivateNote(site.Slug, v)
+}
+
+func runSiteVisitorsAdd(cmd *cobra.Command, args []string) {
+	client, projectID, site, err := resolveNamedSite(args[0])
+	if err != nil {
+		reportSiteError(err)
+		exitFn(1)
+		return
+	}
+	email := strings.TrimSpace(args[1])
+	v, err := client.AddProtectionEmail(projectID, site.ID, email)
+	if err != nil {
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) {
+			switch apiErr.Code {
+			case api.CodeEmailExists:
+				fmt.Printf("ℹ️  %s is already allowed on '%s'.\n", email, site.Slug)
+				return
+			case api.CodeInvalidEmail:
+				failf("That is not a valid email address.")
+				return
+			case api.CodeEmailLimitReached:
+				if current, getErr := client.GetProtection(projectID, site.ID); getErr == nil {
+					failf("'%s' already has the maximum of %d allowed emails. Remove one first.", site.Slug, current.Limits.Emails)
+				} else {
+					failf("'%s' already has the maximum number of allowed emails. Remove one first.", site.Slug)
+				}
+				return
+			}
+		}
+		failf("%s", protectionFailure(err, site.Slug))
+		return
+	}
+	added := findProtectionEmail(v, email)
+	if added != nil {
+		email = added.Email
+	}
+	fmt.Printf("✅ %s can now open '%s'.\n", email, site.Slug)
+	if added != nil && !added.HasAccount {
+		fmt.Println("   They need a Ghayma account with this email before they can sign in.")
+	}
+	printNotPrivateNote(site.Slug, v)
+}
+
+// runSiteVisitorsRemove resolves the email to its ID first: the API deletes by
+// ID, and an email the user typed may differ in case or spacing.
+func runSiteVisitorsRemove(cmd *cobra.Command, args []string) {
+	client, projectID, site, err := resolveNamedSite(args[0])
+	if err != nil {
+		reportSiteError(err)
+		exitFn(1)
+		return
+	}
+	v, err := client.GetProtection(projectID, site.ID)
+	if err != nil {
+		failf("%s", protectionFailure(err, site.Slug))
+		return
+	}
+	entry := findProtectionEmail(v, args[1])
+	if entry == nil {
+		failf("%s is not on the list for '%s'.", strings.TrimSpace(args[1]), site.Slug)
+		return
+	}
+	if _, err := client.RemoveProtectionEmail(projectID, site.ID, entry.ID); err != nil {
+		failf("%s", protectionFailure(err, site.Slug))
+		return
+	}
+	fmt.Printf("✅ %s can no longer open '%s'.\n", entry.Email, site.Slug)
+	fmt.Println("   It takes effect within a minute.")
+}
+
 func init() {
 	siteProtectionCmd.Flags().BoolVar(&siteProtectionYes, "yes", false, "Turn protection off without asking")
 	siteProtectionCmd.Flags().BoolVar(&siteProtectionJSON, "json", false, "Print the protection as JSON")
 	siteCmd.AddCommand(siteProtectionCmd)
+
+	siteVisitorsListCmd.Flags().BoolVar(&siteVisitorsJSON, "json", false, "Print the allowed emails as JSON")
+	siteVisitorsCmd.AddCommand(siteVisitorsListCmd, siteVisitorsAddCmd, siteVisitorsRemoveCmd)
+	siteCmd.AddCommand(siteVisitorsCmd)
 }

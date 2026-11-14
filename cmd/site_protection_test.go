@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"paas-cli/internal/api"
 )
@@ -349,6 +350,249 @@ func TestProtectionFailure(t *testing.T) {
 	for _, tc := range cases {
 		if got := protectionFailure(tc.err, "dev"); got != tc.want {
 			t.Errorf("protectionFailure(%v) = %q; want %q", tc.err, got, tc.want)
+		}
+	}
+}
+
+// visitorsViewBody renders a view with ana (an account) and bo (none yet).
+func visitorsViewBody(effective bool, emails ...api.ProtectionEmail) string {
+	v := api.Protection{
+		Available: true, Enabled: effective, Effective: effective, Environment: "development",
+		Emails: emails, Tokens: []api.ProtectionToken{},
+		Limits: api.ProtectionLimits{Emails: 50, Tokens: 5},
+	}
+	if v.Emails == nil {
+		v.Emails = []api.ProtectionEmail{}
+	}
+	raw, _ := json.Marshal(v)
+	return string(raw)
+}
+
+var (
+	visitorAna = api.ProtectionEmail{ID: "e1", Email: "ana@example.com", HasAccount: true, CreatedAt: time.Date(2026, 11, 14, 10, 21, 33, 0, time.UTC)}
+	visitorBo  = api.ProtectionEmail{ID: "e2", Email: "bo@example.com", HasAccount: false, CreatedAt: time.Date(2026, 11, 13, 23, 59, 0, 0, time.UTC)}
+)
+
+const visitorsEmailsPath = protectionPathS2 + "/emails"
+
+func runVisitors(t *testing.T, routes map[string]stubReply, args ...string) (string, *[]string, *[]map[string]any) {
+	t.Helper()
+	ts, seen, bodies := protectionStub(t, protectionSites, routes)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	out := runCLI(t, linkedDir(t), append([]string{"site", "visitors"}, args...)...)
+	return out, seen, bodies
+}
+
+func TestSiteVisitors_ListTable(t *testing.T) {
+	out, seen, _ := runVisitors(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, visitorsViewBody(true, visitorAna, visitorBo)},
+	}, "list", "dev")
+
+	if !containsPath(*seen, "GET "+protectionPathS2) {
+		t.Errorf("requests = %v; want the GET", *seen)
+	}
+	for _, want := range []string{
+		"Project members can always open the site; they do not need to be listed.",
+		"EMAIL            ACCOUNT         ADDED",
+		"ana@example.com  yes             2026-11-14",
+		"bo@example.com   no account yet  2026-11-13",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q; want %q", out, want)
+		}
+	}
+	if strings.Contains(out, "not private right now") || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; a private site needs no note", out, lastExitCode)
+	}
+}
+
+func TestSiteVisitors_ListEmpty(t *testing.T) {
+	out, _, _ := runVisitors(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, visitorsViewBody(true)},
+	}, "list", "dev")
+
+	for _, want := range []string{
+		"ℹ️  No extra emails are allowed on 'dev'.",
+		"   Allow one: ghayma site visitors add dev <email>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q; want %q", out, want)
+		}
+	}
+	if strings.Contains(out, "EMAIL") || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; no table for an empty list", out, lastExitCode)
+	}
+}
+
+func TestSiteVisitors_ListJSON(t *testing.T) {
+	out, _, _ := runVisitors(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, visitorsViewBody(false, visitorAna)},
+	}, "list", "dev", "--json")
+
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output = %q; want only a JSON array: %v", out, err)
+	}
+	if len(got) != 1 || got[0]["email"] != "ana@example.com" {
+		t.Errorf("json = %v; want ana", got)
+	}
+
+	out, _, _ = runVisitors(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, visitorsViewBody(true)},
+	}, "list", "dev", "--json")
+	if strings.TrimSpace(out) != "[]" {
+		t.Errorf("output = %q; an empty list prints []", out)
+	}
+}
+
+func TestSiteVisitors_AddPostsTheEmail(t *testing.T) {
+	out, seen, bodies := runVisitors(t, map[string]stubReply{
+		"POST " + visitorsEmailsPath: {201, visitorsViewBody(true, visitorAna)},
+	}, "add", "dev", "ana@example.com")
+
+	if !containsPath(*seen, "POST "+visitorsEmailsPath) {
+		t.Fatalf("requests = %v; want the POST", *seen)
+	}
+	if len(*bodies) != 1 || (*bodies)[0]["email"] != "ana@example.com" {
+		t.Errorf("bodies = %v; want email ana@example.com", *bodies)
+	}
+	if !strings.Contains(out, "✅ ana@example.com can now open 'dev'.") || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; want the success line", out, lastExitCode)
+	}
+	if strings.Contains(out, "Ghayma account") || strings.Contains(out, "not private") {
+		t.Errorf("output = %q; no hint for an account on a private site", out)
+	}
+}
+
+func TestSiteVisitors_AddNoAccountHint(t *testing.T) {
+	out, _, _ := runVisitors(t, map[string]stubReply{
+		"POST " + visitorsEmailsPath: {201, visitorsViewBody(true, visitorAna, visitorBo)},
+	}, "add", "dev", " Bo@Example.com ")
+
+	for _, want := range []string{
+		"✅ bo@example.com can now open 'dev'.",
+		"   They need a Ghayma account with this email before they can sign in.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q; want %q", out, want)
+		}
+	}
+}
+
+func TestSiteVisitors_AddAlreadyThereIsNotAnError(t *testing.T) {
+	out, _, _ := runVisitors(t, map[string]stubReply{
+		"POST " + visitorsEmailsPath: {409, `{"error":"exists","code":"email_exists"}`},
+	}, "add", "dev", "ana@example.com")
+
+	if !strings.Contains(out, "ℹ️  ana@example.com is already allowed on 'dev'.") {
+		t.Errorf("output = %q; want the already-allowed line", out)
+	}
+	if strings.Contains(out, "❌") || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; want exit 0 and no error", out, lastExitCode)
+	}
+}
+
+func TestSiteVisitors_AddInvalidEmail(t *testing.T) {
+	out, _, _ := runVisitors(t, map[string]stubReply{
+		"POST " + visitorsEmailsPath: {422, `{"error":"invalid email","code":"invalid_email"}`},
+	}, "add", "dev", "not-an-email")
+
+	if !strings.Contains(out, "❌ That is not a valid email address.") || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want the invalid line and exit 1", out, lastExitCode)
+	}
+}
+
+func TestSiteVisitors_AddAtTheLimit(t *testing.T) {
+	out, _, _ := runVisitors(t, map[string]stubReply{
+		"POST " + visitorsEmailsPath: {409, `{"error":"limit","code":"email_limit_reached"}`},
+		"GET " + protectionPathS2:    {200, visitorsViewBody(true, visitorAna)},
+	}, "add", "dev", "cy@example.com")
+
+	if !strings.Contains(out, "❌ 'dev' already has the maximum of 50 allowed emails. Remove one first.") || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want the limit line naming 50", out, lastExitCode)
+	}
+
+	// Without the view the message drops the number.
+	out, _, _ = runVisitors(t, map[string]stubReply{
+		"POST " + visitorsEmailsPath: {409, `{"error":"limit","code":"email_limit_reached"}`},
+	}, "add", "dev", "cy@example.com")
+	if !strings.Contains(out, "❌ 'dev' already has the maximum number of allowed emails. Remove one first.") || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want the limit line without a number", out, lastExitCode)
+	}
+}
+
+func TestSiteVisitors_RemoveResolvesTheID(t *testing.T) {
+	out, seen, _ := runVisitors(t, map[string]stubReply{
+		"GET " + protectionPathS2:              {200, visitorsViewBody(true, visitorAna, visitorBo)},
+		"DELETE " + visitorsEmailsPath + "/e1": {200, visitorsViewBody(true, visitorBo)},
+	}, "remove", "dev", " Ana@Example.com ")
+
+	if !containsPath(*seen, "DELETE "+visitorsEmailsPath+"/e1") {
+		t.Fatalf("requests = %v; want the DELETE by ID", *seen)
+	}
+	for _, want := range []string{
+		"✅ ana@example.com can no longer open 'dev'.",
+		"   It takes effect within a minute.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q; want %q", out, want)
+		}
+	}
+	if lastExitCode != 0 {
+		t.Errorf("exit = %d; want 0", lastExitCode)
+	}
+}
+
+func TestSiteVisitors_RemoveUnknownEmail(t *testing.T) {
+	out, seen, _ := runVisitors(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, visitorsViewBody(true, visitorAna)},
+	}, "remove", "dev", "cy@example.com")
+
+	if countPrefix(*seen, "DELETE") != 0 {
+		t.Errorf("requests = %v; an unknown email must send no DELETE", *seen)
+	}
+	if !strings.Contains(out, "❌ cy@example.com is not on the list for 'dev'.") || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want the not-on-list line", out, lastExitCode)
+	}
+}
+
+func TestSiteVisitors_NotPrivateNote(t *testing.T) {
+	note := "   Note: 'dev' is not private right now (ghayma site protection dev)."
+	out, _, _ := runVisitors(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, visitorsViewBody(false, visitorAna)},
+	}, "list", "dev")
+	if !strings.Contains(out, "ana@example.com") || !strings.HasSuffix(strings.TrimRight(out, "\n"), note) {
+		t.Errorf("list output = %q; want the table ending with %q", out, note)
+	}
+
+	out, _, _ = runVisitors(t, map[string]stubReply{
+		"POST " + visitorsEmailsPath: {201, visitorsViewBody(false, visitorAna)},
+	}, "add", "dev", "ana@example.com")
+	if !strings.Contains(out, "✅ ana@example.com can now open 'dev'.") || !strings.HasSuffix(strings.TrimRight(out, "\n"), note) {
+		t.Errorf("add output = %q; want the success line ending with %q", out, note)
+	}
+}
+
+func TestSiteVisitors_Unavailable(t *testing.T) {
+	v := visitorsViewBody(true, visitorAna)
+	v = strings.Replace(v, `"available":true`, `"available":false`, 1)
+	out, _, _ := runVisitors(t, map[string]stubReply{"GET " + protectionPathS2: {200, v}}, "list", "dev")
+	if strings.TrimSpace(out) != "ℹ️  Site protection is not switched on for this platform yet." || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; want only the unavailable line", out, lastExitCode)
+	}
+}
+
+func TestSiteVisitors_OlderBackend(t *testing.T) {
+	want := "❌ This platform does not serve site protection yet — the update that adds it is not deployed."
+	for _, args := range [][]string{
+		{"list", "dev"},
+		{"add", "dev", "ana@example.com"},
+		{"remove", "dev", "ana@example.com"},
+	} {
+		out, _, _ := runVisitors(t, nil, args...)
+		if !strings.Contains(out, want) || lastExitCode != 1 {
+			t.Errorf("%v against an older backend = %q, exit %d", args, out, lastExitCode)
 		}
 	}
 }
