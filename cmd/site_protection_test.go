@@ -466,9 +466,13 @@ func TestSiteVisitors_AddPostsTheEmail(t *testing.T) {
 }
 
 func TestSiteVisitors_AddNoAccountHint(t *testing.T) {
-	out, _, _ := runVisitors(t, map[string]stubReply{
+	out, _, bodies := runVisitors(t, map[string]stubReply{
 		"POST " + visitorsEmailsPath: {201, visitorsViewBody(true, visitorAna, visitorBo)},
 	}, "add", "dev", " Bo@Example.com ")
+
+	if len(*bodies) != 1 || (*bodies)[0]["email"] != "Bo@Example.com" {
+		t.Errorf("bodies = %v; want the trimmed email", *bodies)
+	}
 
 	for _, want := range []string{
 		"✅ bo@example.com can now open 'dev'.",
@@ -528,8 +532,8 @@ func TestSiteVisitors_RemoveResolvesTheID(t *testing.T) {
 		"DELETE " + visitorsEmailsPath + "/e1": {200, visitorsViewBody(true, visitorBo)},
 	}, "remove", "dev", " Ana@Example.com ")
 
-	if !containsPath(*seen, "DELETE "+visitorsEmailsPath+"/e1") {
-		t.Fatalf("requests = %v; want the DELETE by ID", *seen)
+	if countPrefix(*seen, "DELETE") != 1 || !containsPath(*seen, "DELETE "+visitorsEmailsPath+"/e1") {
+		t.Fatalf("requests = %v; want exactly one DELETE, by ID", *seen)
 	}
 	for _, want := range []string{
 		"✅ ana@example.com can no longer open 'dev'.",
@@ -583,6 +587,20 @@ func TestSiteVisitors_Unavailable(t *testing.T) {
 	}
 }
 
+func TestSiteVisitors_ListJSONWhenUnavailable(t *testing.T) {
+	v := visitorsViewBody(true, visitorAna)
+	v = strings.Replace(v, `"available":true`, `"available":false`, 1)
+	out, _, _ := runVisitors(t, map[string]stubReply{"GET " + protectionPathS2: {200, v}}, "list", "dev", "--json")
+
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output = %q; want only a JSON array: %v", out, err)
+	}
+	if len(got) != 1 || lastExitCode != 0 {
+		t.Errorf("json = %v, exit %d; want the array and exit 0", got, lastExitCode)
+	}
+}
+
 func TestSiteVisitors_OlderBackend(t *testing.T) {
 	want := "❌ This platform does not serve site protection yet — the update that adds it is not deployed."
 	for _, args := range [][]string{
@@ -591,6 +609,350 @@ func TestSiteVisitors_OlderBackend(t *testing.T) {
 		{"remove", "dev", "ana@example.com"},
 	} {
 		out, _, _ := runVisitors(t, nil, args...)
+		if !strings.Contains(out, want) || lastExitCode != 1 {
+			t.Errorf("%v against an older backend = %q, exit %d", args, out, lastExitCode)
+		}
+	}
+}
+
+var (
+	bypassCI1 = api.ProtectionToken{ID: "t1", Name: "CI", Hint: "gpb_…Xy3Q", CreatedAt: time.Date(2026, 11, 14, 10, 22, 1, 0, time.UTC)}
+	bypassCI2 = api.ProtectionToken{ID: "t2", Name: "CI", Hint: "gpb_…Ab7Z", CreatedAt: time.Date(2026, 11, 12, 23, 30, 0, 0, time.UTC)}
+	bypassApp = api.ProtectionToken{ID: "t3", Name: "mobile app", Hint: "gpb_…Qq9W", CreatedAt: time.Date(2026, 11, 13, 8, 0, 0, 0, time.UTC)}
+)
+
+const (
+	bypassTokensPath = protectionPathS2 + "/tokens"
+	bypassSecret     = "gpb_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+)
+
+// bypassViewBody renders a view of the dev site holding the given tokens.
+func bypassViewBody(available, effective bool, tokens ...api.ProtectionToken) string {
+	v := api.Protection{
+		Available: available, Enabled: effective, Effective: effective, Environment: "development",
+		Emails: []api.ProtectionEmail{}, Tokens: tokens,
+		Limits: api.ProtectionLimits{Emails: 50, Tokens: 5},
+	}
+	if v.Tokens == nil {
+		v.Tokens = []api.ProtectionToken{}
+	}
+	raw, _ := json.Marshal(v)
+	return string(raw)
+}
+
+func runBypass(t *testing.T, routes map[string]stubReply, args ...string) (string, *[]string, *[]map[string]any) {
+	t.Helper()
+	ts, seen, bodies := protectionStub(t, protectionSites, routes)
+	cliHome(t, ts.URL)
+	noPrompt(t)
+	out := runCLI(t, linkedDir(t), append([]string{"site", "bypass"}, args...)...)
+	return out, seen, bodies
+}
+
+func TestSiteBypass_ListTable(t *testing.T) {
+	out, seen, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true, bypassCI1, bypassApp)},
+	}, "list", "dev")
+
+	if !containsPath(*seen, "GET "+protectionPathS2) {
+		t.Errorf("requests = %v; want the GET", *seen)
+	}
+	for _, want := range []string{
+		"NAME        TOKEN      CREATED     ID",
+		"CI          gpb_…Xy3Q  2026-11-14  t1",
+		"mobile app  gpb_…Qq9W  2026-11-13  t3",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q; want %q", out, want)
+		}
+	}
+	if strings.Contains(out, "not private right now") || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; a private site needs no note", out, lastExitCode)
+	}
+
+	// A public site gets the note after the table.
+	out, _, _ = runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, false, bypassCI1)},
+	}, "list", "dev")
+	note := "   Note: 'dev' is not private right now (ghayma site protection dev)."
+	if !strings.HasSuffix(strings.TrimRight(out, "\n"), note) {
+		t.Errorf("output = %q; want it to end with %q", out, note)
+	}
+}
+
+func TestSiteBypass_ListEmpty(t *testing.T) {
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true)},
+	}, "list", "dev")
+
+	for _, want := range []string{
+		"ℹ️  'dev' has no bypass tokens.",
+		"   Create one for scripts, mobile apps or webhooks: ghayma site bypass create dev <name>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q; want %q", out, want)
+		}
+	}
+	if strings.Contains(out, "NAME") || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; no table for an empty list", out, lastExitCode)
+	}
+}
+
+func TestSiteBypass_ListJSON(t *testing.T) {
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, false, bypassCI1)},
+	}, "list", "dev", "--json")
+
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output = %q; want only a JSON array: %v", out, err)
+	}
+	if len(got) != 1 || got[0]["id"] != "t1" || got[0]["hint"] != "gpb_…Xy3Q" {
+		t.Errorf("json = %v; want t1", got)
+	}
+
+	out, _, _ = runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(false, false)},
+	}, "list", "dev", "--json")
+	if strings.TrimSpace(out) != "[]" {
+		t.Errorf("output = %q; an unavailable platform still prints []", out)
+	}
+}
+
+func TestSiteBypass_ListUnavailable(t *testing.T) {
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(false, false, bypassCI1)},
+	}, "list", "dev")
+	if strings.TrimSpace(out) != "ℹ️  Site protection is not switched on for this platform yet." || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; want only the unavailable line", out, lastExitCode)
+	}
+}
+
+func createdBody(view string) string {
+	return `{"token":"` + bypassSecret + `","view":` + view + `}`
+}
+
+func TestSiteBypass_CreatePrintsTheSecretOnce(t *testing.T) {
+	out, seen, bodies := runBypass(t, map[string]stubReply{
+		"POST " + bypassTokensPath: {201, createdBody(bypassViewBody(true, true, bypassCI1))},
+	}, "create", "dev", "CI")
+
+	if !containsPath(*seen, "POST "+bypassTokensPath) {
+		t.Fatalf("requests = %v; want the POST", *seen)
+	}
+	if len(*bodies) != 1 || len((*bodies)[0]) != 1 || (*bodies)[0]["name"] != "CI" {
+		t.Errorf("bodies = %v; want {\"name\":\"CI\"}", *bodies)
+	}
+	want := strings.Join([]string{
+		`✅ Created bypass token "CI" for 'dev'`,
+		"Token (shown once): " + bypassSecret,
+		"Save it now — it will not be shown again.",
+		"   Send it as a header:   " + api.BypassHeader + ": " + bypassSecret,
+		"   Or in a URL:           https://<your-site>/path?" + api.BypassQueryParam + "=" + bypassSecret,
+		"   A token in a URL can end up in logs; prefer the header.",
+	}, "\n")
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q; want %q", out, want)
+	}
+	if n := strings.Count(out, bypassSecret); n != 3 {
+		t.Errorf("secret printed %d times; want the shown-once line plus the two usage lines", n)
+	}
+	if strings.Contains(out, "not private right now") || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; a private site needs no note", out, lastExitCode)
+	}
+}
+
+func TestSiteBypass_CreateWithNullViewStillPrintsTheSecret(t *testing.T) {
+	out, seen, _ := runBypass(t, map[string]stubReply{
+		"POST " + bypassTokensPath: {201, createdBody("null")},
+	}, "create", "dev", "CI")
+
+	if !strings.Contains(out, "Token (shown once): "+bypassSecret) || !strings.Contains(out, "prefer the header.") {
+		t.Errorf("output = %q; want the secret and the usage lines", out)
+	}
+	if countPrefix(*seen, "GET "+protectionPathS2) != 0 {
+		t.Errorf("requests = %v; a null view must not trigger a GET", *seen)
+	}
+	if strings.Contains(out, "❌") || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; want success", out, lastExitCode)
+	}
+}
+
+func TestSiteBypass_CreateNotPrivateNote(t *testing.T) {
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"POST " + bypassTokensPath: {201, createdBody(bypassViewBody(true, false, bypassCI1))},
+	}, "create", "dev", "CI")
+	note := "   Note: 'dev' is not private right now (ghayma site protection dev)."
+	if !strings.Contains(out, bypassSecret) || !strings.HasSuffix(strings.TrimRight(out, "\n"), note) {
+		t.Errorf("output = %q; want the secret, then %q", out, note)
+	}
+}
+
+func TestSiteBypass_CreateJSON(t *testing.T) {
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"POST " + bypassTokensPath: {201, createdBody(bypassViewBody(true, false, bypassCI1))},
+	}, "create", "dev", "CI", "--json")
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output = %q; want only JSON: %v", out, err)
+	}
+	if got["token"] != bypassSecret {
+		t.Errorf("json = %v; want the token", got)
+	}
+	if view, ok := got["view"].(map[string]any); !ok || view["available"] != true {
+		t.Errorf("json = %v; want the view", got)
+	}
+	for _, absent := range []string{"✅", "Token (shown once)", "Save it now", "Send it as a header", "Note:"} {
+		if strings.Contains(out, absent) {
+			t.Errorf("output = %q; --json must not print %q", out, absent)
+		}
+	}
+	if strings.Count(out, bypassSecret) != 1 {
+		t.Errorf("output = %q; the secret appears once in the JSON", out)
+	}
+}
+
+func TestSiteBypass_CreateInvalidName(t *testing.T) {
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"POST " + bypassTokensPath: {422, `{"error":"invalid name","code":"invalid_name"}`},
+	}, "create", "dev", "x")
+
+	if !strings.Contains(out, "❌ A token name must be 1 to 50 characters.") || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want the name rule and exit 1", out, lastExitCode)
+	}
+}
+
+func TestSiteBypass_CreateAtTheLimit(t *testing.T) {
+	out, _, _ := runBypass(t, map[string]stubReply{
+		"POST " + bypassTokensPath: {409, `{"error":"limit","code":"token_limit_reached"}`},
+		"GET " + protectionPathS2:  {200, bypassViewBody(true, true, bypassCI1)},
+	}, "create", "dev", "CI")
+
+	want := "❌ 'dev' already has the maximum of 5 bypass tokens. Revoke one first: ghayma site bypass list dev"
+	if !strings.Contains(out, want) || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want %q", out, lastExitCode, want)
+	}
+
+	// Without the view the message drops the number.
+	out, _, _ = runBypass(t, map[string]stubReply{
+		"POST " + bypassTokensPath: {409, `{"error":"limit","code":"token_limit_reached"}`},
+	}, "create", "dev", "CI")
+	want = "❌ 'dev' already has the maximum number of bypass tokens. Revoke one first: ghayma site bypass list dev"
+	if !strings.Contains(out, want) || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want %q", out, lastExitCode, want)
+	}
+}
+
+func TestSiteBypass_RevokeByName(t *testing.T) {
+	asked := answerProtection(t, "y")
+	out, seen, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2:            {200, bypassViewBody(true, true, bypassCI1, bypassApp)},
+		"DELETE " + bypassTokensPath + "/t1": {200, bypassViewBody(true, true, bypassApp)},
+	}, "revoke", "dev", "CI")
+
+	if !strings.Contains(out, "⚠️  Anything using this token will be refused by 'dev' within a minute. Continue? [y/N] ") || *asked != 1 {
+		t.Errorf("output = %q, asked %d; want the prompt once", out, *asked)
+	}
+	if countPrefix(*seen, "DELETE") != 1 || !containsPath(*seen, "DELETE "+bypassTokensPath+"/t1") {
+		t.Fatalf("requests = %v; want one DELETE of t1", *seen)
+	}
+	if !strings.Contains(out, `✅ Revoked bypass token "CI".`) || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; want the revoked line", out, lastExitCode)
+	}
+	if strings.Contains(out, "gpb_") {
+		t.Errorf("output = %q; revoke prints no token material", out)
+	}
+}
+
+func TestSiteBypass_RevokeAsksFirst(t *testing.T) {
+	asked := answerProtection(t, "n")
+	out, seen, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2:            {200, bypassViewBody(true, true, bypassCI1)},
+		"DELETE " + bypassTokensPath + "/t1": {200, bypassViewBody(true, true)},
+	}, "revoke", "dev", "CI")
+
+	if *asked != 1 || countPrefix(*seen, "DELETE") != 0 {
+		t.Errorf("asked %d, requests %v; a decline must send no DELETE", *asked, *seen)
+	}
+	if !strings.Contains(out, "❌ Cancelled.") || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; want Cancelled and exit 1", out, lastExitCode)
+	}
+}
+
+func TestSiteBypass_RevokeAmbiguousNameListsBoth(t *testing.T) {
+	asked := answerProtection(t, "y")
+	out, seen, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true, bypassCI1, bypassApp, bypassCI2)},
+	}, "revoke", "dev", "CI")
+
+	want := strings.Join([]string{
+		`❌ 2 bypass tokens are named "CI". Pick one with --id:`,
+		"   t1  gpb_…Xy3Q  created 2026-11-14",
+		"   t2  gpb_…Ab7Z  created 2026-11-12",
+	}, "\n")
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q; want %q", out, want)
+	}
+	if *asked != 0 || countPrefix(*seen, "DELETE") != 0 || lastExitCode != 1 {
+		t.Errorf("asked %d, requests %v, exit %d; an ambiguous name must not prompt, send or succeed", *asked, *seen, lastExitCode)
+	}
+}
+
+func TestSiteBypass_RevokeByID(t *testing.T) {
+	asked := answerProtection(t, "n")
+	out, seen, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2:            {200, bypassViewBody(true, true, bypassCI1, bypassCI2)},
+		"DELETE " + bypassTokensPath + "/t2": {200, bypassViewBody(true, true, bypassCI1)},
+	}, "revoke", "dev", "--id", "t2", "--yes")
+
+	if *asked != 0 || strings.Contains(out, "Continue?") {
+		t.Errorf("asked %d, output %q; --yes must not prompt", *asked, out)
+	}
+	if countPrefix(*seen, "DELETE") != 1 || !containsPath(*seen, "DELETE "+bypassTokensPath+"/t2") {
+		t.Fatalf("requests = %v; want one DELETE of t2", *seen)
+	}
+	if !strings.Contains(out, `✅ Revoked bypass token "CI".`) || lastExitCode != 0 {
+		t.Errorf("output = %q, exit %d; want the revoked line", out, lastExitCode)
+	}
+
+	// An ID that is not on the site sends nothing.
+	out, seen, _ = runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true, bypassCI1)},
+	}, "revoke", "dev", "--id", "t9", "--yes")
+	if !strings.Contains(out, `❌ No bypass token with ID "t9" on 'dev'.`) || lastExitCode != 1 || countPrefix(*seen, "DELETE") != 0 {
+		t.Errorf("output = %q, exit %d, requests %v; want the unknown-ID line and no DELETE", out, lastExitCode, *seen)
+	}
+}
+
+func TestSiteBypass_RevokeUnknownName(t *testing.T) {
+	out, seen, _ := runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true, bypassCI1)},
+	}, "revoke", "dev", "ci")
+
+	if !strings.Contains(out, `❌ No bypass token named "ci" on 'dev'.`) || lastExitCode != 1 {
+		t.Errorf("output = %q, exit %d; names match case-sensitively", out, lastExitCode)
+	}
+	if countPrefix(*seen, "DELETE") != 0 {
+		t.Errorf("requests = %v; want no DELETE", *seen)
+	}
+
+	out, seen, _ = runBypass(t, map[string]stubReply{
+		"GET " + protectionPathS2: {200, bypassViewBody(true, true, bypassCI1)},
+	}, "revoke", "dev")
+	if !strings.Contains(out, "❌ Give the token's name, or pick one with --id.") || lastExitCode != 1 || countPrefix(*seen, "DELETE") != 0 {
+		t.Errorf("output = %q, exit %d, requests %v; want the missing-name line", out, lastExitCode, *seen)
+	}
+}
+
+func TestSiteBypass_OlderBackend(t *testing.T) {
+	want := "❌ This platform does not serve site protection yet — the update that adds it is not deployed."
+	for _, args := range [][]string{
+		{"list", "dev"},
+		{"create", "dev", "CI"},
+		{"revoke", "dev", "CI", "--yes"},
+	} {
+		out, _, _ := runBypass(t, nil, args...)
 		if !strings.Contains(out, want) || lastExitCode != 1 {
 			t.Errorf("%v against an older backend = %q, exit %d", args, out, lastExitCode)
 		}

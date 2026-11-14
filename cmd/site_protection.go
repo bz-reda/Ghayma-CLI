@@ -17,9 +17,13 @@ import (
 // development site can be made private. A production site is always public.
 
 var (
-	siteProtectionYes  bool
-	siteProtectionJSON bool
-	siteVisitorsJSON   bool
+	siteProtectionYes    bool
+	siteProtectionJSON   bool
+	siteVisitorsJSON     bool
+	siteBypassListJSON   bool
+	siteBypassCreateJSON bool
+	siteBypassRevokeID   string
+	siteBypassRevokeYes  bool
 )
 
 // protectionAsk reads the answer to the confirmation; tests replace it.
@@ -340,6 +344,193 @@ func runSiteVisitorsRemove(cmd *cobra.Command, args []string) {
 	fmt.Println("   It takes effect within a minute.")
 }
 
+var siteBypassCmd = &cobra.Command{
+	Use:   "bypass",
+	Short: "Manage the tokens that let scripts, mobile apps and webhooks through a private site",
+	Long: `Manage a private site's bypass tokens. A script, mobile app or webhook that
+cannot sign in sends a token as the header ` + api.BypassHeader + `
+(or the query parameter ` + api.BypassQueryParam + `) to get through.
+
+Examples:
+  ghayma site bypass list staging
+  ghayma site bypass create staging CI
+  ghayma site bypass revoke staging CI`,
+}
+
+var siteBypassListCmd = &cobra.Command{
+	Use:   "list <site>",
+	Short: "List a site's bypass tokens",
+	Args:  argChecker("site", "site list", 1, 1),
+	Run:   runSiteBypassList,
+}
+
+var siteBypassCreateCmd = &cobra.Command{
+	Use:   "create <site> <name>",
+	Short: "Create a bypass token; its secret is shown once",
+	Args:  argChecker("argument", "site list", 2, 2),
+	Run:   runSiteBypassCreate,
+}
+
+var siteBypassRevokeCmd = &cobra.Command{
+	Use:   "revoke <site> [name]",
+	Short: "Revoke a bypass token by name, or by ID with --id",
+	Args:  argChecker("argument", "site list", 1, 2),
+	Run:   runSiteBypassRevoke,
+}
+
+func runSiteBypassList(cmd *cobra.Command, args []string) {
+	client, projectID, site, err := resolveNamedSite(args[0])
+	if err != nil {
+		reportSiteError(err)
+		exitFn(1)
+		return
+	}
+	v, err := client.GetProtection(projectID, site.ID)
+	if err != nil {
+		failf("%s", protectionFailure(err, site.Slug))
+		return
+	}
+	if siteBypassListJSON {
+		tokens := v.Tokens
+		if tokens == nil {
+			tokens = []api.ProtectionToken{}
+		}
+		raw, _ := json.MarshalIndent(tokens, "", "  ")
+		fmt.Println(string(raw))
+		return
+	}
+	if !v.Available {
+		fmt.Println("ℹ️  Site protection is not switched on for this platform yet.")
+		return
+	}
+	if len(v.Tokens) == 0 {
+		fmt.Printf("ℹ️  '%s' has no bypass tokens.\n", site.Slug)
+		fmt.Printf("   Create one for scripts, mobile apps or webhooks: ghayma site bypass create %s <name>\n", site.Slug)
+	} else {
+		w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tTOKEN\tCREATED\tID")
+		for _, tok := range v.Tokens {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", tok.Name, tok.Hint, tok.CreatedAt.UTC().Format("2006-01-02"), tok.ID)
+		}
+		w.Flush()
+	}
+	printNotPrivateNote(site.Slug, v)
+}
+
+func runSiteBypassCreate(cmd *cobra.Command, args []string) {
+	client, projectID, site, err := resolveNamedSite(args[0])
+	if err != nil {
+		reportSiteError(err)
+		exitFn(1)
+		return
+	}
+	name := args[1]
+	created, err := client.CreateBypassToken(projectID, site.ID, name)
+	if err != nil {
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) {
+			switch apiErr.Code {
+			case api.CodeInvalidTokenName:
+				failf("A token name must be 1 to 50 characters.")
+				return
+			case api.CodeTokenLimitReached:
+				if current, getErr := client.GetProtection(projectID, site.ID); getErr == nil {
+					failf("'%s' already has the maximum of %d bypass tokens. Revoke one first: ghayma site bypass list %s", site.Slug, current.Limits.Tokens, site.Slug)
+				} else {
+					failf("'%s' already has the maximum number of bypass tokens. Revoke one first: ghayma site bypass list %s", site.Slug, site.Slug)
+				}
+				return
+			}
+		}
+		failf("%s", protectionFailure(err, site.Slug))
+		return
+	}
+	if siteBypassCreateJSON {
+		raw, _ := json.MarshalIndent(created, "", "  ")
+		fmt.Println(string(raw))
+		return
+	}
+	fmt.Printf("✅ Created bypass token %q for '%s'\n", name, site.Slug)
+	fmt.Printf("Token (shown once): %s\n", created.Token)
+	fmt.Println("Save it now — it will not be shown again.")
+	fmt.Printf("   Send it as a header:   %s: %s\n", api.BypassHeader, created.Token)
+	fmt.Printf("   Or in a URL:           https://<your-site>/path?%s=%s\n", api.BypassQueryParam, created.Token)
+	fmt.Println("   A token in a URL can end up in logs; prefer the header.")
+	// A null view means the server could not read the site back; the token
+	// still exists, so only the note is skipped.
+	if created.View != nil {
+		printNotPrivateNote(site.Slug, created.View)
+	}
+}
+
+// runSiteBypassRevoke resolves the token from the current list: the API revokes
+// by ID, and names are labels that need not be unique.
+func runSiteBypassRevoke(cmd *cobra.Command, args []string) {
+	if siteBypassRevokeID == "" && len(args) < 2 {
+		failf("Give the token's name, or pick one with --id.")
+		return
+	}
+	client, projectID, site, err := resolveNamedSite(args[0])
+	if err != nil {
+		reportSiteError(err)
+		exitFn(1)
+		return
+	}
+	v, err := client.GetProtection(projectID, site.ID)
+	if err != nil {
+		failf("%s", protectionFailure(err, site.Slug))
+		return
+	}
+	var target *api.ProtectionToken
+	if siteBypassRevokeID != "" {
+		for i := range v.Tokens {
+			if v.Tokens[i].ID == siteBypassRevokeID {
+				target = &v.Tokens[i]
+				break
+			}
+		}
+		if target == nil {
+			failf("No bypass token with ID %q on '%s'.", siteBypassRevokeID, site.Slug)
+			return
+		}
+	} else {
+		name := args[1]
+		var matches []api.ProtectionToken
+		for _, tok := range v.Tokens {
+			if tok.Name == name {
+				matches = append(matches, tok)
+			}
+		}
+		switch len(matches) {
+		case 0:
+			failf("No bypass token named %q on '%s'.", name, site.Slug)
+			return
+		case 1:
+			target = &matches[0]
+		default:
+			fmt.Printf("❌ %d bypass tokens are named %q. Pick one with --id:\n", len(matches), name)
+			for _, tok := range matches {
+				fmt.Printf("   %s  %s  created %s\n", tok.ID, tok.Hint, tok.CreatedAt.UTC().Format("2006-01-02"))
+			}
+			exitFn(1)
+			return
+		}
+	}
+	if !siteBypassRevokeYes {
+		fmt.Printf("⚠️  Anything using this token will be refused by '%s' within a minute. Continue? [y/N] ", site.Slug)
+		if !confirmed(protectionAsk) {
+			fmt.Println("❌ Cancelled.")
+			exitFn(1)
+			return
+		}
+	}
+	if _, err := client.RevokeBypassToken(projectID, site.ID, target.ID); err != nil {
+		failf("%s", protectionFailure(err, site.Slug))
+		return
+	}
+	fmt.Printf("✅ Revoked bypass token %q.\n", target.Name)
+}
+
 func init() {
 	siteProtectionCmd.Flags().BoolVar(&siteProtectionYes, "yes", false, "Turn protection off without asking")
 	siteProtectionCmd.Flags().BoolVar(&siteProtectionJSON, "json", false, "Print the protection as JSON")
@@ -348,4 +539,11 @@ func init() {
 	siteVisitorsListCmd.Flags().BoolVar(&siteVisitorsJSON, "json", false, "Print the allowed emails as JSON")
 	siteVisitorsCmd.AddCommand(siteVisitorsListCmd, siteVisitorsAddCmd, siteVisitorsRemoveCmd)
 	siteCmd.AddCommand(siteVisitorsCmd)
+
+	siteBypassListCmd.Flags().BoolVar(&siteBypassListJSON, "json", false, "Print the bypass tokens as JSON")
+	siteBypassCreateCmd.Flags().BoolVar(&siteBypassCreateJSON, "json", false, "Print the created token as JSON")
+	siteBypassRevokeCmd.Flags().StringVar(&siteBypassRevokeID, "id", "", "Revoke the token with this ID")
+	siteBypassRevokeCmd.Flags().BoolVar(&siteBypassRevokeYes, "yes", false, "Revoke without asking")
+	siteBypassCmd.AddCommand(siteBypassListCmd, siteBypassCreateCmd, siteBypassRevokeCmd)
+	siteCmd.AddCommand(siteBypassCmd)
 }
