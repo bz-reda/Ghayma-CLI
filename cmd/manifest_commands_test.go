@@ -47,6 +47,7 @@ func resetCommandFlags() {
 	envSite, domainSite = "", ""
 	cronSiteFlag = ""
 	siteEnvKind = ""
+	siteProtectionYes, siteProtectionJSON = false, false
 	connectYes = false
 	promoteFrom, promoteDeployment, promoteSite, promoteMessage = "", "", "", ""
 	siteScaleSite, siteScaleTier, siteScaleReplicas = "", "", 0
