@@ -171,7 +171,7 @@ func runPromote(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Print(promoteHeadline(p, from, target.Slug) + "...")
-	waitForDeployment(client, p.ID)
+	waitForDeployment(client, p.ID, target.ProtectionEffective, target.Slug)
 }
 
 func init() {

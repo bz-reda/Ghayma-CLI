@@ -125,6 +125,15 @@ Each project has a points budget (or runs pay-as-you-go). Databases, apps, stora
 | `ghayma site scale --tier <tier>` | Scale the active app to a new compute tier (e.g. `a`, `b`, `c`, `d`) |
 | `ghayma site scale --replicas <n>` | Scale the active app to `n` replicas (must be >= 1) |
 | `ghayma site scale --site <slug> --tier <tier> --replicas <n>` | Scale a specific site by tier and/or replica count |
+| `ghayma site protection <site> [on\|off]` | Show whether a staging or development site is private (`--json` when showing), or make it private or public |
+| `ghayma site visitors list <site>` | List the emails allowed to open a private site |
+| `ghayma site visitors add <site> <email>` | Allow an email to open a private site |
+| `ghayma site visitors remove <site> <email>` | Stop an email from opening a private site |
+| `ghayma site bypass list <site>` | List a site's bypass tokens |
+| `ghayma site bypass create <site> <name>` | Create a bypass token for scripts, mobile apps and webhooks; its secret is shown once |
+| `ghayma site bypass revoke <site> [name] [--id <token-id>]` | Revoke a bypass token by name, or by ID with `--id` |
+
+A private site can be opened by project members and by people whose email is on its visitors list, who sign in with their Ghayma account. A script, mobile app or webhook sends a bypass token as the `X-Ghayma-Protection-Bypass` header or the `x-ghayma-protection-bypass` URL parameter. A token placed in a URL can end up in logs, so prefer the header.
 
 ### Domains
 

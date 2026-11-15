@@ -74,11 +74,15 @@ func siteListLine(s api.Site, active bool) string {
 	if s.Environment != "" {
 		env = fmt.Sprintf("env: %s, ", s.Environment)
 	}
+	private := ""
+	if s.ProtectionEffective {
+		private = "private, "
+	}
 	inherits := ""
 	if s.InheritEnv {
 		inherits = "  [inherits env]"
 	}
-	return fmt.Sprintf("  %s%s  (slug: %s, %sstatus: %s, id: %s)%s", marker, s.Name, s.Slug, env, s.Status, s.ID, inherits)
+	return fmt.Sprintf("  %s%s  (slug: %s, %s%sstatus: %s, id: %s)%s", marker, s.Name, s.Slug, env, private, s.Status, s.ID, inherits)
 }
 
 func runSiteCreate(cmd *cobra.Command, args []string) {
@@ -124,6 +128,9 @@ func runSiteCreate(cmd *cobra.Command, args []string) {
 	fmt.Printf("✅ Site '%s' created (slug: %s, id: %s)\n", site.Name, site.Slug, site.ID)
 	if line := createdEnvironmentLine(site); line != "" {
 		fmt.Println(line)
+	}
+	if site.ProtectionEffective {
+		fmt.Println("   " + privateHint(site.Slug))
 	}
 
 	// In a linked workspace the new site is unreachable until the manifest says
