@@ -446,6 +446,164 @@ func TestFallbackDialer_UnusableCachePathIsHarmless(t *testing.T) {
 	}
 }
 
+// edgeListener accepts every connection on loopback and treats it the way
+// behave says, so a test can stand in for an edge that accepts TCP and then
+// fails the connection. It returns the port.
+func edgeListener(t *testing.T, behave func(conn *net.TCPConn)) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			behave(conn.(*net.TCPConn))
+		}
+	}()
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("listener addr %q: %v", ln.Addr(), err)
+	}
+	return port
+}
+
+// resetConn waits for the client's first bytes, then closes with SO_LINGER 0
+// so the peer reads ECONNRESET: the 2026-11-16 symptom, a Cloudflare edge that
+// accepted TCP and reset the connection once the TLS ClientHello arrived.
+// Resetting before reading would race the client's connect instead.
+func resetConn(conn *net.TCPConn) {
+	conn.Read(make([]byte, 64))
+	conn.SetLinger(0)
+	conn.Close()
+}
+
+// closeConn waits for the client's first bytes, then closes cleanly.
+func closeConn(conn *net.TCPConn) {
+	conn.Read(make([]byte, 64))
+	conn.Close()
+}
+
+// exchange sends the client's opening bytes, then drains conn until it fails
+// and returns that error.
+func exchange(conn net.Conn) error {
+	if _, err := conn.Write([]byte("client hello")); err != nil {
+		return err
+	}
+	_, err := io.Copy(io.Discard, conn)
+	if err == nil {
+		return io.EOF
+	}
+	return err
+}
+
+// TestFallbackDialer_ForgetsAnAddressThatConnectsThenFails covers the
+// 2026-11-16 failure: TCP to the remembered address connected, so the dialer
+// kept trusting it, and every request then died with "connection reset by
+// peer" until the cache entry expired a day later. A connection that fails
+// before carrying any data must drop the address, whether it came from the
+// disk cache or was just resolved.
+func TestFallbackDialer_ForgetsAnAddressThatConnectsThenFails(t *testing.T) {
+	failures := map[string]func(*net.TCPConn){
+		"reset":         resetConn,
+		"closed silent": closeConn,
+	}
+	sources := map[string]bool{"cached on disk": true, "just resolved": false}
+
+	for failName, failure := range failures {
+		for sourceName, cached := range sources {
+			t.Run(failName+"/"+sourceName, func(t *testing.T) {
+				port := edgeListener(t, failure)
+				path := tempCachePath(t)
+				d := newTestDialer()
+				d.cachePath = path
+				if cached {
+					seedCache(t, path, map[string]netCacheEntry{
+						"api.test": {IP: "127.0.0.1", Until: time.Now().Add(time.Hour)},
+					})
+					d.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+						return nil, errors.New("the cached address should be dialed first")
+					}
+				} else {
+					d.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+						return []net.IP{net.ParseIP("127.0.0.1")}, nil
+					}
+				}
+
+				conn, err := d.DialContext(context.Background(), "tcp", "api.test:"+port)
+				if err != nil {
+					t.Fatalf("DialContext: %v — the edge accepts TCP, so the dial itself works", err)
+				}
+				defer conn.Close()
+				if err := exchange(conn); err == nil {
+					t.Fatal("read succeeded; want the edge to fail the connection")
+				}
+
+				if got := d.recall("api.test"); got != "" {
+					t.Errorf("known[api.test] = %q; want it forgotten so the retry re-resolves", got)
+				}
+				if _, ok := readDiskCache(t, path)["api.test"]; ok {
+					t.Error("api.test is still cached on disk; the next command would dial it again for a day")
+				}
+			})
+		}
+	}
+}
+
+// TestFallbackDialer_KeepsAnAddressThatServedData guards the other side: a
+// server closing a connection after answering is normal (idle keep-alive), so
+// an address that delivered bytes stays remembered.
+func TestFallbackDialer_KeepsAnAddressThatServedData(t *testing.T) {
+	port := edgeListener(t, func(conn *net.TCPConn) {
+		conn.Read(make([]byte, 64))
+		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+		conn.Close()
+	})
+	d := newTestDialer()
+	d.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+
+	conn, err := d.DialContext(context.Background(), "tcp", "api.test:"+port)
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	defer conn.Close()
+	if err := exchange(conn); !errors.Is(err, io.EOF) {
+		t.Fatalf("read error = %v; want a clean EOF after the response", err)
+	}
+
+	if got := d.recall("api.test"); got != "127.0.0.1" {
+		t.Errorf("known[api.test] = %q; want 127.0.0.1 kept after it served data", got)
+	}
+}
+
+// TestFallbackDialer_LateFailureKeepsANewerAddress: a connection failing on an
+// old address must not erase an address another connection has proven since.
+func TestFallbackDialer_LateFailureKeepsANewerAddress(t *testing.T) {
+	port := edgeListener(t, resetConn)
+	d := newTestDialer()
+	d.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+
+	conn, err := d.DialContext(context.Background(), "tcp", "api.test:"+port)
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	defer conn.Close()
+	d.remember("api.test", "192.0.2.10")
+	exchange(conn)
+
+	if got := d.recall("api.test"); got != "192.0.2.10" {
+		t.Errorf("known[api.test] = %q; want the newer 192.0.2.10 left alone", got)
+	}
+}
+
 // stubTransport answers requests from a script keyed on the attempt number.
 type stubTransport struct {
 	calls atomic.Int32

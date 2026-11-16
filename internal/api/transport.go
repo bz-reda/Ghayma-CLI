@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -25,7 +26,8 @@ import (
 // is dialed at once with a short timeout; if all of them fail the host is
 // re-resolved over DNS-over-HTTPS and each provider's addresses are dialed the
 // same way. The address that worked is remembered in memory and, since every
-// command is a fresh process, cached on disk for a day.
+// command is a fresh process, cached on disk for a day. A connection that
+// fails before carrying any data drops it again (see watchedConn).
 type fallbackDialer struct {
 	dialTimeout time.Duration
 	lookup      func(ctx context.Context, host string) ([]net.IP, error)
@@ -72,7 +74,7 @@ func (d *fallbackDialer) DialContext(ctx context.Context, network, addr string) 
 	if ip := d.recall(host); ip != "" {
 		conn, err := d.dial(ctx, network, ip, port)
 		if err == nil {
-			return conn, nil
+			return d.watch(conn, host, ip), nil
 		}
 		d.forget(host)
 		tried, last = append(tried, ip), err
@@ -151,7 +153,7 @@ func (d *fallbackDialer) dialGroup(ctx context.Context, network, host string, ip
 		case winner != nil:
 			a.conn.Close()
 		default:
-			winner = a.conn
+			winner = d.watch(a.conn, host, a.ip)
 			d.remember(host, a.ip)
 			cancel()
 		}
@@ -225,6 +227,61 @@ func (d *fallbackDialer) forget(host string) {
 	d.writeCacheLocked(host, nil)
 }
 
+// forgetIf drops host's address only while it is still ip, so a late failure
+// on an old connection never erases an address proven since.
+func (d *fallbackDialer) forgetIf(host, ip string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.known[host] != ip {
+		return
+	}
+	delete(d.known, host)
+	d.writeCacheLocked(host, nil)
+}
+
+func (d *fallbackDialer) watch(conn net.Conn, host, ip string) net.Conn {
+	return &watchedConn{Conn: conn, d: d, host: host, ip: ip}
+}
+
+// watchedConn makes a connection prove its address. A TCP connect alone does
+// not: on 2026-11-16 a remembered Cloudflare edge accepted every connection
+// and reset it at the TLS handshake, and since the dial succeeded the address
+// stayed cached for a day. Failing before any data arrived forgets the
+// address; once data has flowed, only a reset or timeout does, since a server
+// closing an idle keep-alive connection is normal.
+type watchedConn struct {
+	net.Conn
+	d        *fallbackDialer
+	host, ip string
+	proven   atomic.Bool
+	once     sync.Once
+}
+
+func (c *watchedConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.proven.Store(true)
+	}
+	c.observe(err)
+	return n, err
+}
+
+func (c *watchedConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	c.observe(err)
+	return n, err
+}
+
+func (c *watchedConn) observe(err error) {
+	if err == nil {
+		return
+	}
+	if c.proven.Load() && (errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed)) {
+		return
+	}
+	c.once.Do(func() { c.d.forgetIf(c.host, c.ip) })
+}
+
 // netCacheEntry is one host's remembered address on disk.
 type netCacheEntry struct {
 	IP    string    `json:"ip"`
@@ -233,7 +290,8 @@ type netCacheEntry struct {
 
 // netCacheTTL is how long a working address is trusted. Cloudflare moves an
 // edge out from under us far more slowly than that, and a stale entry costs
-// only one dial timeout before the fallback re-resolves.
+// one failed connection: a dial that fails, or a connection that dies before
+// carrying data, drops it.
 const netCacheTTL = 24 * time.Hour
 
 // netCachePath locates the cache next to the CLI's config, the same way
