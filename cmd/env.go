@@ -599,6 +599,7 @@ func init() {
 
 	envPullCmd.Flags().StringVar(&envPullOut, "out", "", "File to write (default: .env.local next to the app)")
 	envPullCmd.Flags().BoolVar(&envPullForce, "force", false, "Write even if the file is not git-ignored (a tracked file is always refused)")
+	envPullCmd.Flags().BoolVar(&envPullAll, "all", false, "Write exactly what the deployed app receives: legacy aliases, per-app duplicates and in-cluster addresses included")
 
 	envCmd.AddCommand(envSetCmd)
 	envCmd.AddCommand(envListCmd)

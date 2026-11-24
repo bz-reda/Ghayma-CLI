@@ -89,13 +89,42 @@ func (c *Client) DeleteEnvVar(projectID, siteID, key string) (*EnvVarDeletion, e
 type EffectiveEnv struct {
 	Env     map[string]string `json:"env"`
 	Sources map[string]string `json:"sources"`
+
+	// Set only by LocalSiteEnv on a platform that serves the local view: View
+	// is "local", Omitted counts the names left out, Rewritten names the values
+	// swapped for an address this machine can reach.
+	View      string           `json:"view"`
+	Omitted   EffectiveOmitted `json:"omitted"`
+	Rewritten []string         `json:"rewritten"`
 }
+
+// EffectiveOmitted counts what the local view leaves out of the pod's set.
+type EffectiveOmitted struct {
+	LegacyAliases    int `json:"legacy_aliases"`
+	PerAppDuplicates int `json:"per_app_duplicates"`
+}
+
+// ViewLocal is the `view` LocalSiteEnv asks for and a platform that serves it
+// echoes back.
+const ViewLocal = "local"
 
 // EffectiveSiteEnv returns the effective environment plus per-variable
 // provenance (GET …/env/effective). Project admin role; the server audits
 // every read. Never nil on success.
 func (c *Client) EffectiveSiteEnv(projectID, siteID string) (*EffectiveEnv, error) {
-	resp, err := c.authRequest("GET", "/api/v1/projects/"+projectID+"/sites/"+siteID+"/env/effective", nil)
+	return c.effectiveSiteEnv(projectID, siteID, "")
+}
+
+// LocalSiteEnv is EffectiveSiteEnv trimmed for this machine: no legacy alias,
+// no per-app name that repeats a flat one, and the auth URL an outside client
+// can reach. A platform older than the view ignores the parameter and answers
+// the pod's full set, with View empty.
+func (c *Client) LocalSiteEnv(projectID, siteID string) (*EffectiveEnv, error) {
+	return c.effectiveSiteEnv(projectID, siteID, "?view="+ViewLocal)
+}
+
+func (c *Client) effectiveSiteEnv(projectID, siteID, query string) (*EffectiveEnv, error) {
+	resp, err := c.authRequest("GET", "/api/v1/projects/"+projectID+"/sites/"+siteID+"/env/effective"+query, nil)
 	if err != nil {
 		return nil, err
 	}
