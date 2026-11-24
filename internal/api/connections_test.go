@@ -327,3 +327,40 @@ func TestListUnconnected_NothingIsAnEmptyList(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalSiteEnv_AsksForTheLocalViewAndDecodesIt(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/projects/p1/sites/s1/env/effective" || r.URL.Query().Get("view") != "local" {
+			t.Errorf("unexpected request %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		io.WriteString(w, `{"env":{"GHAYMA_AUTH_URL":"https://auth.example/v1/app"},"sources":{"GHAYMA_AUTH_URL":"derived"},"view":"local","omitted":{"legacy_aliases":8,"per_app_duplicates":4},"rewritten":["GHAYMA_AUTH_URL"]}`)
+	}))
+	defer ts.Close()
+
+	c := newTestClient(ts.URL)
+	got, err := c.LocalSiteEnv("p1", "s1")
+	if err != nil {
+		t.Fatalf("LocalSiteEnv: %v", err)
+	}
+	if got.View != ViewLocal || got.Omitted.LegacyAliases != 8 || got.Omitted.PerAppDuplicates != 4 || len(got.Rewritten) != 1 || got.Env["GHAYMA_AUTH_URL"] != "https://auth.example/v1/app" {
+		t.Errorf("decoded = %+v", got)
+	}
+	// connect --local reads the same view.
+	if _, err := c.GetEffectiveSiteEnv("p1", "s1"); err != nil {
+		t.Fatalf("GetEffectiveSiteEnv: %v", err)
+	}
+}
+
+func TestEffectiveSiteEnv_AsksForThePodSet(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "" {
+			t.Errorf("the full set takes no view, got ?%s", r.URL.RawQuery)
+		}
+		io.WriteString(w, `{"env":{"A":"1"}}`)
+	}))
+	defer ts.Close()
+	got, err := newTestClient(ts.URL).EffectiveSiteEnv("p1", "s1")
+	if err != nil || got.View != "" || got.Env["A"] != "1" {
+		t.Errorf("got %+v, %v", got, err)
+	}
+}
